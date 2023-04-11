@@ -1,0 +1,115 @@
+<html>
+<head>
+<title>load_custom_model.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #6897bb;}
+.s3 { color: #6a8759;}
+.s4 { color: #808080;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+load_custom_model.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">torch</span>
+<span class="s0">from </span><span class="s1">matplotlib </span><span class="s0">import </span><span class="s1">pyplot </span><span class="s0">as </span><span class="s1">plt</span>
+<span class="s0">import </span><span class="s1">numpy </span><span class="s0">as </span><span class="s1">np</span>
+<span class="s0">import </span><span class="s1">cv2</span>
+<span class="s0">from </span><span class="s1">math </span><span class="s0">import </span><span class="s1">hypot</span>
+<span class="s0">import </span><span class="s1">dlib</span>
+<span class="s0">import </span><span class="s1">time</span>
+<span class="s0">import </span><span class="s1">winsound</span>
+
+<span class="s1">eye_closed = </span><span class="s0">False</span>
+<span class="s1">closed_time = </span><span class="s2">0</span>
+<span class="s1">detector = dlib.get_frontal_face_detector()</span>
+<span class="s1">predictor = dlib.shape_predictor(</span><span class="s3">&quot;shape_predictor_68_face_landmarks.dat&quot;</span><span class="s1">)</span>
+<span class="s1">model = torch.hub.load(</span><span class="s3">'ultralytics/yolov5'</span><span class="s0">, </span><span class="s3">'custom'</span><span class="s0">, </span><span class="s1">path=</span><span class="s3">'venv/yolov5/runs/train/exp8/weights/last.pt'</span><span class="s0">, </span><span class="s1">force_reload=</span><span class="s0">True</span><span class="s1">)</span>
+
+<span class="s1">cap = cv2.VideoCapture(</span><span class="s2">0</span><span class="s1">)</span>
+
+<span class="s0">def </span><span class="s1">midpoint(p1 </span><span class="s0">,</span><span class="s1">p2):</span>
+    <span class="s0">return </span><span class="s1">int((p1.x + p2.x)/</span><span class="s2">2</span><span class="s1">)</span><span class="s0">, </span><span class="s1">int((p1.y + p2.y)/</span><span class="s2">2</span><span class="s1">)</span>
+
+<span class="s1">font = cv2.FONT_HERSHEY_PLAIN</span>
+
+<span class="s0">def </span><span class="s1">get_blinking_ratio(eye_points</span><span class="s0">, </span><span class="s1">facial_landmarks):</span>
+    <span class="s1">left_point = (facial_landmarks.part(eye_points[</span><span class="s2">0</span><span class="s1">]).x</span><span class="s0">, </span><span class="s1">facial_landmarks.part(eye_points[</span><span class="s2">0</span><span class="s1">]).y)</span>
+    <span class="s1">right_point = (facial_landmarks.part(eye_points[</span><span class="s2">3</span><span class="s1">]).x</span><span class="s0">, </span><span class="s1">facial_landmarks.part(eye_points[</span><span class="s2">3</span><span class="s1">]).y)</span>
+    <span class="s1">center_top = midpoint(facial_landmarks.part(eye_points[</span><span class="s2">1</span><span class="s1">])</span><span class="s0">, </span><span class="s1">facial_landmarks.part(eye_points[</span><span class="s2">2</span><span class="s1">]))</span>
+    <span class="s1">center_bottom = midpoint(facial_landmarks.part(eye_points[</span><span class="s2">5</span><span class="s1">])</span><span class="s0">, </span><span class="s1">facial_landmarks.part(eye_points[</span><span class="s2">4</span><span class="s1">]))</span>
+    <span class="s1">hor_line = cv2.line(frame</span><span class="s0">, </span><span class="s1">left_point</span><span class="s0">, </span><span class="s1">right_point</span><span class="s0">, </span><span class="s1">(</span><span class="s2">0</span><span class="s0">, </span><span class="s2">255</span><span class="s0">, </span><span class="s2">0</span><span class="s1">)</span><span class="s0">, </span><span class="s2">2</span><span class="s1">)</span>
+    <span class="s1">ver_line = cv2.line(frame</span><span class="s0">, </span><span class="s1">center_top</span><span class="s0">, </span><span class="s1">center_bottom</span><span class="s0">, </span><span class="s1">(</span><span class="s2">0</span><span class="s0">, </span><span class="s2">255</span><span class="s0">, </span><span class="s2">0</span><span class="s1">)</span><span class="s0">, </span><span class="s2">2</span><span class="s1">)</span>
+    <span class="s1">hor_line_lenght = hypot((left_point[</span><span class="s2">0</span><span class="s1">] - right_point[</span><span class="s2">0</span><span class="s1">])</span><span class="s0">, </span><span class="s1">(left_point[</span><span class="s2">1</span><span class="s1">] - right_point[</span><span class="s2">1</span><span class="s1">]))</span>
+    <span class="s1">ver_line_lenght = hypot((center_top[</span><span class="s2">0</span><span class="s1">] - center_bottom[</span><span class="s2">0</span><span class="s1">])</span><span class="s0">, </span><span class="s1">(center_top[</span><span class="s2">1</span><span class="s1">] - center_bottom[</span><span class="s2">1</span><span class="s1">]))</span>
+    <span class="s1">ratio = hor_line_lenght / ver_line_lenght</span>
+    <span class="s0">return </span><span class="s1">ratio</span>
+
+<span class="s0">while </span><span class="s1">cap.isOpened():</span>
+    <span class="s1">ret</span><span class="s0">, </span><span class="s1">frame = cap.read()</span>
+
+    <span class="s4"># 프레임을 그레이스케일로 변환</span>
+    <span class="s1">gray = cv2.cvtColor(frame</span><span class="s0">, </span><span class="s1">cv2.COLOR_BGR2GRAY)</span>
+    <span class="s4"># 얼굴 영역 검출</span>
+    <span class="s1">faces = detector(gray)</span>
+
+    <span class="s0">for </span><span class="s1">face </span><span class="s0">in </span><span class="s1">faces:</span>
+        <span class="s4"># 얼굴 랜드마크 검출</span>
+        <span class="s1">landmarks = predictor(gray</span><span class="s0">, </span><span class="s1">face)</span>
+
+        <span class="s4"># 왼쪽 눈 영역 좌표 추출</span>
+        <span class="s1">left_eye_region = np.array([(landmarks.part(</span><span class="s2">36</span><span class="s1">).x</span><span class="s0">, </span><span class="s1">landmarks.part(</span><span class="s2">36</span><span class="s1">).y)</span><span class="s0">,</span>
+                                    <span class="s1">(landmarks.part(</span><span class="s2">37</span><span class="s1">).x</span><span class="s0">, </span><span class="s1">landmarks.part(</span><span class="s2">37</span><span class="s1">).y)</span><span class="s0">,</span>
+                                    <span class="s1">(landmarks.part(</span><span class="s2">38</span><span class="s1">).x</span><span class="s0">, </span><span class="s1">landmarks.part(</span><span class="s2">38</span><span class="s1">).y)</span><span class="s0">,</span>
+                                    <span class="s1">(landmarks.part(</span><span class="s2">39</span><span class="s1">).x</span><span class="s0">, </span><span class="s1">landmarks.part(</span><span class="s2">39</span><span class="s1">).y)</span><span class="s0">,</span>
+                                    <span class="s1">(landmarks.part(</span><span class="s2">40</span><span class="s1">).x</span><span class="s0">, </span><span class="s1">landmarks.part(</span><span class="s2">40</span><span class="s1">).y)</span><span class="s0">,</span>
+                                    <span class="s1">(landmarks.part(</span><span class="s2">41</span><span class="s1">).x</span><span class="s0">, </span><span class="s1">landmarks.part(</span><span class="s2">41</span><span class="s1">).y)]</span><span class="s0">, </span><span class="s1">np.int32)</span>
+
+        <span class="s4"># 눈 영역에 경계선 그리기</span>
+        <span class="s1">cv2.polylines(frame</span><span class="s0">, </span><span class="s1">[left_eye_region]</span><span class="s0">, True, </span><span class="s1">(</span><span class="s2">0</span><span class="s0">, </span><span class="s2">255</span><span class="s0">, </span><span class="s2">0</span><span class="s1">)</span><span class="s0">, </span><span class="s2">2</span><span class="s1">)</span>
+
+        <span class="s4"># 왼쪽 눈 영역 마스크 생성</span>
+        <span class="s1">mask = np.zeros((frame.shape[</span><span class="s2">0</span><span class="s1">]</span><span class="s0">, </span><span class="s1">frame.shape[</span><span class="s2">1</span><span class="s1">])</span><span class="s0">, </span><span class="s1">np.uint8)</span>
+        <span class="s1">cv2.fillPoly(mask</span><span class="s0">, </span><span class="s1">[left_eye_region]</span><span class="s0">, </span><span class="s2">255</span><span class="s1">)</span>
+
+        <span class="s4"># 눈 영역 추출</span>
+        <span class="s1">left_eye = cv2.bitwise_and(gray</span><span class="s0">, </span><span class="s1">gray</span><span class="s0">, </span><span class="s1">mask=mask)</span>
+
+        <span class="s4"># 눈 영역의 평균 밝기 구하기</span>
+        <span class="s1">left_eye_mean = cv2.mean(left_eye)[</span><span class="s2">0</span><span class="s1">]</span>
+
+        <span class="s4"># 눈이 감긴 상태인지 체크</span>
+        <span class="s0">if </span><span class="s1">left_eye_mean &lt; </span><span class="s2">40</span><span class="s1">:</span>
+            <span class="s0">if not </span><span class="s1">eye_closed:</span>
+                <span class="s1">closed_time = time.time()</span>
+            <span class="s1">eye_closed = </span><span class="s0">True</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s0">if </span><span class="s1">eye_closed:</span>
+                <span class="s1">elapsed_time = time.time() - closed_time</span>
+                <span class="s0">if </span><span class="s1">elapsed_time &gt; </span><span class="s2">5</span><span class="s1">:  </span><span class="s4"># 눈을 5초 이상 감았다면</span>
+                    <span class="s1">winsound.Beep(</span><span class="s2">440</span><span class="s0">, </span><span class="s2">1000</span><span class="s1">)  </span><span class="s4"># 비프음 울리기 (440Hz, 1초)</span>
+                <span class="s1">eye_closed = </span><span class="s0">False</span>
+        <span class="s1">left_eye_ratio = get_blinking_ratio([</span><span class="s2">36</span><span class="s0">, </span><span class="s2">37</span><span class="s0">, </span><span class="s2">38</span><span class="s0">, </span><span class="s2">39</span><span class="s0">, </span><span class="s2">40</span><span class="s0">, </span><span class="s2">41</span><span class="s1">]</span><span class="s0">, </span><span class="s1">landmarks)</span>
+        <span class="s1">right_eye_ratio = get_blinking_ratio([</span><span class="s2">42</span><span class="s0">, </span><span class="s2">43</span><span class="s0">, </span><span class="s2">44</span><span class="s0">, </span><span class="s2">45</span><span class="s0">, </span><span class="s2">46</span><span class="s0">, </span><span class="s2">47</span><span class="s1">]</span><span class="s0">, </span><span class="s1">landmarks)</span>
+        <span class="s1">blinking_ratio = (left_eye_ratio + right_eye_ratio) / </span><span class="s2">2</span>
+
+        <span class="s0">if </span><span class="s1">blinking_ratio &gt; </span><span class="s2">7.0</span><span class="s1">:</span>
+            <span class="s1">winsound.Beep(</span><span class="s2">440</span><span class="s0">, </span><span class="s2">1000</span><span class="s1">)</span>
+
+    <span class="s4"># Make detections</span>
+    <span class="s1">results = model(frame)</span>
+
+    <span class="s1">cv2.imshow(</span><span class="s3">'YOLO'</span><span class="s0">, </span><span class="s1">np.squeeze(results.render()))</span>
+
+    <span class="s0">if </span><span class="s1">cv2.waitKey(</span><span class="s2">10</span><span class="s1">) &amp; </span><span class="s2">0xFF </span><span class="s1">== ord(</span><span class="s3">'q'</span><span class="s1">):</span>
+        <span class="s0">break</span>
+
+<span class="s1">cap.release()</span>
+<span class="s1">cv2.destroyAllWindows()</span></pre>
+</body>
+</html>

@@ -1,0 +1,169 @@
+<html>
+<head>
+<title>ImageStat.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6a8759;}
+.s4 { color: #6897bb;}
+.s5 { color: #629755; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageStat.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># global image statistics</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1996-04-05 fl   Created</span>
+<span class="s0"># 1997-05-21 fl   Added mask; added rms, var, stddev attributes</span>
+<span class="s0"># 1997-08-05 fl   Added median</span>
+<span class="s0"># 1998-07-05 hk   Fixed integer overflow error</span>
+<span class="s0">#</span>
+<span class="s0"># Notes:</span>
+<span class="s0"># This class shows how to implement delayed evaluation of attributes.</span>
+<span class="s0"># To get a certain value, simply access the corresponding attribute.</span>
+<span class="s0"># The __getattr__ dispatcher takes care of the rest.</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 1997.</span>
+<span class="s0"># Copyright (c) Fredrik Lundh 1996-97.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">import </span><span class="s1">functools</span>
+<span class="s2">import </span><span class="s1">math</span>
+<span class="s2">import </span><span class="s1">operator</span>
+
+
+<span class="s2">class </span><span class="s1">Stat:</span>
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">image_or_list</span><span class="s2">, </span><span class="s1">mask=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">mask:</span>
+                <span class="s1">self.h = image_or_list.histogram(mask)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self.h = image_or_list.histogram()</span>
+        <span class="s2">except </span><span class="s1">AttributeError:</span>
+            <span class="s1">self.h = image_or_list  </span><span class="s0"># assume it to be a histogram list</span>
+        <span class="s2">if not </span><span class="s1">isinstance(self.h</span><span class="s2">, </span><span class="s1">list):</span>
+            <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s3">&quot;first argument must be image or list&quot;</span><span class="s1">)</span>
+        <span class="s1">self.bands = list(range(len(self.h) // </span><span class="s4">256</span><span class="s1">))</span>
+
+    <span class="s2">def </span><span class="s1">__getattr__(self</span><span class="s2">, </span><span class="s1">id):</span>
+        <span class="s5">&quot;&quot;&quot;Calculate missing attribute&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">id[:</span><span class="s4">4</span><span class="s1">] == </span><span class="s3">&quot;_get&quot;</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">AttributeError(id)</span>
+        <span class="s0"># calculate missing attribute</span>
+        <span class="s1">v = getattr(self</span><span class="s2">, </span><span class="s3">&quot;_get&quot; </span><span class="s1">+ id)()</span>
+        <span class="s1">setattr(self</span><span class="s2">, </span><span class="s1">id</span><span class="s2">, </span><span class="s1">v)</span>
+        <span class="s2">return </span><span class="s1">v</span>
+
+    <span class="s2">def </span><span class="s1">_getextrema(self):</span>
+        <span class="s5">&quot;&quot;&quot;Get min/max values for each band in the image&quot;&quot;&quot;</span>
+
+        <span class="s2">def </span><span class="s1">minmax(histogram):</span>
+            <span class="s1">n = </span><span class="s4">255</span>
+            <span class="s1">x = </span><span class="s4">0</span>
+            <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">256</span><span class="s1">):</span>
+                <span class="s2">if </span><span class="s1">histogram[i]:</span>
+                    <span class="s1">n = min(n</span><span class="s2">, </span><span class="s1">i)</span>
+                    <span class="s1">x = max(x</span><span class="s2">, </span><span class="s1">i)</span>
+            <span class="s2">return </span><span class="s1">n</span><span class="s2">, </span><span class="s1">x  </span><span class="s0"># returns (255, 0) if there's no data in the histogram</span>
+
+        <span class="s1">v = []</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">0</span><span class="s2">, </span><span class="s1">len(self.h)</span><span class="s2">, </span><span class="s4">256</span><span class="s1">):</span>
+            <span class="s1">v.append(minmax(self.h[i:]))</span>
+        <span class="s2">return </span><span class="s1">v</span>
+
+    <span class="s2">def </span><span class="s1">_getcount(self):</span>
+        <span class="s5">&quot;&quot;&quot;Get total number of pixels in each layer&quot;&quot;&quot;</span>
+
+        <span class="s1">v = []</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">0</span><span class="s2">, </span><span class="s1">len(self.h)</span><span class="s2">, </span><span class="s4">256</span><span class="s1">):</span>
+            <span class="s1">v.append(functools.reduce(operator.add</span><span class="s2">, </span><span class="s1">self.h[i : i + </span><span class="s4">256</span><span class="s1">]))</span>
+        <span class="s2">return </span><span class="s1">v</span>
+
+    <span class="s2">def </span><span class="s1">_getsum(self):</span>
+        <span class="s5">&quot;&quot;&quot;Get sum of all pixels in each layer&quot;&quot;&quot;</span>
+
+        <span class="s1">v = []</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">0</span><span class="s2">, </span><span class="s1">len(self.h)</span><span class="s2">, </span><span class="s4">256</span><span class="s1">):</span>
+            <span class="s1">layer_sum = </span><span class="s4">0.0</span>
+            <span class="s2">for </span><span class="s1">j </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">256</span><span class="s1">):</span>
+                <span class="s1">layer_sum += j * self.h[i + j]</span>
+            <span class="s1">v.append(layer_sum)</span>
+        <span class="s2">return </span><span class="s1">v</span>
+
+    <span class="s2">def </span><span class="s1">_getsum2(self):</span>
+        <span class="s5">&quot;&quot;&quot;Get squared sum of all pixels in each layer&quot;&quot;&quot;</span>
+
+        <span class="s1">v = []</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">0</span><span class="s2">, </span><span class="s1">len(self.h)</span><span class="s2">, </span><span class="s4">256</span><span class="s1">):</span>
+            <span class="s1">sum2 = </span><span class="s4">0.0</span>
+            <span class="s2">for </span><span class="s1">j </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">256</span><span class="s1">):</span>
+                <span class="s1">sum2 += (j**</span><span class="s4">2</span><span class="s1">) * float(self.h[i + j])</span>
+            <span class="s1">v.append(sum2)</span>
+        <span class="s2">return </span><span class="s1">v</span>
+
+    <span class="s2">def </span><span class="s1">_getmean(self):</span>
+        <span class="s5">&quot;&quot;&quot;Get average pixel level for each layer&quot;&quot;&quot;</span>
+
+        <span class="s1">v = []</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">self.bands:</span>
+            <span class="s1">v.append(self.sum[i] / self.count[i])</span>
+        <span class="s2">return </span><span class="s1">v</span>
+
+    <span class="s2">def </span><span class="s1">_getmedian(self):</span>
+        <span class="s5">&quot;&quot;&quot;Get median pixel level for each layer&quot;&quot;&quot;</span>
+
+        <span class="s1">v = []</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">self.bands:</span>
+            <span class="s1">s = </span><span class="s4">0</span>
+            <span class="s1">half = self.count[i] // </span><span class="s4">2</span>
+            <span class="s1">b = i * </span><span class="s4">256</span>
+            <span class="s2">for </span><span class="s1">j </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">256</span><span class="s1">):</span>
+                <span class="s1">s = s + self.h[b + j]</span>
+                <span class="s2">if </span><span class="s1">s &gt; half:</span>
+                    <span class="s2">break</span>
+            <span class="s1">v.append(j)</span>
+        <span class="s2">return </span><span class="s1">v</span>
+
+    <span class="s2">def </span><span class="s1">_getrms(self):</span>
+        <span class="s5">&quot;&quot;&quot;Get RMS for each layer&quot;&quot;&quot;</span>
+
+        <span class="s1">v = []</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">self.bands:</span>
+            <span class="s1">v.append(math.sqrt(self.sum2[i] / self.count[i]))</span>
+        <span class="s2">return </span><span class="s1">v</span>
+
+    <span class="s2">def </span><span class="s1">_getvar(self):</span>
+        <span class="s5">&quot;&quot;&quot;Get variance for each layer&quot;&quot;&quot;</span>
+
+        <span class="s1">v = []</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">self.bands:</span>
+            <span class="s1">n = self.count[i]</span>
+            <span class="s1">v.append((self.sum2[i] - (self.sum[i] ** </span><span class="s4">2.0</span><span class="s1">) / n) / n)</span>
+        <span class="s2">return </span><span class="s1">v</span>
+
+    <span class="s2">def </span><span class="s1">_getstddev(self):</span>
+        <span class="s5">&quot;&quot;&quot;Get standard deviation for each layer&quot;&quot;&quot;</span>
+
+        <span class="s1">v = []</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">self.bands:</span>
+            <span class="s1">v.append(math.sqrt(self.var[i]))</span>
+        <span class="s2">return </span><span class="s1">v</span>
+
+
+<span class="s1">Global = Stat  </span><span class="s0"># compatibility</span>
+</pre>
+</body>
+</html>

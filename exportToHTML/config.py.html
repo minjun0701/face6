@@ -1,0 +1,919 @@
+<html>
+<head>
+<title>config.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #629755; font-style: italic;}
+.s3 { color: #cc7832;}
+.s4 { color: #6a8759;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+config.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># config.py</span>
+<span class="s0"># Copyright (C) 2008, 2009 Michael Trier (mtrier@gmail.com) and contributors</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of GitPython and is released under</span>
+<span class="s0"># the BSD License: http://www.opensource.org/licenses/bsd-license.php</span>
+<span class="s2">&quot;&quot;&quot;Module containing module parser implementation able to properly read and write 
+configuration files&quot;&quot;&quot;</span>
+
+<span class="s3">import </span><span class="s1">sys</span>
+<span class="s3">import </span><span class="s1">abc</span>
+<span class="s3">from </span><span class="s1">functools </span><span class="s3">import </span><span class="s1">wraps</span>
+<span class="s3">import </span><span class="s1">inspect</span>
+<span class="s3">from </span><span class="s1">io </span><span class="s3">import </span><span class="s1">BufferedReader</span><span class="s3">, </span><span class="s1">IOBase</span>
+<span class="s3">import </span><span class="s1">logging</span>
+<span class="s3">import </span><span class="s1">os</span>
+<span class="s3">import </span><span class="s1">re</span>
+<span class="s3">import </span><span class="s1">fnmatch</span>
+
+<span class="s3">from </span><span class="s1">git.compat </span><span class="s3">import </span><span class="s1">(</span>
+    <span class="s1">defenc</span><span class="s3">,</span>
+    <span class="s1">force_text</span><span class="s3">,</span>
+    <span class="s1">is_win</span><span class="s3">,</span>
+<span class="s1">)</span>
+
+<span class="s3">from </span><span class="s1">git.util </span><span class="s3">import </span><span class="s1">LockFile</span>
+
+<span class="s3">import </span><span class="s1">os.path </span><span class="s3">as </span><span class="s1">osp</span>
+
+<span class="s3">import </span><span class="s1">configparser </span><span class="s3">as </span><span class="s1">cp</span>
+
+<span class="s0"># typing-------------------------------------------------------</span>
+
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">(</span>
+    <span class="s1">Any</span><span class="s3">,</span>
+    <span class="s1">Callable</span><span class="s3">,</span>
+    <span class="s1">Generic</span><span class="s3">,</span>
+    <span class="s1">IO</span><span class="s3">,</span>
+    <span class="s1">List</span><span class="s3">,</span>
+    <span class="s1">Dict</span><span class="s3">,</span>
+    <span class="s1">Sequence</span><span class="s3">,</span>
+    <span class="s1">TYPE_CHECKING</span><span class="s3">,</span>
+    <span class="s1">Tuple</span><span class="s3">,</span>
+    <span class="s1">TypeVar</span><span class="s3">,</span>
+    <span class="s1">Union</span><span class="s3">,</span>
+    <span class="s1">cast</span><span class="s3">,</span>
+<span class="s1">)</span>
+
+<span class="s3">from </span><span class="s1">git.types </span><span class="s3">import </span><span class="s1">Lit_config_levels</span><span class="s3">, </span><span class="s1">ConfigLevels_Tup</span><span class="s3">, </span><span class="s1">PathLike</span><span class="s3">, </span><span class="s1">assert_never</span><span class="s3">, </span><span class="s1">_T</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">git.repo.base </span><span class="s3">import </span><span class="s1">Repo</span>
+    <span class="s3">from </span><span class="s1">io </span><span class="s3">import </span><span class="s1">BytesIO</span>
+
+<span class="s1">T_ConfigParser = TypeVar(</span><span class="s4">&quot;T_ConfigParser&quot;</span><span class="s3">, </span><span class="s1">bound=</span><span class="s4">&quot;GitConfigParser&quot;</span><span class="s1">)</span>
+<span class="s1">T_OMD_value = TypeVar(</span><span class="s4">&quot;T_OMD_value&quot;</span><span class="s3">, </span><span class="s1">str</span><span class="s3">, </span><span class="s1">bytes</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">, </span><span class="s1">bool)</span>
+
+<span class="s3">if </span><span class="s1">sys.version_info[:</span><span class="s5">3</span><span class="s1">] &lt; (</span><span class="s5">3</span><span class="s3">, </span><span class="s5">7</span><span class="s3">, </span><span class="s5">2</span><span class="s1">):</span>
+    <span class="s0"># typing.Ordereddict not added until py 3.7.2</span>
+    <span class="s3">from </span><span class="s1">collections </span><span class="s3">import </span><span class="s1">OrderedDict</span>
+
+    <span class="s1">OrderedDict_OMD = OrderedDict</span>
+<span class="s3">else</span><span class="s1">:</span>
+    <span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">OrderedDict</span>
+
+    <span class="s1">OrderedDict_OMD = OrderedDict[str</span><span class="s3">, </span><span class="s1">List[T_OMD_value]]  </span><span class="s0"># type: ignore[assignment, misc]</span>
+
+<span class="s0"># -------------------------------------------------------------</span>
+
+<span class="s1">__all__ = (</span><span class="s4">&quot;GitConfigParser&quot;</span><span class="s3">, </span><span class="s4">&quot;SectionConstraint&quot;</span><span class="s1">)</span>
+
+
+<span class="s1">log = logging.getLogger(</span><span class="s4">&quot;git.config&quot;</span><span class="s1">)</span>
+<span class="s1">log.addHandler(logging.NullHandler())</span>
+
+<span class="s0"># invariants</span>
+<span class="s0"># represents the configuration level of a configuration file</span>
+
+
+<span class="s1">CONFIG_LEVELS: ConfigLevels_Tup = (</span><span class="s4">&quot;system&quot;</span><span class="s3">, </span><span class="s4">&quot;user&quot;</span><span class="s3">, </span><span class="s4">&quot;global&quot;</span><span class="s3">, </span><span class="s4">&quot;repository&quot;</span><span class="s1">)</span>
+
+
+<span class="s0"># Section pattern to detect conditional includes.</span>
+<span class="s0"># https://git-scm.com/docs/git-config#_conditional_includes</span>
+<span class="s1">CONDITIONAL_INCLUDE_REGEXP = re.compile(</span><span class="s4">r&quot;(?&lt;=includeIf )\&quot;(gitdir|gitdir/i|onbranch):(.+)\&quot;&quot;</span><span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">MetaParserBuilder(abc.ABCMeta):  </span><span class="s0"># noqa: B024</span>
+    <span class="s2">&quot;&quot;&quot;Utility class wrapping base-class methods into decorators that assure read-only properties&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__new__(cls</span><span class="s3">, </span><span class="s1">name: str</span><span class="s3">, </span><span class="s1">bases: Tuple</span><span class="s3">, </span><span class="s1">clsdict: Dict[str</span><span class="s3">, </span><span class="s1">Any]) -&gt; </span><span class="s4">&quot;MetaParserBuilder&quot;</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Equip all base-class methods with a needs_values decorator, and all non-const methods 
+        with a set_dirty_and_flush_changes decorator in addition to that.&quot;&quot;&quot;</span>
+        <span class="s1">kmm = </span><span class="s4">&quot;_mutating_methods_&quot;</span>
+        <span class="s3">if </span><span class="s1">kmm </span><span class="s3">in </span><span class="s1">clsdict:</span>
+            <span class="s1">mutating_methods = clsdict[kmm]</span>
+            <span class="s3">for </span><span class="s1">base </span><span class="s3">in </span><span class="s1">bases:</span>
+                <span class="s1">methods = (t </span><span class="s3">for </span><span class="s1">t </span><span class="s3">in </span><span class="s1">inspect.getmembers(base</span><span class="s3">, </span><span class="s1">inspect.isroutine) </span><span class="s3">if not </span><span class="s1">t[</span><span class="s5">0</span><span class="s1">].startswith(</span><span class="s4">&quot;_&quot;</span><span class="s1">))</span>
+                <span class="s3">for </span><span class="s1">name</span><span class="s3">, </span><span class="s1">method </span><span class="s3">in </span><span class="s1">methods:</span>
+                    <span class="s3">if </span><span class="s1">name </span><span class="s3">in </span><span class="s1">clsdict:</span>
+                        <span class="s3">continue</span>
+                    <span class="s1">method_with_values = needs_values(method)</span>
+                    <span class="s3">if </span><span class="s1">name </span><span class="s3">in </span><span class="s1">mutating_methods:</span>
+                        <span class="s1">method_with_values = set_dirty_and_flush_changes(method_with_values)</span>
+                    <span class="s0"># END mutating methods handling</span>
+
+                    <span class="s1">clsdict[name] = method_with_values</span>
+                <span class="s0"># END for each name/method pair</span>
+            <span class="s0"># END for each base</span>
+        <span class="s0"># END if mutating methods configuration is set</span>
+
+        <span class="s1">new_type = super(MetaParserBuilder</span><span class="s3">, </span><span class="s1">cls).__new__(cls</span><span class="s3">, </span><span class="s1">name</span><span class="s3">, </span><span class="s1">bases</span><span class="s3">, </span><span class="s1">clsdict)</span>
+        <span class="s3">return </span><span class="s1">new_type</span>
+
+
+<span class="s3">def </span><span class="s1">needs_values(func: Callable[...</span><span class="s3">, </span><span class="s1">_T]) -&gt; Callable[...</span><span class="s3">, </span><span class="s1">_T]:</span>
+    <span class="s2">&quot;&quot;&quot;Returns method assuring we read values (on demand) before we try to access them&quot;&quot;&quot;</span>
+
+    <span class="s1">@wraps(func)</span>
+    <span class="s3">def </span><span class="s1">assure_data_present(self: </span><span class="s4">&quot;GitConfigParser&quot;</span><span class="s3">, </span><span class="s1">*args: Any</span><span class="s3">, </span><span class="s1">**kwargs: Any) -&gt; _T:</span>
+        <span class="s1">self.read()</span>
+        <span class="s3">return </span><span class="s1">func(self</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s0"># END wrapper method</span>
+    <span class="s3">return </span><span class="s1">assure_data_present</span>
+
+
+<span class="s3">def </span><span class="s1">set_dirty_and_flush_changes(non_const_func: Callable[...</span><span class="s3">, </span><span class="s1">_T]) -&gt; Callable[...</span><span class="s3">, </span><span class="s1">_T]:</span>
+    <span class="s2">&quot;&quot;&quot;Return method that checks whether given non constant function may be called. 
+    If so, the instance will be set dirty. 
+    Additionally, we flush the changes right to disk&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">flush_changes(self: </span><span class="s4">&quot;GitConfigParser&quot;</span><span class="s3">, </span><span class="s1">*args: Any</span><span class="s3">, </span><span class="s1">**kwargs: Any) -&gt; _T:</span>
+        <span class="s1">rval = non_const_func(self</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+        <span class="s1">self._dirty = </span><span class="s3">True</span>
+        <span class="s1">self.write()</span>
+        <span class="s3">return </span><span class="s1">rval</span>
+
+    <span class="s0"># END wrapper method</span>
+    <span class="s1">flush_changes.__name__ = non_const_func.__name__</span>
+    <span class="s3">return </span><span class="s1">flush_changes</span>
+
+
+<span class="s3">class </span><span class="s1">SectionConstraint(Generic[T_ConfigParser]):</span>
+
+    <span class="s2">&quot;&quot;&quot;Constrains a ConfigParser to only option commands which are constrained to 
+    always use the section we have been initialized with. 
+ 
+    It supports all ConfigParser methods that operate on an option. 
+ 
+    :note: 
+        If used as a context manager, will release the wrapped ConfigParser.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span><span class="s4">&quot;_config&quot;</span><span class="s3">, </span><span class="s4">&quot;_section_name&quot;</span><span class="s1">)</span>
+    <span class="s1">_valid_attrs_ = (</span>
+        <span class="s4">&quot;get_value&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;set_value&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;get&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;set&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;getint&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;getfloat&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;getboolean&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;has_option&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;remove_section&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;remove_option&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;options&quot;</span><span class="s3">,</span>
+    <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">config: T_ConfigParser</span><span class="s3">, </span><span class="s1">section: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self._config = config</span>
+        <span class="s1">self._section_name = section</span>
+
+    <span class="s3">def </span><span class="s1">__del__(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s0"># Yes, for some reason, we have to call it explicitly for it to work in PY3 !</span>
+        <span class="s0"># Apparently __del__ doesn't get call anymore if refcount becomes 0</span>
+        <span class="s0"># Ridiculous ... .</span>
+        <span class="s1">self._config.release()</span>
+
+    <span class="s3">def </span><span class="s1">__getattr__(self</span><span class="s3">, </span><span class="s1">attr: str) -&gt; Any:</span>
+        <span class="s3">if </span><span class="s1">attr </span><span class="s3">in </span><span class="s1">self._valid_attrs_:</span>
+            <span class="s3">return lambda </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kwargs: self._call_config(attr</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+        <span class="s3">return </span><span class="s1">super(SectionConstraint</span><span class="s3">, </span><span class="s1">self).__getattribute__(attr)</span>
+
+    <span class="s3">def </span><span class="s1">_call_config(self</span><span class="s3">, </span><span class="s1">method: str</span><span class="s3">, </span><span class="s1">*args: Any</span><span class="s3">, </span><span class="s1">**kwargs: Any) -&gt; Any:</span>
+        <span class="s2">&quot;&quot;&quot;Call the configuration at the given method which must take a section name 
+        as first argument&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">getattr(self._config</span><span class="s3">, </span><span class="s1">method)(self._section_name</span><span class="s3">, </span><span class="s1">*args</span><span class="s3">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">config(self) -&gt; T_ConfigParser:</span>
+        <span class="s2">&quot;&quot;&quot;return: Configparser instance we constrain&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._config</span>
+
+    <span class="s3">def </span><span class="s1">release(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Equivalent to GitConfigParser.release(), which is called on our underlying parser instance&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._config.release()</span>
+
+    <span class="s3">def </span><span class="s1">__enter__(self) -&gt; </span><span class="s4">&quot;SectionConstraint[T_ConfigParser]&quot;</span><span class="s1">:</span>
+        <span class="s1">self._config.__enter__()</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">__exit__(self</span><span class="s3">, </span><span class="s1">exception_type: str</span><span class="s3">, </span><span class="s1">exception_value: str</span><span class="s3">, </span><span class="s1">traceback: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self._config.__exit__(exception_type</span><span class="s3">, </span><span class="s1">exception_value</span><span class="s3">, </span><span class="s1">traceback)</span>
+
+
+<span class="s3">class </span><span class="s1">_OMD(OrderedDict_OMD):</span>
+    <span class="s2">&quot;&quot;&quot;Ordered multi-dict.&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__setitem__(self</span><span class="s3">, </span><span class="s1">key: str</span><span class="s3">, </span><span class="s1">value: _T) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super(_OMD</span><span class="s3">, </span><span class="s1">self).__setitem__(key</span><span class="s3">, </span><span class="s1">[value])</span>
+
+    <span class="s3">def </span><span class="s1">add(self</span><span class="s3">, </span><span class="s1">key: str</span><span class="s3">, </span><span class="s1">value: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">self:</span>
+            <span class="s1">super(_OMD</span><span class="s3">, </span><span class="s1">self).__setitem__(key</span><span class="s3">, </span><span class="s1">[value])</span>
+            <span class="s3">return None</span>
+        <span class="s1">super(_OMD</span><span class="s3">, </span><span class="s1">self).__getitem__(key).append(value)</span>
+
+    <span class="s3">def </span><span class="s1">setall(self</span><span class="s3">, </span><span class="s1">key: str</span><span class="s3">, </span><span class="s1">values: List[_T]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super(_OMD</span><span class="s3">, </span><span class="s1">self).__setitem__(key</span><span class="s3">, </span><span class="s1">values)</span>
+
+    <span class="s3">def </span><span class="s1">__getitem__(self</span><span class="s3">, </span><span class="s1">key: str) -&gt; Any:</span>
+        <span class="s3">return </span><span class="s1">super(_OMD</span><span class="s3">, </span><span class="s1">self).__getitem__(key)[-</span><span class="s5">1</span><span class="s1">]</span>
+
+    <span class="s3">def </span><span class="s1">getlast(self</span><span class="s3">, </span><span class="s1">key: str) -&gt; Any:</span>
+        <span class="s3">return </span><span class="s1">super(_OMD</span><span class="s3">, </span><span class="s1">self).__getitem__(key)[-</span><span class="s5">1</span><span class="s1">]</span>
+
+    <span class="s3">def </span><span class="s1">setlast(self</span><span class="s3">, </span><span class="s1">key: str</span><span class="s3">, </span><span class="s1">value: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">key </span><span class="s3">not in </span><span class="s1">self:</span>
+            <span class="s1">super(_OMD</span><span class="s3">, </span><span class="s1">self).__setitem__(key</span><span class="s3">, </span><span class="s1">[value])</span>
+            <span class="s3">return</span>
+
+        <span class="s1">prior = super(_OMD</span><span class="s3">, </span><span class="s1">self).__getitem__(key)</span>
+        <span class="s1">prior[-</span><span class="s5">1</span><span class="s1">] = value</span>
+
+    <span class="s3">def </span><span class="s1">get(self</span><span class="s3">, </span><span class="s1">key: str</span><span class="s3">, </span><span class="s1">default: Union[_T</span><span class="s3">, None</span><span class="s1">] = </span><span class="s3">None</span><span class="s1">) -&gt; Union[_T</span><span class="s3">, None</span><span class="s1">]:</span>
+        <span class="s3">return </span><span class="s1">super(_OMD</span><span class="s3">, </span><span class="s1">self).get(key</span><span class="s3">, </span><span class="s1">[default])[-</span><span class="s5">1</span><span class="s1">]</span>
+
+    <span class="s3">def </span><span class="s1">getall(self</span><span class="s3">, </span><span class="s1">key: str) -&gt; List[_T]:</span>
+        <span class="s3">return </span><span class="s1">super(_OMD</span><span class="s3">, </span><span class="s1">self).__getitem__(key)</span>
+
+    <span class="s3">def </span><span class="s1">items(self) -&gt; List[Tuple[str</span><span class="s3">, </span><span class="s1">_T]]:  </span><span class="s0"># type: ignore[override]</span>
+        <span class="s2">&quot;&quot;&quot;List of (key, last value for key).&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">[(k</span><span class="s3">, </span><span class="s1">self[k]) </span><span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">self]</span>
+
+    <span class="s3">def </span><span class="s1">items_all(self) -&gt; List[Tuple[str</span><span class="s3">, </span><span class="s1">List[_T]]]:</span>
+        <span class="s2">&quot;&quot;&quot;List of (key, list of values for key).&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">[(k</span><span class="s3">, </span><span class="s1">self.getall(k)) </span><span class="s3">for </span><span class="s1">k </span><span class="s3">in </span><span class="s1">self]</span>
+
+
+<span class="s3">def </span><span class="s1">get_config_path(config_level: Lit_config_levels) -&gt; str:</span>
+
+    <span class="s0"># we do not support an absolute path of the gitconfig on windows ,</span>
+    <span class="s0"># use the global config instead</span>
+    <span class="s3">if </span><span class="s1">is_win </span><span class="s3">and </span><span class="s1">config_level == </span><span class="s4">&quot;system&quot;</span><span class="s1">:</span>
+        <span class="s1">config_level = </span><span class="s4">&quot;global&quot;</span>
+
+    <span class="s3">if </span><span class="s1">config_level == </span><span class="s4">&quot;system&quot;</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s4">&quot;/etc/gitconfig&quot;</span>
+    <span class="s3">elif </span><span class="s1">config_level == </span><span class="s4">&quot;user&quot;</span><span class="s1">:</span>
+        <span class="s1">config_home = os.environ.get(</span><span class="s4">&quot;XDG_CONFIG_HOME&quot;</span><span class="s1">) </span><span class="s3">or </span><span class="s1">osp.join(os.environ.get(</span><span class="s4">&quot;HOME&quot;</span><span class="s3">, </span><span class="s4">&quot;~&quot;</span><span class="s1">)</span><span class="s3">, </span><span class="s4">&quot;.config&quot;</span><span class="s1">)</span>
+        <span class="s3">return </span><span class="s1">osp.normpath(osp.expanduser(osp.join(config_home</span><span class="s3">, </span><span class="s4">&quot;git&quot;</span><span class="s3">, </span><span class="s4">&quot;config&quot;</span><span class="s1">)))</span>
+    <span class="s3">elif </span><span class="s1">config_level == </span><span class="s4">&quot;global&quot;</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">osp.normpath(osp.expanduser(</span><span class="s4">&quot;~/.gitconfig&quot;</span><span class="s1">))</span>
+    <span class="s3">elif </span><span class="s1">config_level == </span><span class="s4">&quot;repository&quot;</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;No repo to get repository configuration from. Use Repo._get_config_path&quot;</span><span class="s1">)</span>
+    <span class="s3">else</span><span class="s1">:</span>
+        <span class="s0"># Should not reach here. Will raise ValueError if does. Static typing will warn missing elifs</span>
+        <span class="s1">assert_never(</span>
+            <span class="s1">config_level</span><span class="s3">,  </span><span class="s0"># type: ignore[unreachable]</span>
+            <span class="s1">ValueError(</span><span class="s4">f&quot;Invalid configuration level: </span><span class="s3">{</span><span class="s1">config_level</span><span class="s3">!r}</span><span class="s4">&quot;</span><span class="s1">)</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">GitConfigParser(cp.RawConfigParser</span><span class="s3">, </span><span class="s1">metaclass=MetaParserBuilder):</span>
+
+    <span class="s2">&quot;&quot;&quot;Implements specifics required to read git style configuration files. 
+ 
+    This variation behaves much like the git.config command such that the configuration 
+    will be read on demand based on the filepath given during initialization. 
+ 
+    The changes will automatically be written once the instance goes out of scope, but 
+    can be triggered manually as well. 
+ 
+    The configuration file will be locked if you intend to change values preventing other 
+    instances to write concurrently. 
+ 
+    :note: 
+        The config is case-sensitive even when queried, hence section and option names 
+        must match perfectly. 
+        If used as a context manager, will release the locked file.&quot;&quot;&quot;</span>
+
+    <span class="s0"># { Configuration</span>
+    <span class="s0"># The lock type determines the type of lock to use in new configuration readers.</span>
+    <span class="s0"># They must be compatible to the LockFile interface.</span>
+    <span class="s0"># A suitable alternative would be the BlockingLockFile</span>
+    <span class="s1">t_lock = LockFile</span>
+    <span class="s1">re_comment = re.compile(</span><span class="s4">r&quot;^\s*[#;]&quot;</span><span class="s1">)</span>
+
+    <span class="s0"># } END configuration</span>
+
+    <span class="s1">optvalueonly_source = </span><span class="s4">r&quot;\s*(?P&lt;option&gt;[^:=\s][^:=]*)&quot;</span>
+
+    <span class="s1">OPTVALUEONLY = re.compile(optvalueonly_source)</span>
+
+    <span class="s1">OPTCRE = re.compile(optvalueonly_source + </span><span class="s4">r&quot;\s*(?P&lt;vi&gt;[:=])\s*&quot; </span><span class="s1">+ </span><span class="s4">r&quot;(?P&lt;value&gt;.*)$&quot;</span><span class="s1">)</span>
+
+    <span class="s3">del </span><span class="s1">optvalueonly_source</span>
+
+    <span class="s0"># list of RawConfigParser methods able to change the instance</span>
+    <span class="s1">_mutating_methods_ = (</span><span class="s4">&quot;add_section&quot;</span><span class="s3">, </span><span class="s4">&quot;remove_section&quot;</span><span class="s3">, </span><span class="s4">&quot;remove_option&quot;</span><span class="s3">, </span><span class="s4">&quot;set&quot;</span><span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">file_or_files: Union[</span><span class="s3">None, </span><span class="s1">PathLike</span><span class="s3">, </span><span class="s4">&quot;BytesIO&quot;</span><span class="s3">, </span><span class="s1">Sequence[Union[PathLike</span><span class="s3">, </span><span class="s4">&quot;BytesIO&quot;</span><span class="s1">]]] = </span><span class="s3">None,</span>
+        <span class="s1">read_only: bool = </span><span class="s3">True,</span>
+        <span class="s1">merge_includes: bool = </span><span class="s3">True,</span>
+        <span class="s1">config_level: Union[Lit_config_levels</span><span class="s3">, None</span><span class="s1">] = </span><span class="s3">None,</span>
+        <span class="s1">repo: Union[</span><span class="s4">&quot;Repo&quot;</span><span class="s3">, None</span><span class="s1">] = </span><span class="s3">None,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Initialize a configuration reader to read the given file_or_files and to 
+        possibly allow changes to it by setting read_only False 
+ 
+        :param file_or_files: 
+            A single file path or file objects or multiple of these 
+ 
+        :param read_only: 
+            If True, the ConfigParser may only read the data , but not change it. 
+            If False, only a single file path or file object may be given. We will write back the changes 
+            when they happen, or when the ConfigParser is released. This will not happen if other 
+            configuration files have been included 
+        :param merge_includes: if True, we will read files mentioned in [include] sections and merge their 
+            contents into ours. This makes it impossible to write back an individual configuration file. 
+            Thus, if you want to modify a single configuration file, turn this off to leave the original 
+            dataset unaltered when reading it. 
+        :param repo: Reference to repository to use if [includeIf] sections are found in configuration files. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">cp.RawConfigParser.__init__(self</span><span class="s3">, </span><span class="s1">dict_type=_OMD)</span>
+        <span class="s1">self._dict: Callable[...</span><span class="s3">, </span><span class="s1">_OMD]  </span><span class="s0"># type: ignore   # mypy/typeshed bug?</span>
+        <span class="s1">self._defaults: _OMD</span>
+        <span class="s1">self._sections: _OMD  </span><span class="s0"># type: ignore  # mypy/typeshed bug?</span>
+
+        <span class="s0"># Used in python 3, needs to stay in sync with sections for underlying implementation to work</span>
+        <span class="s3">if not </span><span class="s1">hasattr(self</span><span class="s3">, </span><span class="s4">&quot;_proxies&quot;</span><span class="s1">):</span>
+            <span class="s1">self._proxies = self._dict()</span>
+
+        <span class="s3">if </span><span class="s1">file_or_files </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self._file_or_files: Union[PathLike</span><span class="s3">, </span><span class="s4">&quot;BytesIO&quot;</span><span class="s3">, </span><span class="s1">Sequence[Union[PathLike</span><span class="s3">, </span><span class="s4">&quot;BytesIO&quot;</span><span class="s1">]]] = file_or_files</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">config_level </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">if </span><span class="s1">read_only:</span>
+                    <span class="s1">self._file_or_files = [</span>
+                        <span class="s1">get_config_path(cast(Lit_config_levels</span><span class="s3">, </span><span class="s1">f)) </span><span class="s3">for </span><span class="s1">f </span><span class="s3">in </span><span class="s1">CONFIG_LEVELS </span><span class="s3">if </span><span class="s1">f != </span><span class="s4">&quot;repository&quot;</span>
+                    <span class="s1">]</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s3">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;No configuration level or configuration files specified&quot;</span><span class="s1">)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">self._file_or_files = [get_config_path(config_level)]</span>
+
+        <span class="s1">self._read_only = read_only</span>
+        <span class="s1">self._dirty = </span><span class="s3">False</span>
+        <span class="s1">self._is_initialized = </span><span class="s3">False</span>
+        <span class="s1">self._merge_includes = merge_includes</span>
+        <span class="s1">self._repo = repo</span>
+        <span class="s1">self._lock: Union[</span><span class="s4">&quot;LockFile&quot;</span><span class="s3">, None</span><span class="s1">] = </span><span class="s3">None</span>
+        <span class="s1">self._acquire_lock()</span>
+
+    <span class="s3">def </span><span class="s1">_acquire_lock(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if not </span><span class="s1">self._read_only:</span>
+            <span class="s3">if not </span><span class="s1">self._lock:</span>
+                <span class="s3">if </span><span class="s1">isinstance(self._file_or_files</span><span class="s3">, </span><span class="s1">(str</span><span class="s3">, </span><span class="s1">os.PathLike)):</span>
+                    <span class="s1">file_or_files = self._file_or_files</span>
+                <span class="s3">elif </span><span class="s1">isinstance(self._file_or_files</span><span class="s3">, </span><span class="s1">(tuple</span><span class="s3">, </span><span class="s1">list</span><span class="s3">, </span><span class="s1">Sequence)):</span>
+                    <span class="s3">raise </span><span class="s1">ValueError(</span>
+                        <span class="s4">&quot;Write-ConfigParsers can operate on a single file only, multiple files have been passed&quot;</span>
+                    <span class="s1">)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">file_or_files = self._file_or_files.name</span>
+
+                <span class="s0"># END get filename from handle/stream</span>
+                <span class="s0"># initialize lock base - we want to write</span>
+                <span class="s1">self._lock = self.t_lock(file_or_files)</span>
+            <span class="s0"># END lock check</span>
+
+            <span class="s1">self._lock._obtain_lock()</span>
+        <span class="s0"># END read-only check</span>
+
+    <span class="s3">def </span><span class="s1">__del__(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Write pending changes if required and release locks&quot;&quot;&quot;</span>
+        <span class="s0"># NOTE: only consistent in PY2</span>
+        <span class="s1">self.release()</span>
+
+    <span class="s3">def </span><span class="s1">__enter__(self) -&gt; </span><span class="s4">&quot;GitConfigParser&quot;</span><span class="s1">:</span>
+        <span class="s1">self._acquire_lock()</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">__exit__(self</span><span class="s3">, </span><span class="s1">*args: Any) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.release()</span>
+
+    <span class="s3">def </span><span class="s1">release(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Flush changes and release the configuration write lock. This instance must not be used anymore afterwards. 
+        In Python 3, it's required to explicitly release locks and flush changes, as __del__ is not called 
+        deterministically anymore.&quot;&quot;&quot;</span>
+        <span class="s0"># checking for the lock here makes sure we do not raise during write()</span>
+        <span class="s0"># in case an invalid parser was created who could not get a lock</span>
+        <span class="s3">if </span><span class="s1">self.read_only </span><span class="s3">or </span><span class="s1">(self._lock </span><span class="s3">and not </span><span class="s1">self._lock._has_lock()):</span>
+            <span class="s3">return</span>
+
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">self.write()</span>
+            <span class="s3">except </span><span class="s1">IOError:</span>
+                <span class="s1">log.error(</span><span class="s4">&quot;Exception during destruction of GitConfigParser&quot;</span><span class="s3">, </span><span class="s1">exc_info=</span><span class="s3">True</span><span class="s1">)</span>
+            <span class="s3">except </span><span class="s1">ReferenceError:</span>
+                <span class="s0"># This happens in PY3 ... and usually means that some state cannot be written</span>
+                <span class="s0"># as the sections dict cannot be iterated</span>
+                <span class="s0"># Usually when shutting down the interpreter, don'y know how to fix this</span>
+                <span class="s3">pass</span>
+        <span class="s3">finally</span><span class="s1">:</span>
+            <span class="s3">if </span><span class="s1">self._lock </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s1">self._lock._release_lock()</span>
+
+    <span class="s3">def </span><span class="s1">optionxform(self</span><span class="s3">, </span><span class="s1">optionstr: str) -&gt; str:</span>
+        <span class="s2">&quot;&quot;&quot;Do not transform options in any way when writing&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">optionstr</span>
+
+    <span class="s3">def </span><span class="s1">_read(self</span><span class="s3">, </span><span class="s1">fp: Union[BufferedReader</span><span class="s3">, </span><span class="s1">IO[bytes]]</span><span class="s3">, </span><span class="s1">fpname: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;A direct copy of the py2.4 version of the super class's _read method 
+        to assure it uses ordered dicts. Had to change one line to make it work. 
+ 
+        Future versions have this fixed, but in fact its quite embarrassing for the 
+        guys not to have done it right in the first place ! 
+ 
+        Removed big comments to make it more compact. 
+ 
+        Made sure it ignores initial whitespace as git uses tabs&quot;&quot;&quot;</span>
+        <span class="s1">cursect = </span><span class="s3">None  </span><span class="s0"># None, or a dictionary</span>
+        <span class="s1">optname = </span><span class="s3">None</span>
+        <span class="s1">lineno = </span><span class="s5">0</span>
+        <span class="s1">is_multi_line = </span><span class="s3">False</span>
+        <span class="s1">e = </span><span class="s3">None  </span><span class="s0"># None, or an exception</span>
+
+        <span class="s3">def </span><span class="s1">string_decode(v: str) -&gt; str:</span>
+            <span class="s3">if </span><span class="s1">v[-</span><span class="s5">1</span><span class="s1">] == </span><span class="s4">&quot;</span><span class="s3">\\</span><span class="s4">&quot;</span><span class="s1">:</span>
+                <span class="s1">v = v[:-</span><span class="s5">1</span><span class="s1">]</span>
+            <span class="s0"># end cut trailing escapes to prevent decode error</span>
+
+            <span class="s3">return </span><span class="s1">v.encode(defenc).decode(</span><span class="s4">&quot;unicode_escape&quot;</span><span class="s1">)</span>
+            <span class="s0"># end</span>
+
+        <span class="s0"># end</span>
+
+        <span class="s3">while True</span><span class="s1">:</span>
+            <span class="s0"># we assume to read binary !</span>
+            <span class="s1">line = fp.readline().decode(defenc)</span>
+            <span class="s3">if not </span><span class="s1">line:</span>
+                <span class="s3">break</span>
+            <span class="s1">lineno = lineno + </span><span class="s5">1</span>
+            <span class="s0"># comment or blank line?</span>
+            <span class="s3">if </span><span class="s1">line.strip() == </span><span class="s4">&quot;&quot; </span><span class="s3">or </span><span class="s1">self.re_comment.match(line):</span>
+                <span class="s3">continue</span>
+            <span class="s3">if </span><span class="s1">line.split(</span><span class="s3">None, </span><span class="s5">1</span><span class="s1">)[</span><span class="s5">0</span><span class="s1">].lower() == </span><span class="s4">&quot;rem&quot; </span><span class="s3">and </span><span class="s1">line[</span><span class="s5">0</span><span class="s1">] </span><span class="s3">in </span><span class="s4">&quot;rR&quot;</span><span class="s1">:</span>
+                <span class="s0"># no leading whitespace</span>
+                <span class="s3">continue</span>
+
+            <span class="s0"># is it a section header?</span>
+            <span class="s1">mo = self.SECTCRE.match(line.strip())</span>
+            <span class="s3">if not </span><span class="s1">is_multi_line </span><span class="s3">and </span><span class="s1">mo:</span>
+                <span class="s1">sectname: str = mo.group(</span><span class="s4">&quot;header&quot;</span><span class="s1">).strip()</span>
+                <span class="s3">if </span><span class="s1">sectname </span><span class="s3">in </span><span class="s1">self._sections:</span>
+                    <span class="s1">cursect = self._sections[sectname]</span>
+                <span class="s3">elif </span><span class="s1">sectname == cp.DEFAULTSECT:</span>
+                    <span class="s1">cursect = self._defaults</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s1">cursect = self._dict(((</span><span class="s4">&quot;__name__&quot;</span><span class="s3">, </span><span class="s1">sectname)</span><span class="s3">,</span><span class="s1">))</span>
+                    <span class="s1">self._sections[sectname] = cursect</span>
+                    <span class="s1">self._proxies[sectname] = </span><span class="s3">None</span>
+                <span class="s0"># So sections can't start with a continuation line</span>
+                <span class="s1">optname = </span><span class="s3">None</span>
+            <span class="s0"># no section header in the file?</span>
+            <span class="s3">elif </span><span class="s1">cursect </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">raise </span><span class="s1">cp.MissingSectionHeaderError(fpname</span><span class="s3">, </span><span class="s1">lineno</span><span class="s3">, </span><span class="s1">line)</span>
+            <span class="s0"># an option line?</span>
+            <span class="s3">elif not </span><span class="s1">is_multi_line:</span>
+                <span class="s1">mo = self.OPTCRE.match(line)</span>
+                <span class="s3">if </span><span class="s1">mo:</span>
+                    <span class="s0"># We might just have handled the last line, which could contain a quotation we want to remove</span>
+                    <span class="s1">optname</span><span class="s3">, </span><span class="s1">vi</span><span class="s3">, </span><span class="s1">optval = mo.group(</span><span class="s4">&quot;option&quot;</span><span class="s3">, </span><span class="s4">&quot;vi&quot;</span><span class="s3">, </span><span class="s4">&quot;value&quot;</span><span class="s1">)</span>
+                    <span class="s3">if </span><span class="s1">vi </span><span class="s3">in </span><span class="s1">(</span><span class="s4">&quot;=&quot;</span><span class="s3">, </span><span class="s4">&quot;:&quot;</span><span class="s1">) </span><span class="s3">and </span><span class="s4">&quot;;&quot; </span><span class="s3">in </span><span class="s1">optval </span><span class="s3">and not </span><span class="s1">optval.strip().startswith(</span><span class="s4">'&quot;'</span><span class="s1">):</span>
+                        <span class="s1">pos = optval.find(</span><span class="s4">&quot;;&quot;</span><span class="s1">)</span>
+                        <span class="s3">if </span><span class="s1">pos != -</span><span class="s5">1 </span><span class="s3">and </span><span class="s1">optval[pos - </span><span class="s5">1</span><span class="s1">].isspace():</span>
+                            <span class="s1">optval = optval[:pos]</span>
+                    <span class="s1">optval = optval.strip()</span>
+                    <span class="s3">if </span><span class="s1">optval == </span><span class="s4">'&quot;&quot;'</span><span class="s1">:</span>
+                        <span class="s1">optval = </span><span class="s4">&quot;&quot;</span>
+                    <span class="s0"># end handle empty string</span>
+                    <span class="s1">optname = self.optionxform(optname.rstrip())</span>
+                    <span class="s3">if </span><span class="s1">len(optval) &gt; </span><span class="s5">1 </span><span class="s3">and </span><span class="s1">optval[</span><span class="s5">0</span><span class="s1">] == </span><span class="s4">'&quot;' </span><span class="s3">and </span><span class="s1">optval[-</span><span class="s5">1</span><span class="s1">] != </span><span class="s4">'&quot;'</span><span class="s1">:</span>
+                        <span class="s1">is_multi_line = </span><span class="s3">True</span>
+                        <span class="s1">optval = string_decode(optval[</span><span class="s5">1</span><span class="s1">:])</span>
+                    <span class="s0"># end handle multi-line</span>
+                    <span class="s0"># preserves multiple values for duplicate optnames</span>
+                    <span class="s1">cursect.add(optname</span><span class="s3">, </span><span class="s1">optval)</span>
+                <span class="s3">else</span><span class="s1">:</span>
+                    <span class="s0"># check if it's an option with no value - it's just ignored by git</span>
+                    <span class="s3">if not </span><span class="s1">self.OPTVALUEONLY.match(line):</span>
+                        <span class="s3">if not </span><span class="s1">e:</span>
+                            <span class="s1">e = cp.ParsingError(fpname)</span>
+                        <span class="s1">e.append(lineno</span><span class="s3">, </span><span class="s1">repr(line))</span>
+                    <span class="s3">continue</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">line = line.rstrip()</span>
+                <span class="s3">if </span><span class="s1">line.endswith(</span><span class="s4">'&quot;'</span><span class="s1">):</span>
+                    <span class="s1">is_multi_line = </span><span class="s3">False</span>
+                    <span class="s1">line = line[:-</span><span class="s5">1</span><span class="s1">]</span>
+                <span class="s0"># end handle quotations</span>
+                <span class="s1">optval = cursect.getlast(optname)</span>
+                <span class="s1">cursect.setlast(optname</span><span class="s3">, </span><span class="s1">optval + string_decode(line))</span>
+            <span class="s0"># END parse section or option</span>
+        <span class="s0"># END while reading</span>
+
+        <span class="s0"># if any parsing errors occurred, raise an exception</span>
+        <span class="s3">if </span><span class="s1">e:</span>
+            <span class="s3">raise </span><span class="s1">e</span>
+
+    <span class="s3">def </span><span class="s1">_has_includes(self) -&gt; Union[bool</span><span class="s3">, </span><span class="s1">int]:</span>
+        <span class="s3">return </span><span class="s1">self._merge_includes </span><span class="s3">and </span><span class="s1">len(self._included_paths())</span>
+
+    <span class="s3">def </span><span class="s1">_included_paths(self) -&gt; List[Tuple[str</span><span class="s3">, </span><span class="s1">str]]:</span>
+        <span class="s2">&quot;&quot;&quot;Return List all paths that must be included to configuration 
+        as Tuples of (option, value). 
+        &quot;&quot;&quot;</span>
+        <span class="s1">paths = []</span>
+
+        <span class="s3">for </span><span class="s1">section </span><span class="s3">in </span><span class="s1">self.sections():</span>
+            <span class="s3">if </span><span class="s1">section == </span><span class="s4">&quot;include&quot;</span><span class="s1">:</span>
+                <span class="s1">paths += self.items(section)</span>
+
+            <span class="s1">match = CONDITIONAL_INCLUDE_REGEXP.search(section)</span>
+            <span class="s3">if </span><span class="s1">match </span><span class="s3">is None or </span><span class="s1">self._repo </span><span class="s3">is None</span><span class="s1">:</span>
+                <span class="s3">continue</span>
+
+            <span class="s1">keyword = match.group(</span><span class="s5">1</span><span class="s1">)</span>
+            <span class="s1">value = match.group(</span><span class="s5">2</span><span class="s1">).strip()</span>
+
+            <span class="s3">if </span><span class="s1">keyword </span><span class="s3">in </span><span class="s1">[</span><span class="s4">&quot;gitdir&quot;</span><span class="s3">, </span><span class="s4">&quot;gitdir/i&quot;</span><span class="s1">]:</span>
+                <span class="s1">value = osp.expanduser(value)</span>
+
+                <span class="s3">if not </span><span class="s1">any(value.startswith(s) </span><span class="s3">for </span><span class="s1">s </span><span class="s3">in </span><span class="s1">[</span><span class="s4">&quot;./&quot;</span><span class="s3">, </span><span class="s4">&quot;/&quot;</span><span class="s1">]):</span>
+                    <span class="s1">value = </span><span class="s4">&quot;**/&quot; </span><span class="s1">+ value</span>
+                <span class="s3">if </span><span class="s1">value.endswith(</span><span class="s4">&quot;/&quot;</span><span class="s1">):</span>
+                    <span class="s1">value += </span><span class="s4">&quot;**&quot;</span>
+
+                <span class="s0"># Ensure that glob is always case insensitive if required.</span>
+                <span class="s3">if </span><span class="s1">keyword.endswith(</span><span class="s4">&quot;/i&quot;</span><span class="s1">):</span>
+                    <span class="s1">value = re.sub(</span>
+                        <span class="s4">r&quot;[a-zA-Z]&quot;</span><span class="s3">,</span>
+                        <span class="s3">lambda </span><span class="s1">m: </span><span class="s4">&quot;[{}{}]&quot;</span><span class="s1">.format(m.group().lower()</span><span class="s3">, </span><span class="s1">m.group().upper())</span><span class="s3">,</span>
+                        <span class="s1">value</span><span class="s3">,</span>
+                    <span class="s1">)</span>
+                <span class="s3">if </span><span class="s1">self._repo.git_dir:</span>
+                    <span class="s3">if </span><span class="s1">fnmatch.fnmatchcase(str(self._repo.git_dir)</span><span class="s3">, </span><span class="s1">value):</span>
+                        <span class="s1">paths += self.items(section)</span>
+
+            <span class="s3">elif </span><span class="s1">keyword == </span><span class="s4">&quot;onbranch&quot;</span><span class="s1">:</span>
+                <span class="s3">try</span><span class="s1">:</span>
+                    <span class="s1">branch_name = self._repo.active_branch.name</span>
+                <span class="s3">except </span><span class="s1">TypeError:</span>
+                    <span class="s0"># Ignore section if active branch cannot be retrieved.</span>
+                    <span class="s3">continue</span>
+
+                <span class="s3">if </span><span class="s1">fnmatch.fnmatchcase(branch_name</span><span class="s3">, </span><span class="s1">value):</span>
+                    <span class="s1">paths += self.items(section)</span>
+
+        <span class="s3">return </span><span class="s1">paths</span>
+
+    <span class="s3">def </span><span class="s1">read(self) -&gt; </span><span class="s3">None</span><span class="s1">:  </span><span class="s0"># type: ignore[override]</span>
+        <span class="s2">&quot;&quot;&quot;Reads the data stored in the files we have been initialized with. It will 
+        ignore files that cannot be read, possibly leaving an empty configuration 
+ 
+        :return: Nothing 
+        :raise IOError: if a file cannot be handled&quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">self._is_initialized:</span>
+            <span class="s3">return None</span>
+        <span class="s1">self._is_initialized = </span><span class="s3">True</span>
+
+        <span class="s1">files_to_read: List[Union[PathLike</span><span class="s3">, </span><span class="s1">IO]] = [</span><span class="s4">&quot;&quot;</span><span class="s1">]</span>
+        <span class="s3">if </span><span class="s1">isinstance(self._file_or_files</span><span class="s3">, </span><span class="s1">(str</span><span class="s3">, </span><span class="s1">os.PathLike)):</span>
+            <span class="s0"># for str or Path, as str is a type of Sequence</span>
+            <span class="s1">files_to_read = [self._file_or_files]</span>
+        <span class="s3">elif not </span><span class="s1">isinstance(self._file_or_files</span><span class="s3">, </span><span class="s1">(tuple</span><span class="s3">, </span><span class="s1">list</span><span class="s3">, </span><span class="s1">Sequence)):</span>
+            <span class="s0"># could merge with above isinstance once runtime type known</span>
+            <span class="s1">files_to_read = [self._file_or_files]</span>
+        <span class="s3">else</span><span class="s1">:  </span><span class="s0"># for lists or tuples</span>
+            <span class="s1">files_to_read = list(self._file_or_files)</span>
+        <span class="s0"># end assure we have a copy of the paths to handle</span>
+
+        <span class="s1">seen = set(files_to_read)</span>
+        <span class="s1">num_read_include_files = </span><span class="s5">0</span>
+        <span class="s3">while </span><span class="s1">files_to_read:</span>
+            <span class="s1">file_path = files_to_read.pop(</span><span class="s5">0</span><span class="s1">)</span>
+            <span class="s1">file_ok = </span><span class="s3">False</span>
+
+            <span class="s3">if </span><span class="s1">hasattr(file_path</span><span class="s3">, </span><span class="s4">&quot;seek&quot;</span><span class="s1">):</span>
+                <span class="s0"># must be a file objectfile-object</span>
+                <span class="s1">file_path = cast(IO[bytes]</span><span class="s3">, </span><span class="s1">file_path)  </span><span class="s0"># replace with assert to narrow type, once sure</span>
+                <span class="s1">self._read(file_path</span><span class="s3">, </span><span class="s1">file_path.name)</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s0"># assume a path if it is not a file-object</span>
+                <span class="s1">file_path = cast(PathLike</span><span class="s3">, </span><span class="s1">file_path)</span>
+                <span class="s3">try</span><span class="s1">:</span>
+                    <span class="s3">with </span><span class="s1">open(file_path</span><span class="s3">, </span><span class="s4">&quot;rb&quot;</span><span class="s1">) </span><span class="s3">as </span><span class="s1">fp:</span>
+                        <span class="s1">file_ok = </span><span class="s3">True</span>
+                        <span class="s1">self._read(fp</span><span class="s3">, </span><span class="s1">fp.name)</span>
+                <span class="s3">except </span><span class="s1">IOError:</span>
+                    <span class="s3">continue</span>
+
+            <span class="s0"># Read includes and append those that we didn't handle yet</span>
+            <span class="s0"># We expect all paths to be normalized and absolute (and will assure that is the case)</span>
+            <span class="s3">if </span><span class="s1">self._has_includes():</span>
+                <span class="s3">for </span><span class="s1">_</span><span class="s3">, </span><span class="s1">include_path </span><span class="s3">in </span><span class="s1">self._included_paths():</span>
+                    <span class="s3">if </span><span class="s1">include_path.startswith(</span><span class="s4">&quot;~&quot;</span><span class="s1">):</span>
+                        <span class="s1">include_path = osp.expanduser(include_path)</span>
+                    <span class="s3">if not </span><span class="s1">osp.isabs(include_path):</span>
+                        <span class="s3">if not </span><span class="s1">file_ok:</span>
+                            <span class="s3">continue</span>
+                        <span class="s0"># end ignore relative paths if we don't know the configuration file path</span>
+                        <span class="s1">file_path = cast(PathLike</span><span class="s3">, </span><span class="s1">file_path)</span>
+                        <span class="s3">assert </span><span class="s1">osp.isabs(file_path)</span><span class="s3">, </span><span class="s4">&quot;Need absolute paths to be sure our cycle checks will work&quot;</span>
+                        <span class="s1">include_path = osp.join(osp.dirname(file_path)</span><span class="s3">, </span><span class="s1">include_path)</span>
+                    <span class="s0"># end make include path absolute</span>
+                    <span class="s1">include_path = osp.normpath(include_path)</span>
+                    <span class="s3">if </span><span class="s1">include_path </span><span class="s3">in </span><span class="s1">seen </span><span class="s3">or not </span><span class="s1">os.access(include_path</span><span class="s3">, </span><span class="s1">os.R_OK):</span>
+                        <span class="s3">continue</span>
+                    <span class="s1">seen.add(include_path)</span>
+                    <span class="s0"># insert included file to the top to be considered first</span>
+                    <span class="s1">files_to_read.insert(</span><span class="s5">0</span><span class="s3">, </span><span class="s1">include_path)</span>
+                    <span class="s1">num_read_include_files += </span><span class="s5">1</span>
+                <span class="s0"># each include path in configuration file</span>
+            <span class="s0"># end handle includes</span>
+        <span class="s0"># END for each file object to read</span>
+
+        <span class="s0"># If there was no file included, we can safely write back (potentially) the configuration file</span>
+        <span class="s0"># without altering it's meaning</span>
+        <span class="s3">if </span><span class="s1">num_read_include_files == </span><span class="s5">0</span><span class="s1">:</span>
+            <span class="s1">self._merge_includes = </span><span class="s3">False</span>
+        <span class="s0"># end</span>
+
+    <span class="s3">def </span><span class="s1">_write(self</span><span class="s3">, </span><span class="s1">fp: IO) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Write an .ini-format representation of the configuration state in 
+        git compatible format&quot;&quot;&quot;</span>
+
+        <span class="s3">def </span><span class="s1">write_section(name: str</span><span class="s3">, </span><span class="s1">section_dict: _OMD) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+            <span class="s1">fp.write((</span><span class="s4">&quot;[%s]</span><span class="s3">\n</span><span class="s4">&quot; </span><span class="s1">% name).encode(defenc))</span>
+
+            <span class="s1">values: Sequence[str]  </span><span class="s0"># runtime only gets str in tests, but should be whatever _OMD stores</span>
+            <span class="s1">v: str</span>
+            <span class="s3">for </span><span class="s1">(key</span><span class="s3">, </span><span class="s1">values) </span><span class="s3">in </span><span class="s1">section_dict.items_all():</span>
+                <span class="s3">if </span><span class="s1">key == </span><span class="s4">&quot;__name__&quot;</span><span class="s1">:</span>
+                    <span class="s3">continue</span>
+
+                <span class="s3">for </span><span class="s1">v </span><span class="s3">in </span><span class="s1">values:</span>
+                    <span class="s1">fp.write((</span><span class="s4">&quot;</span><span class="s3">\t</span><span class="s4">%s = %s</span><span class="s3">\n</span><span class="s4">&quot; </span><span class="s1">% (key</span><span class="s3">, </span><span class="s1">self._value_to_string(v).replace(</span><span class="s4">&quot;</span><span class="s3">\n</span><span class="s4">&quot;</span><span class="s3">, </span><span class="s4">&quot;</span><span class="s3">\n\t</span><span class="s4">&quot;</span><span class="s1">))).encode(defenc))</span>
+                <span class="s0"># END if key is not __name__</span>
+
+        <span class="s0"># END section writing</span>
+
+        <span class="s3">if </span><span class="s1">self._defaults:</span>
+            <span class="s1">write_section(cp.DEFAULTSECT</span><span class="s3">, </span><span class="s1">self._defaults)</span>
+        <span class="s1">value: _OMD</span>
+
+        <span class="s3">for </span><span class="s1">name</span><span class="s3">, </span><span class="s1">value </span><span class="s3">in </span><span class="s1">self._sections.items():</span>
+            <span class="s1">write_section(name</span><span class="s3">, </span><span class="s1">value)</span>
+
+    <span class="s3">def </span><span class="s1">items(self</span><span class="s3">, </span><span class="s1">section_name: str) -&gt; List[Tuple[str</span><span class="s3">, </span><span class="s1">str]]:  </span><span class="s0"># type: ignore[override]</span>
+        <span class="s2">&quot;&quot;&quot;:return: list((option, value), ...) pairs of all items in the given section&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">[(k</span><span class="s3">, </span><span class="s1">v) </span><span class="s3">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s3">in </span><span class="s1">super(GitConfigParser</span><span class="s3">, </span><span class="s1">self).items(section_name) </span><span class="s3">if </span><span class="s1">k != </span><span class="s4">&quot;__name__&quot;</span><span class="s1">]</span>
+
+    <span class="s3">def </span><span class="s1">items_all(self</span><span class="s3">, </span><span class="s1">section_name: str) -&gt; List[Tuple[str</span><span class="s3">, </span><span class="s1">List[str]]]:</span>
+        <span class="s2">&quot;&quot;&quot;:return: list((option, [values...]), ...) pairs of all items in the given section&quot;&quot;&quot;</span>
+        <span class="s1">rv = _OMD(self._defaults)</span>
+
+        <span class="s3">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">vs </span><span class="s3">in </span><span class="s1">self._sections[section_name].items_all():</span>
+            <span class="s3">if </span><span class="s1">k == </span><span class="s4">&quot;__name__&quot;</span><span class="s1">:</span>
+                <span class="s3">continue</span>
+
+            <span class="s3">if </span><span class="s1">k </span><span class="s3">in </span><span class="s1">rv </span><span class="s3">and </span><span class="s1">rv.getall(k) == vs:</span>
+                <span class="s3">continue</span>
+
+            <span class="s3">for </span><span class="s1">v </span><span class="s3">in </span><span class="s1">vs:</span>
+                <span class="s1">rv.add(k</span><span class="s3">, </span><span class="s1">v)</span>
+
+        <span class="s3">return </span><span class="s1">rv.items_all()</span>
+
+    <span class="s1">@needs_values</span>
+    <span class="s3">def </span><span class="s1">write(self) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Write changes to our file, if there are changes at all 
+ 
+        :raise IOError: if this is a read-only writer instance or if we could not obtain 
+            a file lock&quot;&quot;&quot;</span>
+        <span class="s1">self._assure_writable(</span><span class="s4">&quot;write&quot;</span><span class="s1">)</span>
+        <span class="s3">if not </span><span class="s1">self._dirty:</span>
+            <span class="s3">return None</span>
+
+        <span class="s3">if </span><span class="s1">isinstance(self._file_or_files</span><span class="s3">, </span><span class="s1">(list</span><span class="s3">, </span><span class="s1">tuple)):</span>
+            <span class="s3">raise </span><span class="s1">AssertionError(</span>
+                <span class="s4">&quot;Cannot write back if there is not exactly a single file to write to, have %i files&quot;</span>
+                <span class="s1">% len(self._file_or_files)</span>
+            <span class="s1">)</span>
+        <span class="s0"># end assert multiple files</span>
+
+        <span class="s3">if </span><span class="s1">self._has_includes():</span>
+            <span class="s1">log.debug(</span>
+                <span class="s4">&quot;Skipping write-back of configuration file as include files were merged in.&quot;</span>
+                <span class="s1">+ </span><span class="s4">&quot;Set merge_includes=False to prevent this.&quot;</span>
+            <span class="s1">)</span>
+            <span class="s3">return None</span>
+        <span class="s0"># end</span>
+
+        <span class="s1">fp = self._file_or_files</span>
+
+        <span class="s0"># we have a physical file on disk, so get a lock</span>
+        <span class="s1">is_file_lock = isinstance(fp</span><span class="s3">, </span><span class="s1">(str</span><span class="s3">, </span><span class="s1">os.PathLike</span><span class="s3">, </span><span class="s1">IOBase))  </span><span class="s0"># can't use Pathlike until 3.5 dropped</span>
+        <span class="s3">if </span><span class="s1">is_file_lock </span><span class="s3">and </span><span class="s1">self._lock </span><span class="s3">is not None</span><span class="s1">:  </span><span class="s0"># else raise Error?</span>
+            <span class="s1">self._lock._obtain_lock()</span>
+
+        <span class="s3">if not </span><span class="s1">hasattr(fp</span><span class="s3">, </span><span class="s4">&quot;seek&quot;</span><span class="s1">):</span>
+            <span class="s1">fp = cast(PathLike</span><span class="s3">, </span><span class="s1">fp)</span>
+            <span class="s3">with </span><span class="s1">open(fp</span><span class="s3">, </span><span class="s4">&quot;wb&quot;</span><span class="s1">) </span><span class="s3">as </span><span class="s1">fp_open:</span>
+                <span class="s1">self._write(fp_open)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">fp = cast(</span><span class="s4">&quot;BytesIO&quot;</span><span class="s3">, </span><span class="s1">fp)</span>
+            <span class="s1">fp.seek(</span><span class="s5">0</span><span class="s1">)</span>
+            <span class="s0"># make sure we do not overwrite into an existing file</span>
+            <span class="s3">if </span><span class="s1">hasattr(fp</span><span class="s3">, </span><span class="s4">&quot;truncate&quot;</span><span class="s1">):</span>
+                <span class="s1">fp.truncate()</span>
+            <span class="s1">self._write(fp)</span>
+
+    <span class="s3">def </span><span class="s1">_assure_writable(self</span><span class="s3">, </span><span class="s1">method_name: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if </span><span class="s1">self.read_only:</span>
+            <span class="s3">raise </span><span class="s1">IOError(</span><span class="s4">&quot;Cannot execute non-constant method %s.%s&quot; </span><span class="s1">% (self</span><span class="s3">, </span><span class="s1">method_name))</span>
+
+    <span class="s3">def </span><span class="s1">add_section(self</span><span class="s3">, </span><span class="s1">section: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Assures added options will stay in order&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">super(GitConfigParser</span><span class="s3">, </span><span class="s1">self).add_section(section)</span>
+
+    <span class="s1">@property</span>
+    <span class="s3">def </span><span class="s1">read_only(self) -&gt; bool:</span>
+        <span class="s2">&quot;&quot;&quot;:return: True if this instance may change the configuration file&quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self._read_only</span>
+
+    <span class="s3">def </span><span class="s1">get_value(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">section: str</span><span class="s3">,</span>
+        <span class="s1">option: str</span><span class="s3">,</span>
+        <span class="s1">default: Union[int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">, </span><span class="s1">str</span><span class="s3">, </span><span class="s1">bool</span><span class="s3">, None</span><span class="s1">] = </span><span class="s3">None,</span>
+    <span class="s1">) -&gt; Union[int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">, </span><span class="s1">str</span><span class="s3">, </span><span class="s1">bool]:</span>
+        <span class="s0"># can default or return type include bool?</span>
+        <span class="s2">&quot;&quot;&quot;Get an option's value. 
+ 
+        If multiple values are specified for this option in the section, the 
+        last one specified is returned. 
+ 
+        :param default: 
+            If not None, the given default value will be returned in case 
+            the option did not exist 
+        :return: a properly typed value, either int, float or string 
+ 
+        :raise TypeError: in case the value could not be understood 
+            Otherwise the exceptions known to the ConfigParser will be raised.&quot;&quot;&quot;</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">valuestr = self.get(section</span><span class="s3">, </span><span class="s1">option)</span>
+        <span class="s3">except </span><span class="s1">Exception:</span>
+            <span class="s3">if </span><span class="s1">default </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">default</span>
+            <span class="s3">raise</span>
+
+        <span class="s3">return </span><span class="s1">self._string_to_value(valuestr)</span>
+
+    <span class="s3">def </span><span class="s1">get_values(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">section: str</span><span class="s3">,</span>
+        <span class="s1">option: str</span><span class="s3">,</span>
+        <span class="s1">default: Union[int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">, </span><span class="s1">str</span><span class="s3">, </span><span class="s1">bool</span><span class="s3">, None</span><span class="s1">] = </span><span class="s3">None,</span>
+    <span class="s1">) -&gt; List[Union[int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">, </span><span class="s1">str</span><span class="s3">, </span><span class="s1">bool]]:</span>
+        <span class="s2">&quot;&quot;&quot;Get an option's values. 
+ 
+        If multiple values are specified for this option in the section, all are 
+        returned. 
+ 
+        :param default: 
+            If not None, a list containing the given default value will be 
+            returned in case the option did not exist 
+        :return: a list of properly typed values, either int, float or string 
+ 
+        :raise TypeError: in case the value could not be understood 
+            Otherwise the exceptions known to the ConfigParser will be raised.&quot;&quot;&quot;</span>
+        <span class="s3">try</span><span class="s1">:</span>
+            <span class="s1">self.sections()</span>
+            <span class="s1">lst = self._sections[section].getall(option)</span>
+        <span class="s3">except </span><span class="s1">Exception:</span>
+            <span class="s3">if </span><span class="s1">default </span><span class="s3">is not None</span><span class="s1">:</span>
+                <span class="s3">return </span><span class="s1">[default]</span>
+            <span class="s3">raise</span>
+
+        <span class="s3">return </span><span class="s1">[self._string_to_value(valuestr) </span><span class="s3">for </span><span class="s1">valuestr </span><span class="s3">in </span><span class="s1">lst]</span>
+
+    <span class="s3">def </span><span class="s1">_string_to_value(self</span><span class="s3">, </span><span class="s1">valuestr: str) -&gt; Union[int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">, </span><span class="s1">str</span><span class="s3">, </span><span class="s1">bool]:</span>
+        <span class="s1">types = (int</span><span class="s3">, </span><span class="s1">float)</span>
+        <span class="s3">for </span><span class="s1">numtype </span><span class="s3">in </span><span class="s1">types:</span>
+            <span class="s3">try</span><span class="s1">:</span>
+                <span class="s1">val = numtype(valuestr)</span>
+                <span class="s0"># truncated value ?</span>
+                <span class="s3">if </span><span class="s1">val != float(valuestr):</span>
+                    <span class="s3">continue</span>
+                <span class="s3">return </span><span class="s1">val</span>
+            <span class="s3">except </span><span class="s1">(ValueError</span><span class="s3">, </span><span class="s1">TypeError):</span>
+                <span class="s3">continue</span>
+        <span class="s0"># END for each numeric type</span>
+
+        <span class="s0"># try boolean values as git uses them</span>
+        <span class="s1">vl = valuestr.lower()</span>
+        <span class="s3">if </span><span class="s1">vl == </span><span class="s4">&quot;false&quot;</span><span class="s1">:</span>
+            <span class="s3">return False</span>
+        <span class="s3">if </span><span class="s1">vl == </span><span class="s4">&quot;true&quot;</span><span class="s1">:</span>
+            <span class="s3">return True</span>
+
+        <span class="s3">if not </span><span class="s1">isinstance(valuestr</span><span class="s3">, </span><span class="s1">str):</span>
+            <span class="s3">raise </span><span class="s1">TypeError(</span>
+                <span class="s4">&quot;Invalid value type: only int, long, float and str are allowed&quot;</span><span class="s3">,</span>
+                <span class="s1">valuestr</span><span class="s3">,</span>
+            <span class="s1">)</span>
+
+        <span class="s3">return </span><span class="s1">valuestr</span>
+
+    <span class="s3">def </span><span class="s1">_value_to_string(self</span><span class="s3">, </span><span class="s1">value: Union[str</span><span class="s3">, </span><span class="s1">bytes</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">, </span><span class="s1">bool]) -&gt; str:</span>
+        <span class="s3">if </span><span class="s1">isinstance(value</span><span class="s3">, </span><span class="s1">(int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">, </span><span class="s1">bool)):</span>
+            <span class="s3">return </span><span class="s1">str(value)</span>
+        <span class="s3">return </span><span class="s1">force_text(value)</span>
+
+    <span class="s1">@needs_values</span>
+    <span class="s1">@set_dirty_and_flush_changes</span>
+    <span class="s3">def </span><span class="s1">set_value(self</span><span class="s3">, </span><span class="s1">section: str</span><span class="s3">, </span><span class="s1">option: str</span><span class="s3">, </span><span class="s1">value: Union[str</span><span class="s3">, </span><span class="s1">bytes</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">, </span><span class="s1">bool]) -&gt; </span><span class="s4">&quot;GitConfigParser&quot;</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Sets the given option in section to the given value. 
+        It will create the section if required, and will not throw as opposed to the default 
+        ConfigParser 'set' method. 
+ 
+        :param section: Name of the section in which the option resides or should reside 
+        :param option: Name of the options whose value to set 
+ 
+        :param value: Value to set the option to. It must be a string or convertible 
+            to a string 
+        :return: this instance&quot;&quot;&quot;</span>
+        <span class="s3">if not </span><span class="s1">self.has_section(section):</span>
+            <span class="s1">self.add_section(section)</span>
+        <span class="s1">self.set(section</span><span class="s3">, </span><span class="s1">option</span><span class="s3">, </span><span class="s1">self._value_to_string(value))</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s1">@needs_values</span>
+    <span class="s1">@set_dirty_and_flush_changes</span>
+    <span class="s3">def </span><span class="s1">add_value(self</span><span class="s3">, </span><span class="s1">section: str</span><span class="s3">, </span><span class="s1">option: str</span><span class="s3">, </span><span class="s1">value: Union[str</span><span class="s3">, </span><span class="s1">bytes</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">, </span><span class="s1">bool]) -&gt; </span><span class="s4">&quot;GitConfigParser&quot;</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Adds a value for the given option in section. 
+        It will create the section if required, and will not throw as opposed to the default 
+        ConfigParser 'set' method. The value becomes the new value of the option as returned 
+        by 'get_value', and appends to the list of values returned by 'get_values`'. 
+ 
+        :param section: Name of the section in which the option resides or should reside 
+        :param option: Name of the option 
+ 
+        :param value: Value to add to option. It must be a string or convertible 
+            to a string 
+        :return: this instance&quot;&quot;&quot;</span>
+        <span class="s3">if not </span><span class="s1">self.has_section(section):</span>
+            <span class="s1">self.add_section(section)</span>
+        <span class="s1">self._sections[section].add(option</span><span class="s3">, </span><span class="s1">self._value_to_string(value))</span>
+        <span class="s3">return </span><span class="s1">self</span>
+
+    <span class="s3">def </span><span class="s1">rename_section(self</span><span class="s3">, </span><span class="s1">section: str</span><span class="s3">, </span><span class="s1">new_name: str) -&gt; </span><span class="s4">&quot;GitConfigParser&quot;</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;rename the given section to new_name 
+        :raise ValueError: if section doesn't exit 
+        :raise ValueError: if a section with new_name does already exist 
+        :return: this instance 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if not </span><span class="s1">self.has_section(section):</span>
+            <span class="s3">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;Source section '%s' doesn't exist&quot; </span><span class="s1">% section)</span>
+        <span class="s3">if </span><span class="s1">self.has_section(new_name):</span>
+            <span class="s3">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;Destination section '%s' already exists&quot; </span><span class="s1">% new_name)</span>
+
+        <span class="s1">super(GitConfigParser</span><span class="s3">, </span><span class="s1">self).add_section(new_name)</span>
+        <span class="s1">new_section = self._sections[new_name]</span>
+        <span class="s3">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">vs </span><span class="s3">in </span><span class="s1">self.items_all(section):</span>
+            <span class="s1">new_section.setall(k</span><span class="s3">, </span><span class="s1">vs)</span>
+        <span class="s0"># end for each value to copy</span>
+
+        <span class="s0"># This call writes back the changes, which is why we don't have the respective decorator</span>
+        <span class="s1">self.remove_section(section)</span>
+        <span class="s3">return </span><span class="s1">self</span>
+</pre>
+</body>
+</html>

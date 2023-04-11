@@ -1,0 +1,685 @@
+<html>
+<head>
+<title>diff.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6a8759;}
+.s4 { color: #a5c261;}
+.s5 { color: #6897bb;}
+.s6 { color: #629755; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+diff.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># diff.py</span>
+<span class="s0"># Copyright (C) 2008, 2009 Michael Trier (mtrier@gmail.com) and contributors</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of GitPython and is released under</span>
+<span class="s0"># the BSD License: http://www.opensource.org/licenses/bsd-license.php</span>
+
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">from </span><span class="s1">git.cmd </span><span class="s2">import </span><span class="s1">handle_process_output</span>
+<span class="s2">from </span><span class="s1">git.compat </span><span class="s2">import </span><span class="s1">defenc</span>
+<span class="s2">from </span><span class="s1">git.util </span><span class="s2">import </span><span class="s1">finalize_process</span><span class="s2">, </span><span class="s1">hex_to_bin</span>
+
+<span class="s2">from </span><span class="s1">.objects.blob </span><span class="s2">import </span><span class="s1">Blob</span>
+<span class="s2">from </span><span class="s1">.objects.util </span><span class="s2">import </span><span class="s1">mode_str_to_int</span>
+
+
+<span class="s0"># typing ------------------------------------------------------------------</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">(</span>
+    <span class="s1">Any</span><span class="s2">,</span>
+    <span class="s1">Iterator</span><span class="s2">,</span>
+    <span class="s1">List</span><span class="s2">,</span>
+    <span class="s1">Match</span><span class="s2">,</span>
+    <span class="s1">Optional</span><span class="s2">,</span>
+    <span class="s1">Tuple</span><span class="s2">,</span>
+    <span class="s1">Type</span><span class="s2">,</span>
+    <span class="s1">TypeVar</span><span class="s2">,</span>
+    <span class="s1">Union</span><span class="s2">,</span>
+    <span class="s1">TYPE_CHECKING</span><span class="s2">,</span>
+    <span class="s1">cast</span><span class="s2">,</span>
+<span class="s1">)</span>
+<span class="s2">from </span><span class="s1">git.types </span><span class="s2">import </span><span class="s1">PathLike</span><span class="s2">, </span><span class="s1">Literal</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">.objects.tree </span><span class="s2">import </span><span class="s1">Tree</span>
+    <span class="s2">from </span><span class="s1">.objects </span><span class="s2">import </span><span class="s1">Commit</span>
+    <span class="s2">from </span><span class="s1">git.repo.base </span><span class="s2">import </span><span class="s1">Repo</span>
+    <span class="s2">from </span><span class="s1">git.objects.base </span><span class="s2">import </span><span class="s1">IndexObject</span>
+    <span class="s2">from </span><span class="s1">subprocess </span><span class="s2">import </span><span class="s1">Popen</span>
+    <span class="s2">from </span><span class="s1">git </span><span class="s2">import </span><span class="s1">Git</span>
+
+<span class="s1">Lit_change_type = Literal[</span><span class="s3">&quot;A&quot;</span><span class="s2">, </span><span class="s3">&quot;D&quot;</span><span class="s2">, </span><span class="s3">&quot;C&quot;</span><span class="s2">, </span><span class="s3">&quot;M&quot;</span><span class="s2">, </span><span class="s3">&quot;R&quot;</span><span class="s2">, </span><span class="s3">&quot;T&quot;</span><span class="s2">, </span><span class="s3">&quot;U&quot;</span><span class="s1">]</span>
+
+
+<span class="s0"># def is_change_type(inp: str) -&gt; TypeGuard[Lit_change_type]:</span>
+<span class="s0">#     # return True</span>
+<span class="s0">#     return inp in ['A', 'D', 'C', 'M', 'R', 'T', 'U']</span>
+
+<span class="s0"># ------------------------------------------------------------------------</span>
+
+
+<span class="s1">__all__ = (</span><span class="s3">&quot;Diffable&quot;</span><span class="s2">, </span><span class="s3">&quot;DiffIndex&quot;</span><span class="s2">, </span><span class="s3">&quot;Diff&quot;</span><span class="s2">, </span><span class="s3">&quot;NULL_TREE&quot;</span><span class="s1">)</span>
+
+<span class="s0"># Special object to compare against the empty tree in diffs</span>
+<span class="s1">NULL_TREE = object()</span>
+
+<span class="s1">_octal_byte_re = re.compile(</span><span class="s4">b&quot;</span><span class="s2">\\\\</span><span class="s4">([0-9]{3})&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">_octal_repl(matchobj: Match) -&gt; bytes:</span>
+    <span class="s1">value = matchobj.group(</span><span class="s5">1</span><span class="s1">)</span>
+    <span class="s1">value = int(value</span><span class="s2">, </span><span class="s5">8</span><span class="s1">)</span>
+    <span class="s1">value = bytes(bytearray((value</span><span class="s2">,</span><span class="s1">)))</span>
+    <span class="s2">return </span><span class="s1">value</span>
+
+
+<span class="s2">def </span><span class="s1">decode_path(path: bytes</span><span class="s2">, </span><span class="s1">has_ab_prefix: bool = </span><span class="s2">True</span><span class="s1">) -&gt; Optional[bytes]:</span>
+    <span class="s2">if </span><span class="s1">path == </span><span class="s4">b&quot;/dev/null&quot;</span><span class="s1">:</span>
+        <span class="s2">return None</span>
+
+    <span class="s2">if </span><span class="s1">path.startswith(</span><span class="s4">b'&quot;'</span><span class="s1">) </span><span class="s2">and </span><span class="s1">path.endswith(</span><span class="s4">b'&quot;'</span><span class="s1">):</span>
+        <span class="s1">path = path[</span><span class="s5">1</span><span class="s1">:-</span><span class="s5">1</span><span class="s1">].replace(</span><span class="s4">b&quot;</span><span class="s2">\\</span><span class="s4">n&quot;</span><span class="s2">, </span><span class="s4">b&quot;</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s1">).replace(</span><span class="s4">b&quot;</span><span class="s2">\\</span><span class="s4">t&quot;</span><span class="s2">, </span><span class="s4">b&quot;</span><span class="s2">\t</span><span class="s4">&quot;</span><span class="s1">).replace(</span><span class="s4">b'</span><span class="s2">\\</span><span class="s4">&quot;'</span><span class="s2">, </span><span class="s4">b'&quot;'</span><span class="s1">).replace(</span><span class="s4">b&quot;</span><span class="s2">\\\\</span><span class="s4">&quot;</span><span class="s2">, </span><span class="s4">b&quot;</span><span class="s2">\\</span><span class="s4">&quot;</span><span class="s1">)</span>
+
+    <span class="s1">path = _octal_byte_re.sub(_octal_repl</span><span class="s2">, </span><span class="s1">path)</span>
+
+    <span class="s2">if </span><span class="s1">has_ab_prefix:</span>
+        <span class="s2">assert </span><span class="s1">path.startswith(</span><span class="s4">b&quot;a/&quot;</span><span class="s1">) </span><span class="s2">or </span><span class="s1">path.startswith(</span><span class="s4">b&quot;b/&quot;</span><span class="s1">)</span>
+        <span class="s1">path = path[</span><span class="s5">2</span><span class="s1">:]</span>
+
+    <span class="s2">return </span><span class="s1">path</span>
+
+
+<span class="s2">class </span><span class="s1">Diffable(object):</span>
+
+    <span class="s6">&quot;&quot;&quot;Common interface for all object that can be diffed against another object of compatible type. 
+ 
+    :note: 
+        Subclasses require a repo member as it is the case for Object instances, for practical 
+        reasons we do not derive from Object.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s0"># standin indicating you want to diff against the index</span>
+    <span class="s2">class </span><span class="s1">Index(object):</span>
+        <span class="s2">pass</span>
+
+    <span class="s2">def </span><span class="s1">_process_diff_args(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">args: List[Union[str</span><span class="s2">, </span><span class="s3">&quot;Diffable&quot;</span><span class="s2">, </span><span class="s1">Type[</span><span class="s3">&quot;Diffable.Index&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s1">object]]</span>
+    <span class="s1">) -&gt; List[Union[str</span><span class="s2">, </span><span class="s3">&quot;Diffable&quot;</span><span class="s2">, </span><span class="s1">Type[</span><span class="s3">&quot;Diffable.Index&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s1">object]]:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        :return: 
+            possibly altered version of the given args list. 
+            Method is called right before git command execution. 
+            Subclasses can use it to alter the behaviour of the superclass&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">args</span>
+
+    <span class="s2">def </span><span class="s1">diff(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">other: Union[Type[</span><span class="s3">&quot;Index&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s3">&quot;Tree&quot;</span><span class="s2">, </span><span class="s3">&quot;Commit&quot;</span><span class="s2">, None, </span><span class="s1">str</span><span class="s2">, </span><span class="s1">object] = Index</span><span class="s2">,</span>
+        <span class="s1">paths: Union[PathLike</span><span class="s2">, </span><span class="s1">List[PathLike]</span><span class="s2">, </span><span class="s1">Tuple[PathLike</span><span class="s2">, </span><span class="s1">...]</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">create_patch: bool = </span><span class="s2">False,</span>
+        <span class="s1">**kwargs: Any</span><span class="s2">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;DiffIndex&quot;</span><span class="s1">:</span>
+        <span class="s6">&quot;&quot;&quot;Creates diffs between two items being trees, trees and index or an 
+        index and the working tree. It will detect renames automatically. 
+ 
+        :param other: 
+            Is the item to compare us with. 
+            If None, we will be compared to the working tree. 
+            If Treeish, it will be compared against the respective tree 
+            If Index ( type ), it will be compared against the index. 
+            If git.NULL_TREE, it will compare against the empty tree. 
+            It defaults to Index to assure the method will not by-default fail 
+            on bare repositories. 
+ 
+        :param paths: 
+            is a list of paths or a single path to limit the diff to. 
+            It will only include at least one of the given path or paths. 
+ 
+        :param create_patch: 
+            If True, the returned Diff contains a detailed patch that if applied 
+            makes the self to other. Patches are somewhat costly as blobs have to be read 
+            and diffed. 
+ 
+        :param kwargs: 
+            Additional arguments passed to git-diff, such as 
+            R=True to swap both sides of the diff. 
+ 
+        :return: git.DiffIndex 
+ 
+        :note: 
+            On a bare repository, 'other' needs to be provided as Index or as 
+            as Tree/Commit, or a git command error will occur&quot;&quot;&quot;</span>
+        <span class="s1">args: List[Union[PathLike</span><span class="s2">, </span><span class="s1">Diffable</span><span class="s2">, </span><span class="s1">Type[</span><span class="s3">&quot;Diffable.Index&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s1">object]] = []</span>
+        <span class="s1">args.append(</span><span class="s3">&quot;--abbrev=40&quot;</span><span class="s1">)  </span><span class="s0"># we need full shas</span>
+        <span class="s1">args.append(</span><span class="s3">&quot;--full-index&quot;</span><span class="s1">)  </span><span class="s0"># get full index paths, not only filenames</span>
+
+        <span class="s0"># remove default '-M' arg (check for renames) if user is overriding it</span>
+        <span class="s2">if not </span><span class="s1">any(x </span><span class="s2">in </span><span class="s1">kwargs </span><span class="s2">for </span><span class="s1">x </span><span class="s2">in </span><span class="s1">(</span><span class="s3">'find_renames'</span><span class="s2">, </span><span class="s3">'no_renames'</span><span class="s2">, </span><span class="s3">'M'</span><span class="s1">)):</span>
+            <span class="s1">args.append(</span><span class="s3">&quot;-M&quot;</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">create_patch:</span>
+            <span class="s1">args.append(</span><span class="s3">&quot;-p&quot;</span><span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">args.append(</span><span class="s3">&quot;--raw&quot;</span><span class="s1">)</span>
+            <span class="s1">args.append(</span><span class="s3">&quot;-z&quot;</span><span class="s1">)</span>
+
+        <span class="s0"># in any way, assure we don't see colored output,</span>
+        <span class="s0"># fixes https://github.com/gitpython-developers/GitPython/issues/172</span>
+        <span class="s1">args.append(</span><span class="s3">&quot;--no-color&quot;</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">paths </span><span class="s2">is not None and not </span><span class="s1">isinstance(paths</span><span class="s2">, </span><span class="s1">(tuple</span><span class="s2">, </span><span class="s1">list)):</span>
+            <span class="s1">paths = [paths]</span>
+
+        <span class="s2">if </span><span class="s1">hasattr(self</span><span class="s2">, </span><span class="s3">&quot;Has_Repo&quot;</span><span class="s1">):</span>
+            <span class="s1">self.repo: </span><span class="s3">&quot;Repo&quot; </span><span class="s1">= self.repo</span>
+
+        <span class="s1">diff_cmd = self.repo.git.diff</span>
+        <span class="s2">if </span><span class="s1">other </span><span class="s2">is </span><span class="s1">self.Index:</span>
+            <span class="s1">args.insert(</span><span class="s5">0</span><span class="s2">, </span><span class="s3">&quot;--cached&quot;</span><span class="s1">)</span>
+        <span class="s2">elif </span><span class="s1">other </span><span class="s2">is </span><span class="s1">NULL_TREE:</span>
+            <span class="s1">args.insert(</span><span class="s5">0</span><span class="s2">, </span><span class="s3">&quot;-r&quot;</span><span class="s1">)  </span><span class="s0"># recursive diff-tree</span>
+            <span class="s1">args.insert(</span><span class="s5">0</span><span class="s2">, </span><span class="s3">&quot;--root&quot;</span><span class="s1">)</span>
+            <span class="s1">diff_cmd = self.repo.git.diff_tree</span>
+        <span class="s2">elif </span><span class="s1">other </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">args.insert(</span><span class="s5">0</span><span class="s2">, </span><span class="s3">&quot;-r&quot;</span><span class="s1">)  </span><span class="s0"># recursive diff-tree</span>
+            <span class="s1">args.insert(</span><span class="s5">0</span><span class="s2">, </span><span class="s1">other)</span>
+            <span class="s1">diff_cmd = self.repo.git.diff_tree</span>
+
+        <span class="s1">args.insert(</span><span class="s5">0</span><span class="s2">, </span><span class="s1">self)</span>
+
+        <span class="s0"># paths is list here or None</span>
+        <span class="s2">if </span><span class="s1">paths:</span>
+            <span class="s1">args.append(</span><span class="s3">&quot;--&quot;</span><span class="s1">)</span>
+            <span class="s1">args.extend(paths)</span>
+        <span class="s0"># END paths handling</span>
+
+        <span class="s1">kwargs[</span><span class="s3">&quot;as_process&quot;</span><span class="s1">] = </span><span class="s2">True</span>
+        <span class="s1">proc = diff_cmd(*self._process_diff_args(args)</span><span class="s2">, </span><span class="s1">**kwargs)</span>
+
+        <span class="s1">diff_method = Diff._index_from_patch_format </span><span class="s2">if </span><span class="s1">create_patch </span><span class="s2">else </span><span class="s1">Diff._index_from_raw_format</span>
+        <span class="s1">index = diff_method(self.repo</span><span class="s2">, </span><span class="s1">proc)</span>
+
+        <span class="s1">proc.wait()</span>
+        <span class="s2">return </span><span class="s1">index</span>
+
+
+<span class="s1">T_Diff = TypeVar(</span><span class="s3">&quot;T_Diff&quot;</span><span class="s2">, </span><span class="s1">bound=</span><span class="s3">&quot;Diff&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">DiffIndex(List[T_Diff]):</span>
+
+    <span class="s6">&quot;&quot;&quot;Implements an Index for diffs, allowing a list of Diffs to be queried by 
+    the diff properties. 
+ 
+    The class improves the diff handling convenience&quot;&quot;&quot;</span>
+
+    <span class="s0"># change type invariant identifying possible ways a blob can have changed</span>
+    <span class="s0"># A = Added</span>
+    <span class="s0"># D = Deleted</span>
+    <span class="s0"># R = Renamed</span>
+    <span class="s0"># M = Modified</span>
+    <span class="s0"># T = Changed in the type</span>
+    <span class="s1">change_type = (</span><span class="s3">&quot;A&quot;</span><span class="s2">, </span><span class="s3">&quot;C&quot;</span><span class="s2">, </span><span class="s3">&quot;D&quot;</span><span class="s2">, </span><span class="s3">&quot;R&quot;</span><span class="s2">, </span><span class="s3">&quot;M&quot;</span><span class="s2">, </span><span class="s3">&quot;T&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">iter_change_type(self</span><span class="s2">, </span><span class="s1">change_type: Lit_change_type) -&gt; Iterator[T_Diff]:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        :return: 
+            iterator yielding Diff instances that match the given change_type 
+ 
+        :param change_type: 
+            Member of DiffIndex.change_type, namely: 
+ 
+            * 'A' for added paths 
+            * 'D' for deleted paths 
+            * 'R' for renamed paths 
+            * 'M' for paths with modified data 
+            * 'T' for changed in the type paths 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">change_type </span><span class="s2">not in </span><span class="s1">self.change_type:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Invalid change type: %s&quot; </span><span class="s1">% change_type)</span>
+
+        <span class="s2">for </span><span class="s1">diffidx </span><span class="s2">in </span><span class="s1">self:</span>
+            <span class="s2">if </span><span class="s1">diffidx.change_type == change_type:</span>
+                <span class="s2">yield </span><span class="s1">diffidx</span>
+            <span class="s2">elif </span><span class="s1">change_type == </span><span class="s3">&quot;A&quot; </span><span class="s2">and </span><span class="s1">diffidx.new_file:</span>
+                <span class="s2">yield </span><span class="s1">diffidx</span>
+            <span class="s2">elif </span><span class="s1">change_type == </span><span class="s3">&quot;D&quot; </span><span class="s2">and </span><span class="s1">diffidx.deleted_file:</span>
+                <span class="s2">yield </span><span class="s1">diffidx</span>
+            <span class="s2">elif </span><span class="s1">change_type == </span><span class="s3">&quot;C&quot; </span><span class="s2">and </span><span class="s1">diffidx.copied_file:</span>
+                <span class="s2">yield </span><span class="s1">diffidx</span>
+            <span class="s2">elif </span><span class="s1">change_type == </span><span class="s3">&quot;R&quot; </span><span class="s2">and </span><span class="s1">diffidx.renamed:</span>
+                <span class="s2">yield </span><span class="s1">diffidx</span>
+            <span class="s2">elif </span><span class="s1">change_type == </span><span class="s3">&quot;M&quot; </span><span class="s2">and </span><span class="s1">diffidx.a_blob </span><span class="s2">and </span><span class="s1">diffidx.b_blob </span><span class="s2">and </span><span class="s1">diffidx.a_blob != diffidx.b_blob:</span>
+                <span class="s2">yield </span><span class="s1">diffidx</span>
+        <span class="s0"># END for each diff</span>
+
+
+<span class="s2">class </span><span class="s1">Diff(object):</span>
+
+    <span class="s6">&quot;&quot;&quot;A Diff contains diff information between two Trees. 
+ 
+    It contains two sides a and b of the diff, members are prefixed with 
+    &quot;a&quot; and &quot;b&quot; respectively to inidcate that. 
+ 
+    Diffs keep information about the changed blob objects, the file mode, renames, 
+    deletions and new files. 
+ 
+    There are a few cases where None has to be expected as member variable value: 
+ 
+    ``New File``:: 
+ 
+        a_mode is None 
+        a_blob is None 
+        a_path is None 
+ 
+    ``Deleted File``:: 
+ 
+        b_mode is None 
+        b_blob is None 
+        b_path is None 
+ 
+    ``Working Tree Blobs`` 
+ 
+        When comparing to working trees, the working tree blob will have a null hexsha 
+        as a corresponding object does not yet exist. The mode will be null as well. 
+        But the path will be available though. 
+        If it is listed in a diff the working tree version of the file must 
+        be different to the version in the index or tree, and hence has been modified.&quot;&quot;&quot;</span>
+
+    <span class="s0"># precompiled regex</span>
+    <span class="s1">re_header = re.compile(</span>
+        <span class="s4">rb&quot;&quot;&quot; 
+                                ^diff[ ]--git 
+                                    [ ](?P&lt;a_path_fallback&gt;&quot;?[ab]/.+?&quot;?)[ ](?P&lt;b_path_fallback&gt;&quot;?[ab]/.+?&quot;?)\n 
+                                (?:^old[ ]mode[ ](?P&lt;old_mode&gt;\d+)\n 
+                                   ^new[ ]mode[ ](?P&lt;new_mode&gt;\d+)(?:\n|$))? 
+                                (?:^similarity[ ]index[ ]\d+%\n 
+                                   ^rename[ ]from[ ](?P&lt;rename_from&gt;.*)\n 
+                                   ^rename[ ]to[ ](?P&lt;rename_to&gt;.*)(?:\n|$))? 
+                                (?:^new[ ]file[ ]mode[ ](?P&lt;new_file_mode&gt;.+)(?:\n|$))? 
+                                (?:^deleted[ ]file[ ]mode[ ](?P&lt;deleted_file_mode&gt;.+)(?:\n|$))? 
+                                (?:^similarity[ ]index[ ]\d+%\n 
+                                   ^copy[ ]from[ ].*\n 
+                                   ^copy[ ]to[ ](?P&lt;copied_file_name&gt;.*)(?:\n|$))? 
+                                (?:^index[ ](?P&lt;a_blob_id&gt;[0-9A-Fa-f]+) 
+                                    \.\.(?P&lt;b_blob_id&gt;[0-9A-Fa-f]+)[ ]?(?P&lt;b_mode&gt;.+)?(?:\n|$))? 
+                                (?:^---[ ](?P&lt;a_path&gt;[^\t\n\r\f\v]*)[\t\r\f\v]*(?:\n|$))? 
+                                (?:^\+\+\+[ ](?P&lt;b_path&gt;[^\t\n\r\f\v]*)[\t\r\f\v]*(?:\n|$))? 
+                            &quot;&quot;&quot;</span><span class="s2">,</span>
+        <span class="s1">re.VERBOSE | re.MULTILINE</span><span class="s2">,</span>
+    <span class="s1">)</span>
+    <span class="s0"># can be used for comparisons</span>
+    <span class="s1">NULL_HEX_SHA = </span><span class="s3">&quot;0&quot; </span><span class="s1">* </span><span class="s5">40</span>
+    <span class="s1">NULL_BIN_SHA = </span><span class="s4">b&quot;</span><span class="s2">\0</span><span class="s4">&quot; </span><span class="s1">* </span><span class="s5">20</span>
+
+    <span class="s1">__slots__ = (</span>
+        <span class="s3">&quot;a_blob&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;b_blob&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;a_mode&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;b_mode&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;a_rawpath&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;b_rawpath&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;new_file&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;deleted_file&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;copied_file&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;raw_rename_from&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;raw_rename_to&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;diff&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;change_type&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;score&quot;</span><span class="s2">,</span>
+    <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s2">,</span>
+        <span class="s1">a_rawpath: Optional[bytes]</span><span class="s2">,</span>
+        <span class="s1">b_rawpath: Optional[bytes]</span><span class="s2">,</span>
+        <span class="s1">a_blob_id: Union[str</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">, None</span><span class="s1">]</span><span class="s2">,</span>
+        <span class="s1">b_blob_id: Union[str</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">, None</span><span class="s1">]</span><span class="s2">,</span>
+        <span class="s1">a_mode: Union[bytes</span><span class="s2">, </span><span class="s1">str</span><span class="s2">, None</span><span class="s1">]</span><span class="s2">,</span>
+        <span class="s1">b_mode: Union[bytes</span><span class="s2">, </span><span class="s1">str</span><span class="s2">, None</span><span class="s1">]</span><span class="s2">,</span>
+        <span class="s1">new_file: bool</span><span class="s2">,</span>
+        <span class="s1">deleted_file: bool</span><span class="s2">,</span>
+        <span class="s1">copied_file: bool</span><span class="s2">,</span>
+        <span class="s1">raw_rename_from: Optional[bytes]</span><span class="s2">,</span>
+        <span class="s1">raw_rename_to: Optional[bytes]</span><span class="s2">,</span>
+        <span class="s1">diff: Union[str</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">, None</span><span class="s1">]</span><span class="s2">,</span>
+        <span class="s1">change_type: Optional[Lit_change_type]</span><span class="s2">,</span>
+        <span class="s1">score: Optional[int]</span><span class="s2">,</span>
+    <span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+
+        <span class="s2">assert </span><span class="s1">a_rawpath </span><span class="s2">is None or </span><span class="s1">isinstance(a_rawpath</span><span class="s2">, </span><span class="s1">bytes)</span>
+        <span class="s2">assert </span><span class="s1">b_rawpath </span><span class="s2">is None or </span><span class="s1">isinstance(b_rawpath</span><span class="s2">, </span><span class="s1">bytes)</span>
+        <span class="s1">self.a_rawpath = a_rawpath</span>
+        <span class="s1">self.b_rawpath = b_rawpath</span>
+
+        <span class="s1">self.a_mode = mode_str_to_int(a_mode) </span><span class="s2">if </span><span class="s1">a_mode </span><span class="s2">else None</span>
+        <span class="s1">self.b_mode = mode_str_to_int(b_mode) </span><span class="s2">if </span><span class="s1">b_mode </span><span class="s2">else None</span>
+
+        <span class="s0"># Determine whether this diff references a submodule, if it does then</span>
+        <span class="s0"># we need to overwrite &quot;repo&quot; to the corresponding submodule's repo instead</span>
+        <span class="s2">if </span><span class="s1">repo </span><span class="s2">and </span><span class="s1">a_rawpath:</span>
+            <span class="s2">for </span><span class="s1">submodule </span><span class="s2">in </span><span class="s1">repo.submodules:</span>
+                <span class="s2">if </span><span class="s1">submodule.path == a_rawpath.decode(defenc</span><span class="s2">, </span><span class="s3">&quot;replace&quot;</span><span class="s1">):</span>
+                    <span class="s2">if </span><span class="s1">submodule.module_exists():</span>
+                        <span class="s1">repo = submodule.module()</span>
+                    <span class="s2">break</span>
+
+        <span class="s1">self.a_blob: Union[</span><span class="s3">&quot;IndexObject&quot;</span><span class="s2">, None</span><span class="s1">]</span>
+        <span class="s2">if </span><span class="s1">a_blob_id </span><span class="s2">is None or </span><span class="s1">a_blob_id == self.NULL_HEX_SHA:</span>
+            <span class="s1">self.a_blob = </span><span class="s2">None</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.a_blob = Blob(repo</span><span class="s2">, </span><span class="s1">hex_to_bin(a_blob_id)</span><span class="s2">, </span><span class="s1">mode=self.a_mode</span><span class="s2">, </span><span class="s1">path=self.a_path)</span>
+
+        <span class="s1">self.b_blob: Union[</span><span class="s3">&quot;IndexObject&quot;</span><span class="s2">, None</span><span class="s1">]</span>
+        <span class="s2">if </span><span class="s1">b_blob_id </span><span class="s2">is None or </span><span class="s1">b_blob_id == self.NULL_HEX_SHA:</span>
+            <span class="s1">self.b_blob = </span><span class="s2">None</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.b_blob = Blob(repo</span><span class="s2">, </span><span class="s1">hex_to_bin(b_blob_id)</span><span class="s2">, </span><span class="s1">mode=self.b_mode</span><span class="s2">, </span><span class="s1">path=self.b_path)</span>
+
+        <span class="s1">self.new_file: bool = new_file</span>
+        <span class="s1">self.deleted_file: bool = deleted_file</span>
+        <span class="s1">self.copied_file: bool = copied_file</span>
+
+        <span class="s0"># be clear and use None instead of empty strings</span>
+        <span class="s2">assert </span><span class="s1">raw_rename_from </span><span class="s2">is None or </span><span class="s1">isinstance(raw_rename_from</span><span class="s2">, </span><span class="s1">bytes)</span>
+        <span class="s2">assert </span><span class="s1">raw_rename_to </span><span class="s2">is None or </span><span class="s1">isinstance(raw_rename_to</span><span class="s2">, </span><span class="s1">bytes)</span>
+        <span class="s1">self.raw_rename_from = raw_rename_from </span><span class="s2">or None</span>
+        <span class="s1">self.raw_rename_to = raw_rename_to </span><span class="s2">or None</span>
+
+        <span class="s1">self.diff = diff</span>
+        <span class="s1">self.change_type: Union[Lit_change_type</span><span class="s2">, None</span><span class="s1">] = change_type</span>
+        <span class="s1">self.score = score</span>
+
+    <span class="s2">def </span><span class="s1">__eq__(self</span><span class="s2">, </span><span class="s1">other: object) -&gt; bool:</span>
+        <span class="s2">for </span><span class="s1">name </span><span class="s2">in </span><span class="s1">self.__slots__:</span>
+            <span class="s2">if </span><span class="s1">getattr(self</span><span class="s2">, </span><span class="s1">name) != getattr(other</span><span class="s2">, </span><span class="s1">name):</span>
+                <span class="s2">return False</span>
+        <span class="s0"># END for each name</span>
+        <span class="s2">return True</span>
+
+    <span class="s2">def </span><span class="s1">__ne__(self</span><span class="s2">, </span><span class="s1">other: object) -&gt; bool:</span>
+        <span class="s2">return not </span><span class="s1">(self == other)</span>
+
+    <span class="s2">def </span><span class="s1">__hash__(self) -&gt; int:</span>
+        <span class="s2">return </span><span class="s1">hash(tuple(getattr(self</span><span class="s2">, </span><span class="s1">n) </span><span class="s2">for </span><span class="s1">n </span><span class="s2">in </span><span class="s1">self.__slots__))</span>
+
+    <span class="s2">def </span><span class="s1">__str__(self) -&gt; str:</span>
+        <span class="s1">h: str = </span><span class="s3">&quot;%s&quot;</span>
+        <span class="s2">if </span><span class="s1">self.a_blob:</span>
+            <span class="s1">h %= self.a_blob.path</span>
+        <span class="s2">elif </span><span class="s1">self.b_blob:</span>
+            <span class="s1">h %= self.b_blob.path</span>
+
+        <span class="s1">msg: str = </span><span class="s3">&quot;&quot;</span>
+        <span class="s1">line = </span><span class="s2">None  </span><span class="s0"># temp line</span>
+        <span class="s1">line_length = </span><span class="s5">0  </span><span class="s0"># line length</span>
+        <span class="s2">for </span><span class="s1">b</span><span class="s2">, </span><span class="s1">n </span><span class="s2">in </span><span class="s1">zip((self.a_blob</span><span class="s2">, </span><span class="s1">self.b_blob)</span><span class="s2">, </span><span class="s1">(</span><span class="s3">&quot;lhs&quot;</span><span class="s2">, </span><span class="s3">&quot;rhs&quot;</span><span class="s1">)):</span>
+            <span class="s2">if </span><span class="s1">b:</span>
+                <span class="s1">line = </span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">%s: %o | %s&quot; </span><span class="s1">% (n</span><span class="s2">, </span><span class="s1">b.mode</span><span class="s2">, </span><span class="s1">b.hexsha)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">line = </span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">%s: None&quot; </span><span class="s1">% n</span>
+            <span class="s0"># END if blob is not None</span>
+            <span class="s1">line_length = max(len(line)</span><span class="s2">, </span><span class="s1">line_length)</span>
+            <span class="s1">msg += line</span>
+        <span class="s0"># END for each blob</span>
+
+        <span class="s0"># add headline</span>
+        <span class="s1">h += </span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">&quot; </span><span class="s1">+ </span><span class="s3">&quot;=&quot; </span><span class="s1">* line_length</span>
+
+        <span class="s2">if </span><span class="s1">self.deleted_file:</span>
+            <span class="s1">msg += </span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">file deleted in rhs&quot;</span>
+        <span class="s2">if </span><span class="s1">self.new_file:</span>
+            <span class="s1">msg += </span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">file added in rhs&quot;</span>
+        <span class="s2">if </span><span class="s1">self.copied_file:</span>
+            <span class="s1">msg += </span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">file %r copied from %r&quot; </span><span class="s1">% (self.b_path</span><span class="s2">, </span><span class="s1">self.a_path)</span>
+        <span class="s2">if </span><span class="s1">self.rename_from:</span>
+            <span class="s1">msg += </span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">file renamed from %r&quot; </span><span class="s1">% self.rename_from</span>
+        <span class="s2">if </span><span class="s1">self.rename_to:</span>
+            <span class="s1">msg += </span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">file renamed to %r&quot; </span><span class="s1">% self.rename_to</span>
+        <span class="s2">if </span><span class="s1">self.diff:</span>
+            <span class="s1">msg += </span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">---&quot;</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">msg += self.diff.decode(defenc) </span><span class="s2">if </span><span class="s1">isinstance(self.diff</span><span class="s2">, </span><span class="s1">bytes) </span><span class="s2">else </span><span class="s1">self.diff</span>
+            <span class="s2">except </span><span class="s1">UnicodeDecodeError:</span>
+                <span class="s1">msg += </span><span class="s3">&quot;OMITTED BINARY DATA&quot;</span>
+            <span class="s0"># end handle encoding</span>
+            <span class="s1">msg += </span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">---&quot;</span>
+        <span class="s0"># END diff info</span>
+
+        <span class="s0"># Python2 silliness: have to assure we convert our likely to be unicode object to a string with the</span>
+        <span class="s0"># right encoding. Otherwise it tries to convert it using ascii, which may fail ungracefully</span>
+        <span class="s1">res = h + msg</span>
+        <span class="s0"># end</span>
+        <span class="s2">return </span><span class="s1">res</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">a_path(self) -&gt; Optional[str]:</span>
+        <span class="s2">return </span><span class="s1">self.a_rawpath.decode(defenc</span><span class="s2">, </span><span class="s3">&quot;replace&quot;</span><span class="s1">) </span><span class="s2">if </span><span class="s1">self.a_rawpath </span><span class="s2">else None</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">b_path(self) -&gt; Optional[str]:</span>
+        <span class="s2">return </span><span class="s1">self.b_rawpath.decode(defenc</span><span class="s2">, </span><span class="s3">&quot;replace&quot;</span><span class="s1">) </span><span class="s2">if </span><span class="s1">self.b_rawpath </span><span class="s2">else None</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">rename_from(self) -&gt; Optional[str]:</span>
+        <span class="s2">return </span><span class="s1">self.raw_rename_from.decode(defenc</span><span class="s2">, </span><span class="s3">&quot;replace&quot;</span><span class="s1">) </span><span class="s2">if </span><span class="s1">self.raw_rename_from </span><span class="s2">else None</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">rename_to(self) -&gt; Optional[str]:</span>
+        <span class="s2">return </span><span class="s1">self.raw_rename_to.decode(defenc</span><span class="s2">, </span><span class="s3">&quot;replace&quot;</span><span class="s1">) </span><span class="s2">if </span><span class="s1">self.raw_rename_to </span><span class="s2">else None</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">renamed(self) -&gt; bool:</span>
+        <span class="s6">&quot;&quot;&quot;:returns: True if the blob of our diff has been renamed 
+        :note: This property is deprecated, please use ``renamed_file`` instead. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self.renamed_file</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">renamed_file(self) -&gt; bool:</span>
+        <span class="s6">&quot;&quot;&quot;:returns: True if the blob of our diff has been renamed&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self.rename_from != self.rename_to</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_pick_best_path(cls</span><span class="s2">, </span><span class="s1">path_match: bytes</span><span class="s2">, </span><span class="s1">rename_match: bytes</span><span class="s2">, </span><span class="s1">path_fallback_match: bytes) -&gt; Optional[bytes]:</span>
+        <span class="s2">if </span><span class="s1">path_match:</span>
+            <span class="s2">return </span><span class="s1">decode_path(path_match)</span>
+
+        <span class="s2">if </span><span class="s1">rename_match:</span>
+            <span class="s2">return </span><span class="s1">decode_path(rename_match</span><span class="s2">, </span><span class="s1">has_ab_prefix=</span><span class="s2">False</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">path_fallback_match:</span>
+            <span class="s2">return </span><span class="s1">decode_path(path_fallback_match)</span>
+
+        <span class="s2">return None</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_index_from_patch_format(cls</span><span class="s2">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s2">, </span><span class="s1">proc: Union[</span><span class="s3">&quot;Popen&quot;</span><span class="s2">, </span><span class="s3">&quot;Git.AutoInterrupt&quot;</span><span class="s1">]) -&gt; DiffIndex:</span>
+        <span class="s6">&quot;&quot;&quot;Create a new DiffIndex from the given text which must be in patch format 
+        :param repo: is the repository we are operating on - it is required 
+        :param stream: result of 'git diff' as a stream (supporting file protocol) 
+        :return: git.DiffIndex&quot;&quot;&quot;</span>
+
+        <span class="s0">## FIXME: Here SLURPING raw, need to re-phrase header-regexes linewise.</span>
+        <span class="s1">text_list: List[bytes] = []</span>
+        <span class="s1">handle_process_output(proc</span><span class="s2">, </span><span class="s1">text_list.append</span><span class="s2">, None, </span><span class="s1">finalize_process</span><span class="s2">, </span><span class="s1">decode_streams=</span><span class="s2">False</span><span class="s1">)</span>
+
+        <span class="s0"># for now, we have to bake the stream</span>
+        <span class="s1">text = </span><span class="s4">b&quot;&quot;</span><span class="s1">.join(text_list)</span>
+        <span class="s1">index: </span><span class="s3">&quot;DiffIndex&quot; </span><span class="s1">= DiffIndex()</span>
+        <span class="s1">previous_header: Union[Match[bytes]</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None</span>
+        <span class="s1">header: Union[Match[bytes]</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None</span>
+        <span class="s1">a_path</span><span class="s2">, </span><span class="s1">b_path = </span><span class="s2">None, None  </span><span class="s0"># for mypy</span>
+        <span class="s1">a_mode</span><span class="s2">, </span><span class="s1">b_mode = </span><span class="s2">None, None  </span><span class="s0"># for mypy</span>
+        <span class="s2">for </span><span class="s1">_header </span><span class="s2">in </span><span class="s1">cls.re_header.finditer(text):</span>
+            <span class="s1">(</span>
+                <span class="s1">a_path_fallback</span><span class="s2">,</span>
+                <span class="s1">b_path_fallback</span><span class="s2">,</span>
+                <span class="s1">old_mode</span><span class="s2">,</span>
+                <span class="s1">new_mode</span><span class="s2">,</span>
+                <span class="s1">rename_from</span><span class="s2">,</span>
+                <span class="s1">rename_to</span><span class="s2">,</span>
+                <span class="s1">new_file_mode</span><span class="s2">,</span>
+                <span class="s1">deleted_file_mode</span><span class="s2">,</span>
+                <span class="s1">copied_file_name</span><span class="s2">,</span>
+                <span class="s1">a_blob_id</span><span class="s2">,</span>
+                <span class="s1">b_blob_id</span><span class="s2">,</span>
+                <span class="s1">b_mode</span><span class="s2">,</span>
+                <span class="s1">a_path</span><span class="s2">,</span>
+                <span class="s1">b_path</span><span class="s2">,</span>
+            <span class="s1">) = _header.groups()</span>
+
+            <span class="s1">new_file</span><span class="s2">, </span><span class="s1">deleted_file</span><span class="s2">, </span><span class="s1">copied_file = (</span>
+                <span class="s1">bool(new_file_mode)</span><span class="s2">,</span>
+                <span class="s1">bool(deleted_file_mode)</span><span class="s2">,</span>
+                <span class="s1">bool(copied_file_name)</span><span class="s2">,</span>
+            <span class="s1">)</span>
+
+            <span class="s1">a_path = cls._pick_best_path(a_path</span><span class="s2">, </span><span class="s1">rename_from</span><span class="s2">, </span><span class="s1">a_path_fallback)</span>
+            <span class="s1">b_path = cls._pick_best_path(b_path</span><span class="s2">, </span><span class="s1">rename_to</span><span class="s2">, </span><span class="s1">b_path_fallback)</span>
+
+            <span class="s0"># Our only means to find the actual text is to see what has not been matched by our regex,</span>
+            <span class="s0"># and then retro-actively assign it to our index</span>
+            <span class="s2">if </span><span class="s1">previous_header </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s1">index[-</span><span class="s5">1</span><span class="s1">].diff = text[previous_header.end() : _header.start()]</span>
+            <span class="s0"># end assign actual diff</span>
+
+            <span class="s0"># Make sure the mode is set if the path is set. Otherwise the resulting blob is invalid</span>
+            <span class="s0"># We just use the one mode we should have parsed</span>
+            <span class="s1">a_mode = old_mode </span><span class="s2">or </span><span class="s1">deleted_file_mode </span><span class="s2">or </span><span class="s1">(a_path </span><span class="s2">and </span><span class="s1">(b_mode </span><span class="s2">or </span><span class="s1">new_mode </span><span class="s2">or </span><span class="s1">new_file_mode))</span>
+            <span class="s1">b_mode = b_mode </span><span class="s2">or </span><span class="s1">new_mode </span><span class="s2">or </span><span class="s1">new_file_mode </span><span class="s2">or </span><span class="s1">(b_path </span><span class="s2">and </span><span class="s1">a_mode)</span>
+            <span class="s1">index.append(</span>
+                <span class="s1">Diff(</span>
+                    <span class="s1">repo</span><span class="s2">,</span>
+                    <span class="s1">a_path</span><span class="s2">,</span>
+                    <span class="s1">b_path</span><span class="s2">,</span>
+                    <span class="s1">a_blob_id </span><span class="s2">and </span><span class="s1">a_blob_id.decode(defenc)</span><span class="s2">,</span>
+                    <span class="s1">b_blob_id </span><span class="s2">and </span><span class="s1">b_blob_id.decode(defenc)</span><span class="s2">,</span>
+                    <span class="s1">a_mode </span><span class="s2">and </span><span class="s1">a_mode.decode(defenc)</span><span class="s2">,</span>
+                    <span class="s1">b_mode </span><span class="s2">and </span><span class="s1">b_mode.decode(defenc)</span><span class="s2">,</span>
+                    <span class="s1">new_file</span><span class="s2">,</span>
+                    <span class="s1">deleted_file</span><span class="s2">,</span>
+                    <span class="s1">copied_file</span><span class="s2">,</span>
+                    <span class="s1">rename_from</span><span class="s2">,</span>
+                    <span class="s1">rename_to</span><span class="s2">,</span>
+                    <span class="s2">None,</span>
+                    <span class="s2">None,</span>
+                    <span class="s2">None,</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+
+            <span class="s1">previous_header = _header</span>
+            <span class="s1">header = _header</span>
+        <span class="s0"># end for each header we parse</span>
+        <span class="s2">if </span><span class="s1">index </span><span class="s2">and </span><span class="s1">header:</span>
+            <span class="s1">index[-</span><span class="s5">1</span><span class="s1">].diff = text[header.end() :]</span>
+        <span class="s0"># end assign last diff</span>
+
+        <span class="s2">return </span><span class="s1">index</span>
+
+    <span class="s1">@staticmethod</span>
+    <span class="s2">def </span><span class="s1">_handle_diff_line(lines_bytes: bytes</span><span class="s2">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s2">, </span><span class="s1">index: DiffIndex) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">lines = lines_bytes.decode(defenc)</span>
+
+        <span class="s0"># Discard everything before the first colon, and the colon itself.</span>
+        <span class="s1">_</span><span class="s2">, </span><span class="s1">_</span><span class="s2">, </span><span class="s1">lines = lines.partition(</span><span class="s3">&quot;:&quot;</span><span class="s1">)</span>
+
+        <span class="s2">for </span><span class="s1">line </span><span class="s2">in </span><span class="s1">lines.split(</span><span class="s3">&quot;</span><span class="s2">\x00</span><span class="s3">:&quot;</span><span class="s1">):</span>
+            <span class="s2">if not </span><span class="s1">line:</span>
+                <span class="s0"># The line data is empty, skip</span>
+                <span class="s2">continue</span>
+            <span class="s1">meta</span><span class="s2">, </span><span class="s1">_</span><span class="s2">, </span><span class="s1">path = line.partition(</span><span class="s3">&quot;</span><span class="s2">\x00</span><span class="s3">&quot;</span><span class="s1">)</span>
+            <span class="s1">path = path.rstrip(</span><span class="s3">&quot;</span><span class="s2">\x00</span><span class="s3">&quot;</span><span class="s1">)</span>
+            <span class="s1">a_blob_id: Optional[str]</span>
+            <span class="s1">b_blob_id: Optional[str]</span>
+            <span class="s1">old_mode</span><span class="s2">, </span><span class="s1">new_mode</span><span class="s2">, </span><span class="s1">a_blob_id</span><span class="s2">, </span><span class="s1">b_blob_id</span><span class="s2">, </span><span class="s1">_change_type = meta.split(</span><span class="s2">None, </span><span class="s5">4</span><span class="s1">)</span>
+            <span class="s0"># Change type can be R100</span>
+            <span class="s0"># R: status letter</span>
+            <span class="s0"># 100: score (in case of copy and rename)</span>
+            <span class="s0"># assert is_change_type(_change_type[0]), f&quot;Unexpected value for change_type received: {_change_type[0]}&quot;</span>
+            <span class="s1">change_type: Lit_change_type = cast(Lit_change_type</span><span class="s2">, </span><span class="s1">_change_type[</span><span class="s5">0</span><span class="s1">])</span>
+            <span class="s1">score_str = </span><span class="s3">&quot;&quot;</span><span class="s1">.join(_change_type[</span><span class="s5">1</span><span class="s1">:])</span>
+            <span class="s1">score = int(score_str) </span><span class="s2">if </span><span class="s1">score_str.isdigit() </span><span class="s2">else None</span>
+            <span class="s1">path = path.strip()</span>
+            <span class="s1">a_path = path.encode(defenc)</span>
+            <span class="s1">b_path = path.encode(defenc)</span>
+            <span class="s1">deleted_file = </span><span class="s2">False</span>
+            <span class="s1">new_file = </span><span class="s2">False</span>
+            <span class="s1">copied_file = </span><span class="s2">False</span>
+            <span class="s1">rename_from = </span><span class="s2">None</span>
+            <span class="s1">rename_to = </span><span class="s2">None</span>
+
+            <span class="s0"># NOTE: We cannot conclude from the existence of a blob to change type</span>
+            <span class="s0"># as diffs with the working do not have blobs yet</span>
+            <span class="s2">if </span><span class="s1">change_type == </span><span class="s3">&quot;D&quot;</span><span class="s1">:</span>
+                <span class="s1">b_blob_id = </span><span class="s2">None  </span><span class="s0"># Optional[str]</span>
+                <span class="s1">deleted_file = </span><span class="s2">True</span>
+            <span class="s2">elif </span><span class="s1">change_type == </span><span class="s3">&quot;A&quot;</span><span class="s1">:</span>
+                <span class="s1">a_blob_id = </span><span class="s2">None</span>
+                <span class="s1">new_file = </span><span class="s2">True</span>
+            <span class="s2">elif </span><span class="s1">change_type == </span><span class="s3">&quot;C&quot;</span><span class="s1">:</span>
+                <span class="s1">copied_file = </span><span class="s2">True</span>
+                <span class="s1">a_path_str</span><span class="s2">, </span><span class="s1">b_path_str = path.split(</span><span class="s3">&quot;</span><span class="s2">\x00</span><span class="s3">&quot;</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)</span>
+                <span class="s1">a_path = a_path_str.encode(defenc)</span>
+                <span class="s1">b_path = b_path_str.encode(defenc)</span>
+            <span class="s2">elif </span><span class="s1">change_type == </span><span class="s3">&quot;R&quot;</span><span class="s1">:</span>
+                <span class="s1">a_path_str</span><span class="s2">, </span><span class="s1">b_path_str = path.split(</span><span class="s3">&quot;</span><span class="s2">\x00</span><span class="s3">&quot;</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)</span>
+                <span class="s1">a_path = a_path_str.encode(defenc)</span>
+                <span class="s1">b_path = b_path_str.encode(defenc)</span>
+                <span class="s1">rename_from</span><span class="s2">, </span><span class="s1">rename_to = a_path</span><span class="s2">, </span><span class="s1">b_path</span>
+            <span class="s2">elif </span><span class="s1">change_type == </span><span class="s3">&quot;T&quot;</span><span class="s1">:</span>
+                <span class="s0"># Nothing to do</span>
+                <span class="s2">pass</span>
+            <span class="s0"># END add/remove handling</span>
+
+            <span class="s1">diff = Diff(</span>
+                <span class="s1">repo</span><span class="s2">,</span>
+                <span class="s1">a_path</span><span class="s2">,</span>
+                <span class="s1">b_path</span><span class="s2">,</span>
+                <span class="s1">a_blob_id</span><span class="s2">,</span>
+                <span class="s1">b_blob_id</span><span class="s2">,</span>
+                <span class="s1">old_mode</span><span class="s2">,</span>
+                <span class="s1">new_mode</span><span class="s2">,</span>
+                <span class="s1">new_file</span><span class="s2">,</span>
+                <span class="s1">deleted_file</span><span class="s2">,</span>
+                <span class="s1">copied_file</span><span class="s2">,</span>
+                <span class="s1">rename_from</span><span class="s2">,</span>
+                <span class="s1">rename_to</span><span class="s2">,</span>
+                <span class="s3">&quot;&quot;</span><span class="s2">,</span>
+                <span class="s1">change_type</span><span class="s2">,</span>
+                <span class="s1">score</span><span class="s2">,</span>
+            <span class="s1">)</span>
+            <span class="s1">index.append(diff)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_index_from_raw_format(cls</span><span class="s2">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s2">, </span><span class="s1">proc: </span><span class="s3">&quot;Popen&quot;</span><span class="s1">) -&gt; </span><span class="s3">&quot;DiffIndex&quot;</span><span class="s1">:</span>
+        <span class="s6">&quot;&quot;&quot;Create a new DiffIndex from the given stream which must be in raw format. 
+        :return: git.DiffIndex&quot;&quot;&quot;</span>
+        <span class="s0"># handles</span>
+        <span class="s0"># :100644 100644 687099101... 37c5e30c8... M    .gitignore</span>
+
+        <span class="s1">index: </span><span class="s3">&quot;DiffIndex&quot; </span><span class="s1">= DiffIndex()</span>
+        <span class="s1">handle_process_output(</span>
+            <span class="s1">proc</span><span class="s2">,</span>
+            <span class="s2">lambda </span><span class="s1">byt: cls._handle_diff_line(byt</span><span class="s2">, </span><span class="s1">repo</span><span class="s2">, </span><span class="s1">index)</span><span class="s2">,</span>
+            <span class="s2">None,</span>
+            <span class="s1">finalize_process</span><span class="s2">,</span>
+            <span class="s1">decode_streams=</span><span class="s2">False,</span>
+        <span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s1">index</span>
+</pre>
+</body>
+</html>

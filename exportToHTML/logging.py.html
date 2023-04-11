@@ -1,0 +1,311 @@
+<html>
+<head>
+<title>logging.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #629755; font-style: italic;}
+.s3 { color: #6a8759;}
+.s4 { color: #6897bb;}
+.s5 { color: #808080;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+logging.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">logging</span>
+<span class="s0">from </span><span class="s1">datetime </span><span class="s0">import </span><span class="s1">datetime</span>
+<span class="s0">from </span><span class="s1">logging </span><span class="s0">import </span><span class="s1">Handler</span><span class="s0">, </span><span class="s1">LogRecord</span>
+<span class="s0">from </span><span class="s1">pathlib </span><span class="s0">import </span><span class="s1">Path</span>
+<span class="s0">from </span><span class="s1">types </span><span class="s0">import </span><span class="s1">ModuleType</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">ClassVar</span><span class="s0">, </span><span class="s1">Iterable</span><span class="s0">, </span><span class="s1">List</span><span class="s0">, </span><span class="s1">Optional</span><span class="s0">, </span><span class="s1">Type</span><span class="s0">, </span><span class="s1">Union</span>
+
+<span class="s0">from </span><span class="s1">pip._vendor.rich._null_file </span><span class="s0">import </span><span class="s1">NullFile</span>
+
+<span class="s0">from </span><span class="s1">. </span><span class="s0">import </span><span class="s1">get_console</span>
+<span class="s0">from </span><span class="s1">._log_render </span><span class="s0">import </span><span class="s1">FormatTimeCallable</span><span class="s0">, </span><span class="s1">LogRender</span>
+<span class="s0">from </span><span class="s1">.console </span><span class="s0">import </span><span class="s1">Console</span><span class="s0">, </span><span class="s1">ConsoleRenderable</span>
+<span class="s0">from </span><span class="s1">.highlighter </span><span class="s0">import </span><span class="s1">Highlighter</span><span class="s0">, </span><span class="s1">ReprHighlighter</span>
+<span class="s0">from </span><span class="s1">.text </span><span class="s0">import </span><span class="s1">Text</span>
+<span class="s0">from </span><span class="s1">.traceback </span><span class="s0">import </span><span class="s1">Traceback</span>
+
+
+<span class="s0">class </span><span class="s1">RichHandler(Handler):</span>
+    <span class="s2">&quot;&quot;&quot;A logging handler that renders output with Rich. The time / level / message and file are displayed in columns. 
+    The level is color coded, and the message is syntax highlighted. 
+ 
+    Note: 
+        Be careful when enabling console markup in log messages if you have configured logging for libraries not 
+        under your control. If a dependency writes messages containing square brackets, it may not produce the intended output. 
+ 
+    Args: 
+        level (Union[int, str], optional): Log level. Defaults to logging.NOTSET. 
+        console (:class:`~rich.console.Console`, optional): Optional console instance to write logs. 
+            Default will use a global console instance writing to stdout. 
+        show_time (bool, optional): Show a column for the time. Defaults to True. 
+        omit_repeated_times (bool, optional): Omit repetition of the same time. Defaults to True. 
+        show_level (bool, optional): Show a column for the level. Defaults to True. 
+        show_path (bool, optional): Show the path to the original log call. Defaults to True. 
+        enable_link_path (bool, optional): Enable terminal link of path column to file. Defaults to True. 
+        highlighter (Highlighter, optional): Highlighter to style log messages, or None to use ReprHighlighter. Defaults to None. 
+        markup (bool, optional): Enable console markup in log messages. Defaults to False. 
+        rich_tracebacks (bool, optional): Enable rich tracebacks with syntax highlighting and formatting. Defaults to False. 
+        tracebacks_width (Optional[int], optional): Number of characters used to render tracebacks, or None for full width. Defaults to None. 
+        tracebacks_extra_lines (int, optional): Additional lines of code to render tracebacks, or None for full width. Defaults to None. 
+        tracebacks_theme (str, optional): Override pygments theme used in traceback. 
+        tracebacks_word_wrap (bool, optional): Enable word wrapping of long tracebacks lines. Defaults to True. 
+        tracebacks_show_locals (bool, optional): Enable display of locals in tracebacks. Defaults to False. 
+        tracebacks_suppress (Sequence[Union[str, ModuleType]]): Optional sequence of modules or paths to exclude from traceback. 
+        locals_max_length (int, optional): Maximum length of containers before abbreviating, or None for no abbreviation. 
+            Defaults to 10. 
+        locals_max_string (int, optional): Maximum length of string before truncating, or None to disable. Defaults to 80. 
+        log_time_format (Union[str, TimeFormatterCallable], optional): If ``log_time`` is enabled, either string for strftime or callable that formats the time. Defaults to &quot;[%x %X] &quot;. 
+        keywords (List[str], optional): List of words to highlight instead of ``RichHandler.KEYWORDS``. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">KEYWORDS: ClassVar[Optional[List[str]]] = [</span>
+        <span class="s3">&quot;GET&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;POST&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;HEAD&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;PUT&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;DELETE&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;OPTIONS&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;TRACE&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;PATCH&quot;</span><span class="s0">,</span>
+    <span class="s1">]</span>
+    <span class="s1">HIGHLIGHTER_CLASS: ClassVar[Type[Highlighter]] = ReprHighlighter</span>
+
+    <span class="s0">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">level: Union[int</span><span class="s0">, </span><span class="s1">str] = logging.NOTSET</span><span class="s0">,</span>
+        <span class="s1">console: Optional[Console] = </span><span class="s0">None,</span>
+        <span class="s1">*</span><span class="s0">,</span>
+        <span class="s1">show_time: bool = </span><span class="s0">True,</span>
+        <span class="s1">omit_repeated_times: bool = </span><span class="s0">True,</span>
+        <span class="s1">show_level: bool = </span><span class="s0">True,</span>
+        <span class="s1">show_path: bool = </span><span class="s0">True,</span>
+        <span class="s1">enable_link_path: bool = </span><span class="s0">True,</span>
+        <span class="s1">highlighter: Optional[Highlighter] = </span><span class="s0">None,</span>
+        <span class="s1">markup: bool = </span><span class="s0">False,</span>
+        <span class="s1">rich_tracebacks: bool = </span><span class="s0">False,</span>
+        <span class="s1">tracebacks_width: Optional[int] = </span><span class="s0">None,</span>
+        <span class="s1">tracebacks_extra_lines: int = </span><span class="s4">3</span><span class="s0">,</span>
+        <span class="s1">tracebacks_theme: Optional[str] = </span><span class="s0">None,</span>
+        <span class="s1">tracebacks_word_wrap: bool = </span><span class="s0">True,</span>
+        <span class="s1">tracebacks_show_locals: bool = </span><span class="s0">False,</span>
+        <span class="s1">tracebacks_suppress: Iterable[Union[str</span><span class="s0">, </span><span class="s1">ModuleType]] = ()</span><span class="s0">,</span>
+        <span class="s1">locals_max_length: int = </span><span class="s4">10</span><span class="s0">,</span>
+        <span class="s1">locals_max_string: int = </span><span class="s4">80</span><span class="s0">,</span>
+        <span class="s1">log_time_format: Union[str</span><span class="s0">, </span><span class="s1">FormatTimeCallable] = </span><span class="s3">&quot;[%x %X]&quot;</span><span class="s0">,</span>
+        <span class="s1">keywords: Optional[List[str]] = </span><span class="s0">None,</span>
+    <span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">super().__init__(level=level)</span>
+        <span class="s1">self.console = console </span><span class="s0">or </span><span class="s1">get_console()</span>
+        <span class="s1">self.highlighter = highlighter </span><span class="s0">or </span><span class="s1">self.HIGHLIGHTER_CLASS()</span>
+        <span class="s1">self._log_render = LogRender(</span>
+            <span class="s1">show_time=show_time</span><span class="s0">,</span>
+            <span class="s1">show_level=show_level</span><span class="s0">,</span>
+            <span class="s1">show_path=show_path</span><span class="s0">,</span>
+            <span class="s1">time_format=log_time_format</span><span class="s0">,</span>
+            <span class="s1">omit_repeated_times=omit_repeated_times</span><span class="s0">,</span>
+            <span class="s1">level_width=</span><span class="s0">None,</span>
+        <span class="s1">)</span>
+        <span class="s1">self.enable_link_path = enable_link_path</span>
+        <span class="s1">self.markup = markup</span>
+        <span class="s1">self.rich_tracebacks = rich_tracebacks</span>
+        <span class="s1">self.tracebacks_width = tracebacks_width</span>
+        <span class="s1">self.tracebacks_extra_lines = tracebacks_extra_lines</span>
+        <span class="s1">self.tracebacks_theme = tracebacks_theme</span>
+        <span class="s1">self.tracebacks_word_wrap = tracebacks_word_wrap</span>
+        <span class="s1">self.tracebacks_show_locals = tracebacks_show_locals</span>
+        <span class="s1">self.tracebacks_suppress = tracebacks_suppress</span>
+        <span class="s1">self.locals_max_length = locals_max_length</span>
+        <span class="s1">self.locals_max_string = locals_max_string</span>
+        <span class="s1">self.keywords = keywords</span>
+
+    <span class="s0">def </span><span class="s1">get_level_text(self</span><span class="s0">, </span><span class="s1">record: LogRecord) -&gt; Text:</span>
+        <span class="s2">&quot;&quot;&quot;Get the level name from the record. 
+ 
+        Args: 
+            record (LogRecord): LogRecord instance. 
+ 
+        Returns: 
+            Text: A tuple of the style and level name. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">level_name = record.levelname</span>
+        <span class="s1">level_text = Text.styled(</span>
+            <span class="s1">level_name.ljust(</span><span class="s4">8</span><span class="s1">)</span><span class="s0">, </span><span class="s3">f&quot;logging.level.</span><span class="s0">{</span><span class="s1">level_name.lower()</span><span class="s0">}</span><span class="s3">&quot;</span>
+        <span class="s1">)</span>
+        <span class="s0">return </span><span class="s1">level_text</span>
+
+    <span class="s0">def </span><span class="s1">emit(self</span><span class="s0">, </span><span class="s1">record: LogRecord) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Invoked by logging.&quot;&quot;&quot;</span>
+        <span class="s1">message = self.format(record)</span>
+        <span class="s1">traceback = </span><span class="s0">None</span>
+        <span class="s0">if </span><span class="s1">(</span>
+            <span class="s1">self.rich_tracebacks</span>
+            <span class="s0">and </span><span class="s1">record.exc_info</span>
+            <span class="s0">and </span><span class="s1">record.exc_info != (</span><span class="s0">None, None, None</span><span class="s1">)</span>
+        <span class="s1">):</span>
+            <span class="s1">exc_type</span><span class="s0">, </span><span class="s1">exc_value</span><span class="s0">, </span><span class="s1">exc_traceback = record.exc_info</span>
+            <span class="s0">assert </span><span class="s1">exc_type </span><span class="s0">is not None</span>
+            <span class="s0">assert </span><span class="s1">exc_value </span><span class="s0">is not None</span>
+            <span class="s1">traceback = Traceback.from_exception(</span>
+                <span class="s1">exc_type</span><span class="s0">,</span>
+                <span class="s1">exc_value</span><span class="s0">,</span>
+                <span class="s1">exc_traceback</span><span class="s0">,</span>
+                <span class="s1">width=self.tracebacks_width</span><span class="s0">,</span>
+                <span class="s1">extra_lines=self.tracebacks_extra_lines</span><span class="s0">,</span>
+                <span class="s1">theme=self.tracebacks_theme</span><span class="s0">,</span>
+                <span class="s1">word_wrap=self.tracebacks_word_wrap</span><span class="s0">,</span>
+                <span class="s1">show_locals=self.tracebacks_show_locals</span><span class="s0">,</span>
+                <span class="s1">locals_max_length=self.locals_max_length</span><span class="s0">,</span>
+                <span class="s1">locals_max_string=self.locals_max_string</span><span class="s0">,</span>
+                <span class="s1">suppress=self.tracebacks_suppress</span><span class="s0">,</span>
+            <span class="s1">)</span>
+            <span class="s1">message = record.getMessage()</span>
+            <span class="s0">if </span><span class="s1">self.formatter:</span>
+                <span class="s1">record.message = record.getMessage()</span>
+                <span class="s1">formatter = self.formatter</span>
+                <span class="s0">if </span><span class="s1">hasattr(formatter</span><span class="s0">, </span><span class="s3">&quot;usesTime&quot;</span><span class="s1">) </span><span class="s0">and </span><span class="s1">formatter.usesTime():</span>
+                    <span class="s1">record.asctime = formatter.formatTime(record</span><span class="s0">, </span><span class="s1">formatter.datefmt)</span>
+                <span class="s1">message = formatter.formatMessage(record)</span>
+
+        <span class="s1">message_renderable = self.render_message(record</span><span class="s0">, </span><span class="s1">message)</span>
+        <span class="s1">log_renderable = self.render(</span>
+            <span class="s1">record=record</span><span class="s0">, </span><span class="s1">traceback=traceback</span><span class="s0">, </span><span class="s1">message_renderable=message_renderable</span>
+        <span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">isinstance(self.console.file</span><span class="s0">, </span><span class="s1">NullFile):</span>
+            <span class="s5"># Handles pythonw, where stdout/stderr are null, and we return NullFile</span>
+            <span class="s5"># instance from Console.file. In this case, we still want to make a log record</span>
+            <span class="s5"># even though we won't be writing anything to a file.</span>
+            <span class="s1">self.handleError(record)</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s0">try</span><span class="s1">:</span>
+                <span class="s1">self.console.print(log_renderable)</span>
+            <span class="s0">except </span><span class="s1">Exception:</span>
+                <span class="s1">self.handleError(record)</span>
+
+    <span class="s0">def </span><span class="s1">render_message(self</span><span class="s0">, </span><span class="s1">record: LogRecord</span><span class="s0">, </span><span class="s1">message: str) -&gt; </span><span class="s3">&quot;ConsoleRenderable&quot;</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Render message text in to Text. 
+ 
+        Args: 
+            record (LogRecord): logging Record. 
+            message (str): String containing log message. 
+ 
+        Returns: 
+            ConsoleRenderable: Renderable to display log message. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">use_markup = getattr(record</span><span class="s0">, </span><span class="s3">&quot;markup&quot;</span><span class="s0">, </span><span class="s1">self.markup)</span>
+        <span class="s1">message_text = Text.from_markup(message) </span><span class="s0">if </span><span class="s1">use_markup </span><span class="s0">else </span><span class="s1">Text(message)</span>
+
+        <span class="s1">highlighter = getattr(record</span><span class="s0">, </span><span class="s3">&quot;highlighter&quot;</span><span class="s0">, </span><span class="s1">self.highlighter)</span>
+        <span class="s0">if </span><span class="s1">highlighter:</span>
+            <span class="s1">message_text = highlighter(message_text)</span>
+
+        <span class="s0">if </span><span class="s1">self.keywords </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">self.keywords = self.KEYWORDS</span>
+
+        <span class="s0">if </span><span class="s1">self.keywords:</span>
+            <span class="s1">message_text.highlight_words(self.keywords</span><span class="s0">, </span><span class="s3">&quot;logging.keyword&quot;</span><span class="s1">)</span>
+
+        <span class="s0">return </span><span class="s1">message_text</span>
+
+    <span class="s0">def </span><span class="s1">render(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">*</span><span class="s0">,</span>
+        <span class="s1">record: LogRecord</span><span class="s0">,</span>
+        <span class="s1">traceback: Optional[Traceback]</span><span class="s0">,</span>
+        <span class="s1">message_renderable: </span><span class="s3">&quot;ConsoleRenderable&quot;</span><span class="s0">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;ConsoleRenderable&quot;</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Render log for display. 
+ 
+        Args: 
+            record (LogRecord): logging Record. 
+            traceback (Optional[Traceback]): Traceback instance or None for no Traceback. 
+            message_renderable (ConsoleRenderable): Renderable (typically Text) containing log message contents. 
+ 
+        Returns: 
+            ConsoleRenderable: Renderable to display log. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">path = Path(record.pathname).name</span>
+        <span class="s1">level = self.get_level_text(record)</span>
+        <span class="s1">time_format = </span><span class="s0">None if </span><span class="s1">self.formatter </span><span class="s0">is None else </span><span class="s1">self.formatter.datefmt</span>
+        <span class="s1">log_time = datetime.fromtimestamp(record.created)</span>
+
+        <span class="s1">log_renderable = self._log_render(</span>
+            <span class="s1">self.console</span><span class="s0">,</span>
+            <span class="s1">[message_renderable] </span><span class="s0">if not </span><span class="s1">traceback </span><span class="s0">else </span><span class="s1">[message_renderable</span><span class="s0">, </span><span class="s1">traceback]</span><span class="s0">,</span>
+            <span class="s1">log_time=log_time</span><span class="s0">,</span>
+            <span class="s1">time_format=time_format</span><span class="s0">,</span>
+            <span class="s1">level=level</span><span class="s0">,</span>
+            <span class="s1">path=path</span><span class="s0">,</span>
+            <span class="s1">line_no=record.lineno</span><span class="s0">,</span>
+            <span class="s1">link_path=record.pathname </span><span class="s0">if </span><span class="s1">self.enable_link_path </span><span class="s0">else None,</span>
+        <span class="s1">)</span>
+        <span class="s0">return </span><span class="s1">log_renderable</span>
+
+
+<span class="s0">if </span><span class="s1">__name__ == </span><span class="s3">&quot;__main__&quot;</span><span class="s1">:  </span><span class="s5"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">time </span><span class="s0">import </span><span class="s1">sleep</span>
+
+    <span class="s1">FORMAT = </span><span class="s3">&quot;%(message)s&quot;</span>
+    <span class="s5"># FORMAT = &quot;%(asctime)-15s - %(levelname)s - %(message)s&quot;</span>
+    <span class="s1">logging.basicConfig(</span>
+        <span class="s1">level=</span><span class="s3">&quot;NOTSET&quot;</span><span class="s0">,</span>
+        <span class="s1">format=FORMAT</span><span class="s0">,</span>
+        <span class="s1">datefmt=</span><span class="s3">&quot;[%X]&quot;</span><span class="s0">,</span>
+        <span class="s1">handlers=[RichHandler(rich_tracebacks=</span><span class="s0">True, </span><span class="s1">tracebacks_show_locals=</span><span class="s0">True</span><span class="s1">)]</span><span class="s0">,</span>
+    <span class="s1">)</span>
+    <span class="s1">log = logging.getLogger(</span><span class="s3">&quot;rich&quot;</span><span class="s1">)</span>
+
+    <span class="s1">log.info(</span><span class="s3">&quot;Server starting...&quot;</span><span class="s1">)</span>
+    <span class="s1">log.info(</span><span class="s3">&quot;Listening on http://127.0.0.1:8080&quot;</span><span class="s1">)</span>
+    <span class="s1">sleep(</span><span class="s4">1</span><span class="s1">)</span>
+
+    <span class="s1">log.info(</span><span class="s3">&quot;GET /index.html 200 1298&quot;</span><span class="s1">)</span>
+    <span class="s1">log.info(</span><span class="s3">&quot;GET /imgs/backgrounds/back1.jpg 200 54386&quot;</span><span class="s1">)</span>
+    <span class="s1">log.info(</span><span class="s3">&quot;GET /css/styles.css 200 54386&quot;</span><span class="s1">)</span>
+    <span class="s1">log.warning(</span><span class="s3">&quot;GET /favicon.ico 404 242&quot;</span><span class="s1">)</span>
+    <span class="s1">sleep(</span><span class="s4">1</span><span class="s1">)</span>
+
+    <span class="s1">log.debug(</span>
+        <span class="s3">&quot;JSONRPC request</span><span class="s0">\n</span><span class="s3">--&gt; %r</span><span class="s0">\n</span><span class="s3">&lt;-- %r&quot;</span><span class="s0">,</span>
+        <span class="s1">{</span>
+            <span class="s3">&quot;version&quot;</span><span class="s1">: </span><span class="s3">&quot;1.1&quot;</span><span class="s0">,</span>
+            <span class="s3">&quot;method&quot;</span><span class="s1">: </span><span class="s3">&quot;confirmFruitPurchase&quot;</span><span class="s0">,</span>
+            <span class="s3">&quot;params&quot;</span><span class="s1">: [[</span><span class="s3">&quot;apple&quot;</span><span class="s0">, </span><span class="s3">&quot;orange&quot;</span><span class="s0">, </span><span class="s3">&quot;mangoes&quot;</span><span class="s0">, </span><span class="s3">&quot;pomelo&quot;</span><span class="s1">]</span><span class="s0">, </span><span class="s4">1.123</span><span class="s1">]</span><span class="s0">,</span>
+            <span class="s3">&quot;id&quot;</span><span class="s1">: </span><span class="s3">&quot;194521489&quot;</span><span class="s0">,</span>
+        <span class="s1">}</span><span class="s0">,</span>
+        <span class="s1">{</span><span class="s3">&quot;version&quot;</span><span class="s1">: </span><span class="s3">&quot;1.1&quot;</span><span class="s0">, </span><span class="s3">&quot;result&quot;</span><span class="s1">: </span><span class="s0">True, </span><span class="s3">&quot;error&quot;</span><span class="s1">: </span><span class="s0">None, </span><span class="s3">&quot;id&quot;</span><span class="s1">: </span><span class="s3">&quot;194521489&quot;</span><span class="s1">}</span><span class="s0">,</span>
+    <span class="s1">)</span>
+    <span class="s1">log.debug(</span>
+        <span class="s3">&quot;Loading configuration file /adasd/asdasd/qeqwe/qwrqwrqwr/sdgsdgsdg/werwerwer/dfgerert/ertertert/ertetert/werwerwer&quot;</span>
+    <span class="s1">)</span>
+    <span class="s1">log.error(</span><span class="s3">&quot;Unable to find 'pomelo' in database!&quot;</span><span class="s1">)</span>
+    <span class="s1">log.info(</span><span class="s3">&quot;POST /jsonrpc/ 200 65532&quot;</span><span class="s1">)</span>
+    <span class="s1">log.info(</span><span class="s3">&quot;POST /admin/ 401 42234&quot;</span><span class="s1">)</span>
+    <span class="s1">log.warning(</span><span class="s3">&quot;password was rejected for admin site.&quot;</span><span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">divide() -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">number = </span><span class="s4">1</span>
+        <span class="s1">divisor = </span><span class="s4">0</span>
+        <span class="s1">foos = [</span><span class="s3">&quot;foo&quot;</span><span class="s1">] * </span><span class="s4">100</span>
+        <span class="s1">log.debug(</span><span class="s3">&quot;in divide&quot;</span><span class="s1">)</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">number / divisor</span>
+        <span class="s0">except</span><span class="s1">:</span>
+            <span class="s1">log.exception(</span><span class="s3">&quot;An error of some kind occurred!&quot;</span><span class="s1">)</span>
+
+    <span class="s1">divide()</span>
+    <span class="s1">sleep(</span><span class="s4">1</span><span class="s1">)</span>
+    <span class="s1">log.critical(</span><span class="s3">&quot;Out of memory!&quot;</span><span class="s1">)</span>
+    <span class="s1">log.info(</span><span class="s3">&quot;Server exited with code=-1&quot;</span><span class="s1">)</span>
+    <span class="s1">log.info(</span><span class="s3">&quot;[bold]EXITING...[/bold]&quot;</span><span class="s0">, </span><span class="s1">extra=dict(markup=</span><span class="s0">True</span><span class="s1">))</span>
+</pre>
+</body>
+</html>

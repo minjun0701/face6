@@ -1,0 +1,375 @@
+<html>
+<head>
+<title>log.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #808080;}
+.s3 { color: #6a8759;}
+.s4 { color: #629755; font-style: italic;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+log.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">mmap </span><span class="s0">import </span><span class="s1">mmap</span>
+<span class="s0">import </span><span class="s1">re</span>
+<span class="s0">import </span><span class="s1">time </span><span class="s0">as </span><span class="s1">_time</span>
+
+<span class="s0">from </span><span class="s1">git.compat </span><span class="s0">import </span><span class="s1">defenc</span>
+<span class="s0">from </span><span class="s1">git.objects.util </span><span class="s0">import </span><span class="s1">(</span>
+    <span class="s1">parse_date</span><span class="s0">,</span>
+    <span class="s1">Serializable</span><span class="s0">,</span>
+    <span class="s1">altz_to_utctz_str</span><span class="s0">,</span>
+<span class="s1">)</span>
+<span class="s0">from </span><span class="s1">git.util </span><span class="s0">import </span><span class="s1">(</span>
+    <span class="s1">Actor</span><span class="s0">,</span>
+    <span class="s1">LockedFD</span><span class="s0">,</span>
+    <span class="s1">LockFile</span><span class="s0">,</span>
+    <span class="s1">assure_directory_exists</span><span class="s0">,</span>
+    <span class="s1">to_native_path</span><span class="s0">,</span>
+    <span class="s1">bin_to_hex</span><span class="s0">,</span>
+    <span class="s1">file_contents_ro_filepath</span><span class="s0">,</span>
+<span class="s1">)</span>
+
+<span class="s0">import </span><span class="s1">os.path </span><span class="s0">as </span><span class="s1">osp</span>
+
+
+<span class="s2"># typing ------------------------------------------------------------------</span>
+
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Iterator</span><span class="s0">, </span><span class="s1">List</span><span class="s0">, </span><span class="s1">Tuple</span><span class="s0">, </span><span class="s1">Union</span><span class="s0">, </span><span class="s1">TYPE_CHECKING</span>
+
+<span class="s0">from </span><span class="s1">git.types </span><span class="s0">import </span><span class="s1">PathLike</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s0">from </span><span class="s1">git.refs </span><span class="s0">import </span><span class="s1">SymbolicReference</span>
+    <span class="s0">from </span><span class="s1">io </span><span class="s0">import </span><span class="s1">BytesIO</span>
+    <span class="s0">from </span><span class="s1">git.config </span><span class="s0">import </span><span class="s1">GitConfigParser</span><span class="s0">, </span><span class="s1">SectionConstraint  </span><span class="s2"># NOQA</span>
+
+<span class="s2"># ------------------------------------------------------------------------------</span>
+
+<span class="s1">__all__ = [</span><span class="s3">&quot;RefLog&quot;</span><span class="s0">, </span><span class="s3">&quot;RefLogEntry&quot;</span><span class="s1">]</span>
+
+
+<span class="s0">class </span><span class="s1">RefLogEntry(Tuple[str</span><span class="s0">, </span><span class="s1">str</span><span class="s0">, </span><span class="s1">Actor</span><span class="s0">, </span><span class="s1">Tuple[int</span><span class="s0">, </span><span class="s1">int]</span><span class="s0">, </span><span class="s1">str]):</span>
+
+    <span class="s4">&quot;&quot;&quot;Named tuple allowing easy access to the revlog data fields&quot;&quot;&quot;</span>
+
+    <span class="s1">_re_hexsha_only = re.compile(</span><span class="s3">&quot;^[0-9A-Fa-f]{40}$&quot;</span><span class="s1">)</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s0">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot;Representation of ourselves in git reflog format&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self.format()</span>
+
+    <span class="s0">def </span><span class="s1">format(self) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot;:return: a string suitable to be placed in a reflog file&quot;&quot;&quot;</span>
+        <span class="s1">act = self.actor</span>
+        <span class="s1">time = self.time</span>
+        <span class="s0">return </span><span class="s3">&quot;{} {} {} &lt;{}&gt; {!s} {}</span><span class="s0">\t</span><span class="s3">{}</span><span class="s0">\n</span><span class="s3">&quot;</span><span class="s1">.format(</span>
+            <span class="s1">self.oldhexsha</span><span class="s0">,</span>
+            <span class="s1">self.newhexsha</span><span class="s0">,</span>
+            <span class="s1">act.name</span><span class="s0">,</span>
+            <span class="s1">act.email</span><span class="s0">,</span>
+            <span class="s1">time[</span><span class="s5">0</span><span class="s1">]</span><span class="s0">,</span>
+            <span class="s1">altz_to_utctz_str(time[</span><span class="s5">1</span><span class="s1">])</span><span class="s0">,</span>
+            <span class="s1">self.message</span><span class="s0">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">oldhexsha(self) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot;The hexsha to the commit the ref pointed to before the change&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self[</span><span class="s5">0</span><span class="s1">]</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">newhexsha(self) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot;The hexsha to the commit the ref now points to, after the change&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self[</span><span class="s5">1</span><span class="s1">]</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">actor(self) -&gt; Actor:</span>
+        <span class="s4">&quot;&quot;&quot;Actor instance, providing access&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self[</span><span class="s5">2</span><span class="s1">]</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">time(self) -&gt; Tuple[int</span><span class="s0">, </span><span class="s1">int]:</span>
+        <span class="s4">&quot;&quot;&quot;time as tuple: 
+ 
+        * [0] = int(time) 
+        * [1] = int(timezone_offset) in time.altzone format&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self[</span><span class="s5">3</span><span class="s1">]</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">message(self) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot;Message describing the operation that acted on the reference&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self[</span><span class="s5">4</span><span class="s1">]</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">new(</span>
+        <span class="s1">cls</span><span class="s0">,</span>
+        <span class="s1">oldhexsha: str</span><span class="s0">,</span>
+        <span class="s1">newhexsha: str</span><span class="s0">,</span>
+        <span class="s1">actor: Actor</span><span class="s0">,</span>
+        <span class="s1">time: int</span><span class="s0">,</span>
+        <span class="s1">tz_offset: int</span><span class="s0">,</span>
+        <span class="s1">message: str</span><span class="s0">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;RefLogEntry&quot;</span><span class="s1">:  </span><span class="s2"># skipcq: PYL-W0621</span>
+        <span class="s4">&quot;&quot;&quot;:return: New instance of a RefLogEntry&quot;&quot;&quot;</span>
+        <span class="s0">if not </span><span class="s1">isinstance(actor</span><span class="s0">, </span><span class="s1">Actor):</span>
+            <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Need actor instance, got %s&quot; </span><span class="s1">% actor)</span>
+        <span class="s2"># END check types</span>
+        <span class="s0">return </span><span class="s1">RefLogEntry((oldhexsha</span><span class="s0">, </span><span class="s1">newhexsha</span><span class="s0">, </span><span class="s1">actor</span><span class="s0">, </span><span class="s1">(time</span><span class="s0">, </span><span class="s1">tz_offset)</span><span class="s0">, </span><span class="s1">message))</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">from_line(cls</span><span class="s0">, </span><span class="s1">line: bytes) -&gt; </span><span class="s3">&quot;RefLogEntry&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;:return: New RefLogEntry instance from the given revlog line. 
+        :param line: line bytes without trailing newline 
+        :raise ValueError: If line could not be parsed&quot;&quot;&quot;</span>
+        <span class="s1">line_str = line.decode(defenc)</span>
+        <span class="s1">fields = line_str.split(</span><span class="s3">&quot;</span><span class="s0">\t</span><span class="s3">&quot;</span><span class="s0">, </span><span class="s5">1</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">len(fields) == </span><span class="s5">1</span><span class="s1">:</span>
+            <span class="s1">info</span><span class="s0">, </span><span class="s1">msg = fields[</span><span class="s5">0</span><span class="s1">]</span><span class="s0">, None</span>
+        <span class="s0">elif </span><span class="s1">len(fields) == </span><span class="s5">2</span><span class="s1">:</span>
+            <span class="s1">info</span><span class="s0">, </span><span class="s1">msg = fields</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Line must have up to two TAB-separated fields.&quot; &quot; Got %s&quot; </span><span class="s1">% repr(line_str))</span>
+        <span class="s2"># END handle first split</span>
+
+        <span class="s1">oldhexsha = info[:</span><span class="s5">40</span><span class="s1">]</span>
+        <span class="s1">newhexsha = info[</span><span class="s5">41</span><span class="s1">:</span><span class="s5">81</span><span class="s1">]</span>
+        <span class="s0">for </span><span class="s1">hexsha </span><span class="s0">in </span><span class="s1">(oldhexsha</span><span class="s0">, </span><span class="s1">newhexsha):</span>
+            <span class="s0">if not </span><span class="s1">cls._re_hexsha_only.match(hexsha):</span>
+                <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Invalid hexsha: %r&quot; </span><span class="s1">% (hexsha</span><span class="s0">,</span><span class="s1">))</span>
+            <span class="s2"># END if hexsha re doesn't match</span>
+        <span class="s2"># END for each hexsha</span>
+
+        <span class="s1">email_end = info.find(</span><span class="s3">&quot;&gt;&quot;</span><span class="s0">, </span><span class="s5">82</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">email_end == -</span><span class="s5">1</span><span class="s1">:</span>
+            <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Missing token: &gt;&quot;</span><span class="s1">)</span>
+        <span class="s2"># END handle missing end brace</span>
+
+        <span class="s1">actor = Actor._from_string(info[</span><span class="s5">82 </span><span class="s1">: email_end + </span><span class="s5">1</span><span class="s1">])</span>
+        <span class="s1">time</span><span class="s0">, </span><span class="s1">tz_offset = parse_date(info[email_end + </span><span class="s5">2 </span><span class="s1">:])  </span><span class="s2"># skipcq: PYL-W0621</span>
+
+        <span class="s0">return </span><span class="s1">RefLogEntry((oldhexsha</span><span class="s0">, </span><span class="s1">newhexsha</span><span class="s0">, </span><span class="s1">actor</span><span class="s0">, </span><span class="s1">(time</span><span class="s0">, </span><span class="s1">tz_offset)</span><span class="s0">, </span><span class="s1">msg))</span>
+
+
+<span class="s0">class </span><span class="s1">RefLog(List[RefLogEntry]</span><span class="s0">, </span><span class="s1">Serializable):</span>
+
+    <span class="s4">&quot;&quot;&quot;A reflog contains RefLogEntrys, each of which defines a certain state 
+    of the head in question. Custom query methods allow to retrieve log entries 
+    by date or by other criteria. 
+ 
+    Reflog entries are ordered, the first added entry is first in the list, the last 
+    entry, i.e. the last change of the head or reference, is last in the list.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span><span class="s3">&quot;_path&quot;</span><span class="s0">,</span><span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">__new__(cls</span><span class="s0">, </span><span class="s1">filepath: Union[PathLike</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None</span><span class="s1">) -&gt; </span><span class="s3">&quot;RefLog&quot;</span><span class="s1">:</span>
+        <span class="s1">inst = super(RefLog</span><span class="s0">, </span><span class="s1">cls).__new__(cls)</span>
+        <span class="s0">return </span><span class="s1">inst</span>
+
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s0">, </span><span class="s1">filepath: Union[PathLike</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None</span><span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot;Initialize this instance with an optional filepath, from which we will 
+        initialize our data. The path is also used to write changes back using 
+        the write() method&quot;&quot;&quot;</span>
+        <span class="s1">self._path = filepath</span>
+        <span class="s0">if </span><span class="s1">filepath </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">self._read_from_file()</span>
+        <span class="s2"># END handle filepath</span>
+
+    <span class="s0">def </span><span class="s1">_read_from_file(self) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">fmap = file_contents_ro_filepath(self._path</span><span class="s0">, </span><span class="s1">stream=</span><span class="s0">True, </span><span class="s1">allow_mmap=</span><span class="s0">True</span><span class="s1">)</span>
+        <span class="s0">except </span><span class="s1">OSError:</span>
+            <span class="s2"># it is possible and allowed that the file doesn't exist !</span>
+            <span class="s0">return</span>
+        <span class="s2"># END handle invalid log</span>
+
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">self._deserialize(fmap)</span>
+        <span class="s0">finally</span><span class="s1">:</span>
+            <span class="s1">fmap.close()</span>
+        <span class="s2"># END handle closing of handle</span>
+
+    <span class="s2"># { Interface</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">from_file(cls</span><span class="s0">, </span><span class="s1">filepath: PathLike) -&gt; </span><span class="s3">&quot;RefLog&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: a new RefLog instance containing all entries from the reflog 
+            at the given filepath 
+        :param filepath: path to reflog 
+        :raise ValueError: If the file could not be read or was corrupted in some way&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">cls(filepath)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">path(cls</span><span class="s0">, </span><span class="s1">ref: </span><span class="s3">&quot;SymbolicReference&quot;</span><span class="s1">) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: string to absolute path at which the reflog of the given ref 
+            instance would be found. The path is not guaranteed to point to a valid 
+            file though. 
+        :param ref: SymbolicReference instance&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">osp.join(ref.repo.git_dir</span><span class="s0">, </span><span class="s3">&quot;logs&quot;</span><span class="s0">, </span><span class="s1">to_native_path(ref.path))</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">iter_entries(cls</span><span class="s0">, </span><span class="s1">stream: Union[str</span><span class="s0">, </span><span class="s3">&quot;BytesIO&quot;</span><span class="s0">, </span><span class="s1">mmap]) -&gt; Iterator[RefLogEntry]:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: Iterator yielding RefLogEntry instances, one for each line read 
+            sfrom the given stream. 
+        :param stream: file-like object containing the revlog in its native format 
+            or string instance pointing to a file to read&quot;&quot;&quot;</span>
+        <span class="s1">new_entry = RefLogEntry.from_line</span>
+        <span class="s0">if </span><span class="s1">isinstance(stream</span><span class="s0">, </span><span class="s1">str):</span>
+            <span class="s2"># default args return mmap on py&gt;3</span>
+            <span class="s1">_stream = file_contents_ro_filepath(stream)</span>
+            <span class="s0">assert </span><span class="s1">isinstance(_stream</span><span class="s0">, </span><span class="s1">mmap)</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">_stream = stream</span>
+        <span class="s2"># END handle stream type</span>
+        <span class="s0">while True</span><span class="s1">:</span>
+            <span class="s1">line = _stream.readline()</span>
+            <span class="s0">if not </span><span class="s1">line:</span>
+                <span class="s0">return</span>
+            <span class="s0">yield </span><span class="s1">new_entry(line.strip())</span>
+        <span class="s2"># END endless loop</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">entry_at(cls</span><span class="s0">, </span><span class="s1">filepath: PathLike</span><span class="s0">, </span><span class="s1">index: int) -&gt; </span><span class="s3">&quot;RefLogEntry&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: RefLogEntry at the given index 
+ 
+        :param filepath: full path to the index file from which to read the entry 
+ 
+        :param index: python list compatible index, i.e. it may be negative to 
+            specify an entry counted from the end of the list 
+ 
+        :raise IndexError: If the entry didn't exist 
+ 
+        .. note:: This method is faster as it only parses the entry at index, skipping 
+            all other lines. Nonetheless, the whole file has to be read if 
+            the index is negative 
+        &quot;&quot;&quot;</span>
+        <span class="s0">with </span><span class="s1">open(filepath</span><span class="s0">, </span><span class="s3">&quot;rb&quot;</span><span class="s1">) </span><span class="s0">as </span><span class="s1">fp:</span>
+            <span class="s0">if </span><span class="s1">index &lt; </span><span class="s5">0</span><span class="s1">:</span>
+                <span class="s0">return </span><span class="s1">RefLogEntry.from_line(fp.readlines()[index].strip())</span>
+            <span class="s2"># read until index is reached</span>
+
+            <span class="s0">for </span><span class="s1">i </span><span class="s0">in </span><span class="s1">range(index + </span><span class="s5">1</span><span class="s1">):</span>
+                <span class="s1">line = fp.readline()</span>
+                <span class="s0">if not </span><span class="s1">line:</span>
+                    <span class="s0">raise </span><span class="s1">IndexError(</span><span class="s3">f&quot;Index file ended at line </span><span class="s0">{</span><span class="s1">i+</span><span class="s5">1</span><span class="s0">}</span><span class="s3">, before given index was reached&quot;</span><span class="s1">)</span>
+                <span class="s2"># END abort on eof</span>
+            <span class="s2"># END handle runup</span>
+
+            <span class="s0">return </span><span class="s1">RefLogEntry.from_line(line.strip())</span>
+        <span class="s2"># END handle index</span>
+
+    <span class="s0">def </span><span class="s1">to_file(self</span><span class="s0">, </span><span class="s1">filepath: PathLike) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Write the contents of the reflog instance to a file at the given filepath. 
+ 
+        :param filepath: path to file, parent directories are assumed to exist&quot;&quot;&quot;</span>
+        <span class="s1">lfd = LockedFD(filepath)</span>
+        <span class="s1">assure_directory_exists(filepath</span><span class="s0">, </span><span class="s1">is_file=</span><span class="s0">True</span><span class="s1">)</span>
+
+        <span class="s1">fp = lfd.open(write=</span><span class="s0">True, </span><span class="s1">stream=</span><span class="s0">True</span><span class="s1">)</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">self._serialize(fp)</span>
+            <span class="s1">lfd.commit()</span>
+        <span class="s0">except </span><span class="s1">Exception:</span>
+            <span class="s2"># on failure it rolls back automatically, but we make it clear</span>
+            <span class="s1">lfd.rollback()</span>
+            <span class="s0">raise</span>
+        <span class="s2"># END handle change</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">append_entry(</span>
+        <span class="s1">cls</span><span class="s0">,</span>
+        <span class="s1">config_reader: Union[Actor</span><span class="s0">, </span><span class="s3">&quot;GitConfigParser&quot;</span><span class="s0">, </span><span class="s3">&quot;SectionConstraint&quot;</span><span class="s0">, None</span><span class="s1">]</span><span class="s0">,</span>
+        <span class="s1">filepath: PathLike</span><span class="s0">,</span>
+        <span class="s1">oldbinsha: bytes</span><span class="s0">,</span>
+        <span class="s1">newbinsha: bytes</span><span class="s0">,</span>
+        <span class="s1">message: str</span><span class="s0">,</span>
+        <span class="s1">write: bool = </span><span class="s0">True,</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;RefLogEntry&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Append a new log entry to the revlog at filepath. 
+ 
+        :param config_reader: configuration reader of the repository - used to obtain 
+            user information. May also be an Actor instance identifying the committer directly or None. 
+        :param filepath: full path to the log file 
+        :param oldbinsha: binary sha of the previous commit 
+        :param newbinsha: binary sha of the current commit 
+        :param message: message describing the change to the reference 
+        :param write: If True, the changes will be written right away. Otherwise 
+            the change will not be written 
+ 
+        :return: RefLogEntry objects which was appended to the log 
+ 
+        :note: As we are append-only, concurrent access is not a problem as we 
+            do not interfere with readers.&quot;&quot;&quot;</span>
+
+        <span class="s0">if </span><span class="s1">len(oldbinsha) != </span><span class="s5">20 </span><span class="s0">or </span><span class="s1">len(newbinsha) != </span><span class="s5">20</span><span class="s1">:</span>
+            <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Shas need to be given in binary format&quot;</span><span class="s1">)</span>
+        <span class="s2"># END handle sha type</span>
+        <span class="s1">assure_directory_exists(filepath</span><span class="s0">, </span><span class="s1">is_file=</span><span class="s0">True</span><span class="s1">)</span>
+        <span class="s1">first_line = message.split(</span><span class="s3">&quot;</span><span class="s0">\n</span><span class="s3">&quot;</span><span class="s1">)[</span><span class="s5">0</span><span class="s1">]</span>
+        <span class="s0">if </span><span class="s1">isinstance(config_reader</span><span class="s0">, </span><span class="s1">Actor):</span>
+            <span class="s1">committer = config_reader  </span><span class="s2"># mypy thinks this is Actor | Gitconfigparser, but why?</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">committer = Actor.committer(config_reader)</span>
+        <span class="s1">entry = RefLogEntry(</span>
+            <span class="s1">(</span>
+                <span class="s1">bin_to_hex(oldbinsha).decode(</span><span class="s3">&quot;ascii&quot;</span><span class="s1">)</span><span class="s0">,</span>
+                <span class="s1">bin_to_hex(newbinsha).decode(</span><span class="s3">&quot;ascii&quot;</span><span class="s1">)</span><span class="s0">,</span>
+                <span class="s1">committer</span><span class="s0">,</span>
+                <span class="s1">(int(_time.time())</span><span class="s0">, </span><span class="s1">_time.altzone)</span><span class="s0">,</span>
+                <span class="s1">first_line</span><span class="s0">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s0">if </span><span class="s1">write:</span>
+            <span class="s1">lf = LockFile(filepath)</span>
+            <span class="s1">lf._obtain_lock_or_raise()</span>
+            <span class="s1">fd = open(filepath</span><span class="s0">, </span><span class="s3">&quot;ab&quot;</span><span class="s1">)</span>
+            <span class="s0">try</span><span class="s1">:</span>
+                <span class="s1">fd.write(entry.format().encode(defenc))</span>
+            <span class="s0">finally</span><span class="s1">:</span>
+                <span class="s1">fd.close()</span>
+                <span class="s1">lf._release_lock()</span>
+            <span class="s2"># END handle write operation</span>
+        <span class="s0">return </span><span class="s1">entry</span>
+
+    <span class="s0">def </span><span class="s1">write(self) -&gt; </span><span class="s3">&quot;RefLog&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Write this instance's data to the file we are originating from 
+ 
+        :return: self&quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self._path </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Instance was not initialized with a path, use to_file(...) instead&quot;</span><span class="s1">)</span>
+        <span class="s2"># END assert path</span>
+        <span class="s1">self.to_file(self._path)</span>
+        <span class="s0">return </span><span class="s1">self</span>
+
+    <span class="s2"># } END interface</span>
+
+    <span class="s2"># { Serializable Interface</span>
+    <span class="s0">def </span><span class="s1">_serialize(self</span><span class="s0">, </span><span class="s1">stream: </span><span class="s3">&quot;BytesIO&quot;</span><span class="s1">) -&gt; </span><span class="s3">&quot;RefLog&quot;</span><span class="s1">:</span>
+        <span class="s1">write = stream.write</span>
+
+        <span class="s2"># write all entries</span>
+        <span class="s0">for </span><span class="s1">e </span><span class="s0">in </span><span class="s1">self:</span>
+            <span class="s1">write(e.format().encode(defenc))</span>
+        <span class="s2"># END for each entry</span>
+        <span class="s0">return </span><span class="s1">self</span>
+
+    <span class="s0">def </span><span class="s1">_deserialize(self</span><span class="s0">, </span><span class="s1">stream: </span><span class="s3">&quot;BytesIO&quot;</span><span class="s1">) -&gt; </span><span class="s3">&quot;RefLog&quot;</span><span class="s1">:</span>
+        <span class="s1">self.extend(self.iter_entries(stream))</span>
+        <span class="s2"># } END serializable interface</span>
+        <span class="s0">return </span><span class="s1">self</span>
+</pre>
+</body>
+</html>

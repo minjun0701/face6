@@ -1,0 +1,277 @@
+<html>
+<head>
+<title>fun.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #629755; font-style: italic;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #808080;}
+.s4 { color: #6a8759;}
+.s5 { color: #6897bb;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+fun.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Module with functions which are supposed to be as fast as possible&quot;&quot;&quot;</span>
+<span class="s2">from </span><span class="s1">stat </span><span class="s2">import </span><span class="s1">S_ISDIR</span>
+
+
+<span class="s2">from </span><span class="s1">git.compat </span><span class="s2">import </span><span class="s1">safe_decode</span><span class="s2">, </span><span class="s1">defenc</span>
+
+<span class="s3"># typing ----------------------------------------------</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">(</span>
+    <span class="s1">Callable</span><span class="s2">,</span>
+    <span class="s1">List</span><span class="s2">,</span>
+    <span class="s1">MutableSequence</span><span class="s2">,</span>
+    <span class="s1">Sequence</span><span class="s2">,</span>
+    <span class="s1">Tuple</span><span class="s2">,</span>
+    <span class="s1">TYPE_CHECKING</span><span class="s2">,</span>
+    <span class="s1">Union</span><span class="s2">,</span>
+    <span class="s1">overload</span><span class="s2">,</span>
+<span class="s1">)</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">_typeshed </span><span class="s2">import </span><span class="s1">ReadableBuffer</span>
+    <span class="s2">from </span><span class="s1">git </span><span class="s2">import </span><span class="s1">GitCmdObjectDB</span>
+
+<span class="s1">EntryTup = Tuple[bytes</span><span class="s2">, </span><span class="s1">int</span><span class="s2">, </span><span class="s1">str]  </span><span class="s3"># same as TreeCacheTup in tree.py</span>
+<span class="s1">EntryTupOrNone = Union[EntryTup</span><span class="s2">, None</span><span class="s1">]</span>
+
+<span class="s3"># ---------------------------------------------------</span>
+
+
+<span class="s1">__all__ = (</span>
+    <span class="s4">&quot;tree_to_stream&quot;</span><span class="s2">,</span>
+    <span class="s4">&quot;tree_entries_from_data&quot;</span><span class="s2">,</span>
+    <span class="s4">&quot;traverse_trees_recursive&quot;</span><span class="s2">,</span>
+    <span class="s4">&quot;traverse_tree_recursive&quot;</span><span class="s2">,</span>
+<span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">tree_to_stream(entries: Sequence[EntryTup]</span><span class="s2">, </span><span class="s1">write: Callable[[</span><span class="s4">&quot;ReadableBuffer&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s1">Union[int</span><span class="s2">, None</span><span class="s1">]]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+    <span class="s0">&quot;&quot;&quot;Write the give list of entries into a stream using its write method 
+ 
+    :param entries: **sorted** list of tuples with (binsha, mode, name) 
+    :param write: write method which takes a data string&quot;&quot;&quot;</span>
+    <span class="s1">ord_zero = ord(</span><span class="s4">&quot;0&quot;</span><span class="s1">)</span>
+    <span class="s1">bit_mask = </span><span class="s5">7  </span><span class="s3"># 3 bits set</span>
+
+    <span class="s2">for </span><span class="s1">binsha</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">name </span><span class="s2">in </span><span class="s1">entries:</span>
+        <span class="s1">mode_str = </span><span class="s6">b&quot;&quot;</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">6</span><span class="s1">):</span>
+            <span class="s1">mode_str = bytes([((mode &gt;&gt; (i * </span><span class="s5">3</span><span class="s1">)) &amp; bit_mask) + ord_zero]) + mode_str</span>
+        <span class="s3"># END for each 8 octal value</span>
+
+        <span class="s3"># git slices away the first octal if its zero</span>
+        <span class="s2">if </span><span class="s1">mode_str[</span><span class="s5">0</span><span class="s1">] == ord_zero:</span>
+            <span class="s1">mode_str = mode_str[</span><span class="s5">1</span><span class="s1">:]</span>
+        <span class="s3"># END save a byte</span>
+
+        <span class="s3"># here it comes:  if the name is actually unicode, the replacement below</span>
+        <span class="s3"># will not work as the binsha is not part of the ascii unicode encoding -</span>
+        <span class="s3"># hence we must convert to an utf8 string for it to work properly.</span>
+        <span class="s3"># According to my tests, this is exactly what git does, that is it just</span>
+        <span class="s3"># takes the input literally, which appears to be utf8 on linux.</span>
+        <span class="s2">if </span><span class="s1">isinstance(name</span><span class="s2">, </span><span class="s1">str):</span>
+            <span class="s1">name_bytes = name.encode(defenc)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">name_bytes = name  </span><span class="s3"># type: ignore[unreachable]  # check runtime types - is always str?</span>
+        <span class="s1">write(</span><span class="s6">b&quot;&quot;</span><span class="s1">.join((mode_str</span><span class="s2">, </span><span class="s6">b&quot; &quot;</span><span class="s2">, </span><span class="s1">name_bytes</span><span class="s2">, </span><span class="s6">b&quot;</span><span class="s2">\0</span><span class="s6">&quot;</span><span class="s2">, </span><span class="s1">binsha)))</span>
+    <span class="s3"># END for each item</span>
+
+
+<span class="s2">def </span><span class="s1">tree_entries_from_data(data: bytes) -&gt; List[EntryTup]:</span>
+    <span class="s0">&quot;&quot;&quot;Reads the binary representation of a tree and returns tuples of Tree items 
+ 
+    :param data: data block with tree data (as bytes) 
+    :return: list(tuple(binsha, mode, tree_relative_path), ...)&quot;&quot;&quot;</span>
+    <span class="s1">ord_zero = ord(</span><span class="s4">&quot;0&quot;</span><span class="s1">)</span>
+    <span class="s1">space_ord = ord(</span><span class="s4">&quot; &quot;</span><span class="s1">)</span>
+    <span class="s1">len_data = len(data)</span>
+    <span class="s1">i = </span><span class="s5">0</span>
+    <span class="s1">out = []</span>
+    <span class="s2">while </span><span class="s1">i &lt; len_data:</span>
+        <span class="s1">mode = </span><span class="s5">0</span>
+
+        <span class="s3"># read mode</span>
+        <span class="s3"># Some git versions truncate the leading 0, some don't</span>
+        <span class="s3"># The type will be extracted from the mode later</span>
+        <span class="s2">while </span><span class="s1">data[i] != space_ord:</span>
+            <span class="s3"># move existing mode integer up one level being 3 bits</span>
+            <span class="s3"># and add the actual ordinal value of the character</span>
+            <span class="s1">mode = (mode &lt;&lt; </span><span class="s5">3</span><span class="s1">) + (data[i] - ord_zero)</span>
+            <span class="s1">i += </span><span class="s5">1</span>
+        <span class="s3"># END while reading mode</span>
+
+        <span class="s3"># byte is space now, skip it</span>
+        <span class="s1">i += </span><span class="s5">1</span>
+
+        <span class="s3"># parse name, it is NULL separated</span>
+
+        <span class="s1">ns = i</span>
+        <span class="s2">while </span><span class="s1">data[i] != </span><span class="s5">0</span><span class="s1">:</span>
+            <span class="s1">i += </span><span class="s5">1</span>
+        <span class="s3"># END while not reached NULL</span>
+
+        <span class="s3"># default encoding for strings in git is utf8</span>
+        <span class="s3"># Only use the respective unicode object if the byte stream was encoded</span>
+        <span class="s1">name_bytes = data[ns:i]</span>
+        <span class="s1">name = safe_decode(name_bytes)</span>
+
+        <span class="s3"># byte is NULL, get next 20</span>
+        <span class="s1">i += </span><span class="s5">1</span>
+        <span class="s1">sha = data[i : i + </span><span class="s5">20</span><span class="s1">]</span>
+        <span class="s1">i = i + </span><span class="s5">20</span>
+        <span class="s1">out.append((sha</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">name))</span>
+    <span class="s3"># END for each byte in data stream</span>
+    <span class="s2">return </span><span class="s1">out</span>
+
+
+<span class="s2">def </span><span class="s1">_find_by_name(tree_data: MutableSequence[EntryTupOrNone]</span><span class="s2">, </span><span class="s1">name: str</span><span class="s2">, </span><span class="s1">is_dir: bool</span><span class="s2">, </span><span class="s1">start_at: int) -&gt; EntryTupOrNone:</span>
+    <span class="s0">&quot;&quot;&quot;return data entry matching the given name and tree mode 
+    or None. 
+    Before the item is returned, the respective data item is set 
+    None in the tree_data list to mark it done&quot;&quot;&quot;</span>
+
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">item = tree_data[start_at]</span>
+        <span class="s2">if </span><span class="s1">item </span><span class="s2">and </span><span class="s1">item[</span><span class="s5">2</span><span class="s1">] == name </span><span class="s2">and </span><span class="s1">S_ISDIR(item[</span><span class="s5">1</span><span class="s1">]) == is_dir:</span>
+            <span class="s1">tree_data[start_at] = </span><span class="s2">None</span>
+            <span class="s2">return </span><span class="s1">item</span>
+    <span class="s2">except </span><span class="s1">IndexError:</span>
+        <span class="s2">pass</span>
+    <span class="s3"># END exception handling</span>
+    <span class="s2">for </span><span class="s1">index</span><span class="s2">, </span><span class="s1">item </span><span class="s2">in </span><span class="s1">enumerate(tree_data):</span>
+        <span class="s2">if </span><span class="s1">item </span><span class="s2">and </span><span class="s1">item[</span><span class="s5">2</span><span class="s1">] == name </span><span class="s2">and </span><span class="s1">S_ISDIR(item[</span><span class="s5">1</span><span class="s1">]) == is_dir:</span>
+            <span class="s1">tree_data[index] = </span><span class="s2">None</span>
+            <span class="s2">return </span><span class="s1">item</span>
+        <span class="s3"># END if item matches</span>
+    <span class="s3"># END for each item</span>
+    <span class="s2">return None</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">_to_full_path(item: </span><span class="s2">None, </span><span class="s1">path_prefix: str) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+    <span class="s1">...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s2">def </span><span class="s1">_to_full_path(item: EntryTup</span><span class="s2">, </span><span class="s1">path_prefix: str) -&gt; EntryTup:</span>
+    <span class="s1">...</span>
+
+
+<span class="s2">def </span><span class="s1">_to_full_path(item: EntryTupOrNone</span><span class="s2">, </span><span class="s1">path_prefix: str) -&gt; EntryTupOrNone:</span>
+    <span class="s0">&quot;&quot;&quot;Rebuild entry with given path prefix&quot;&quot;&quot;</span>
+    <span class="s2">if not </span><span class="s1">item:</span>
+        <span class="s2">return </span><span class="s1">item</span>
+    <span class="s2">return </span><span class="s1">(item[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">item[</span><span class="s5">1</span><span class="s1">]</span><span class="s2">, </span><span class="s1">path_prefix + item[</span><span class="s5">2</span><span class="s1">])</span>
+
+
+<span class="s2">def </span><span class="s1">traverse_trees_recursive(</span>
+    <span class="s1">odb: </span><span class="s4">&quot;GitCmdObjectDB&quot;</span><span class="s2">, </span><span class="s1">tree_shas: Sequence[Union[bytes</span><span class="s2">, None</span><span class="s1">]]</span><span class="s2">, </span><span class="s1">path_prefix: str</span>
+<span class="s1">) -&gt; List[Tuple[EntryTupOrNone</span><span class="s2">, </span><span class="s1">...]]:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    :return: list of list with entries according to the given binary tree-shas. 
+        The result is encoded in a list 
+        of n tuple|None per blob/commit, (n == len(tree_shas)), where 
+        * [0] == 20 byte sha 
+        * [1] == mode as int 
+        * [2] == path relative to working tree root 
+        The entry tuple is None if the respective blob/commit did not 
+        exist in the given tree. 
+    :param tree_shas: iterable of shas pointing to trees. All trees must 
+        be on the same level. A tree-sha may be None in which case None 
+    :param path_prefix: a prefix to be added to the returned paths on this level, 
+        set it '' for the first iteration 
+    :note: The ordering of the returned items will be partially lost&quot;&quot;&quot;</span>
+    <span class="s1">trees_data: List[List[EntryTupOrNone]] = []</span>
+
+    <span class="s1">nt = len(tree_shas)</span>
+    <span class="s2">for </span><span class="s1">tree_sha </span><span class="s2">in </span><span class="s1">tree_shas:</span>
+        <span class="s2">if </span><span class="s1">tree_sha </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">data: List[EntryTupOrNone] = []</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s3"># make new list for typing as list invariant</span>
+            <span class="s1">data = list(tree_entries_from_data(odb.stream(tree_sha).read()))</span>
+        <span class="s3"># END handle muted trees</span>
+        <span class="s1">trees_data.append(data)</span>
+    <span class="s3"># END for each sha to get data for</span>
+
+    <span class="s1">out: List[Tuple[EntryTupOrNone</span><span class="s2">, </span><span class="s1">...]] = []</span>
+
+    <span class="s3"># find all matching entries and recursively process them together if the match</span>
+    <span class="s3"># is a tree. If the match is a non-tree item, put it into the result.</span>
+    <span class="s3"># Processed items will be set None</span>
+    <span class="s2">for </span><span class="s1">ti</span><span class="s2">, </span><span class="s1">tree_data </span><span class="s2">in </span><span class="s1">enumerate(trees_data):</span>
+
+        <span class="s2">for </span><span class="s1">ii</span><span class="s2">, </span><span class="s1">item </span><span class="s2">in </span><span class="s1">enumerate(tree_data):</span>
+            <span class="s2">if not </span><span class="s1">item:</span>
+                <span class="s2">continue</span>
+            <span class="s3"># END skip already done items</span>
+            <span class="s1">entries: List[EntryTupOrNone]</span>
+            <span class="s1">entries = [</span><span class="s2">None for </span><span class="s1">_ </span><span class="s2">in </span><span class="s1">range(nt)]</span>
+            <span class="s1">entries[ti] = item</span>
+            <span class="s1">_sha</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">name = item</span>
+            <span class="s1">is_dir = S_ISDIR(mode)  </span><span class="s3"># type mode bits</span>
+
+            <span class="s3"># find this item in all other tree data items</span>
+            <span class="s3"># wrap around, but stop one before our current index, hence</span>
+            <span class="s3"># ti+nt, not ti+1+nt</span>
+            <span class="s2">for </span><span class="s1">tio </span><span class="s2">in </span><span class="s1">range(ti + </span><span class="s5">1</span><span class="s2">, </span><span class="s1">ti + nt):</span>
+                <span class="s1">tio = tio % nt</span>
+                <span class="s1">entries[tio] = _find_by_name(trees_data[tio]</span><span class="s2">, </span><span class="s1">name</span><span class="s2">, </span><span class="s1">is_dir</span><span class="s2">, </span><span class="s1">ii)</span>
+
+            <span class="s3"># END for each other item data</span>
+            <span class="s3"># if we are a directory, enter recursion</span>
+            <span class="s2">if </span><span class="s1">is_dir:</span>
+                <span class="s1">out.extend(</span>
+                    <span class="s1">traverse_trees_recursive(</span>
+                        <span class="s1">odb</span><span class="s2">,</span>
+                        <span class="s1">[((ei </span><span class="s2">and </span><span class="s1">ei[</span><span class="s5">0</span><span class="s1">]) </span><span class="s2">or None</span><span class="s1">) </span><span class="s2">for </span><span class="s1">ei </span><span class="s2">in </span><span class="s1">entries]</span><span class="s2">,</span>
+                        <span class="s1">path_prefix + name + </span><span class="s4">&quot;/&quot;</span><span class="s2">,</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">out.append(tuple(_to_full_path(e</span><span class="s2">, </span><span class="s1">path_prefix) </span><span class="s2">for </span><span class="s1">e </span><span class="s2">in </span><span class="s1">entries))</span>
+
+            <span class="s3"># END handle recursion</span>
+            <span class="s3"># finally mark it done</span>
+            <span class="s1">tree_data[ii] = </span><span class="s2">None</span>
+        <span class="s3"># END for each item</span>
+
+        <span class="s3"># we are done with one tree, set all its data empty</span>
+        <span class="s2">del </span><span class="s1">tree_data[:]</span>
+    <span class="s3"># END for each tree_data chunk</span>
+    <span class="s2">return </span><span class="s1">out</span>
+
+
+<span class="s2">def </span><span class="s1">traverse_tree_recursive(odb: </span><span class="s4">&quot;GitCmdObjectDB&quot;</span><span class="s2">, </span><span class="s1">tree_sha: bytes</span><span class="s2">, </span><span class="s1">path_prefix: str) -&gt; List[EntryTup]:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    :return: list of entries of the tree pointed to by the binary tree_sha. An entry 
+        has the following format: 
+        * [0] 20 byte sha 
+        * [1] mode as int 
+        * [2] path relative to the repository 
+    :param path_prefix: prefix to prepend to the front of all returned paths&quot;&quot;&quot;</span>
+    <span class="s1">entries = []</span>
+    <span class="s1">data = tree_entries_from_data(odb.stream(tree_sha).read())</span>
+
+    <span class="s3"># unpacking/packing is faster than accessing individual items</span>
+    <span class="s2">for </span><span class="s1">sha</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">name </span><span class="s2">in </span><span class="s1">data:</span>
+        <span class="s2">if </span><span class="s1">S_ISDIR(mode):</span>
+            <span class="s1">entries.extend(traverse_tree_recursive(odb</span><span class="s2">, </span><span class="s1">sha</span><span class="s2">, </span><span class="s1">path_prefix + name + </span><span class="s4">&quot;/&quot;</span><span class="s1">))</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">entries.append((sha</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">path_prefix + name))</span>
+    <span class="s3"># END for each item</span>
+
+    <span class="s2">return </span><span class="s1">entries</span>
+</pre>
+</body>
+</html>

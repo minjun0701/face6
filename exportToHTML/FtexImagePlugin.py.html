@@ -1,0 +1,145 @@
+<html>
+<head>
+<title>FtexImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #629755; font-style: italic;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #a5c261;}
+.s4 { color: #6897bb;}
+.s5 { color: #6a8759;}
+.s6 { color: #808080;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+FtexImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot; 
+A Pillow loader for .ftc and .ftu files (FTEX) 
+Jerome Leclanche &lt;jerome@leclan.ch&gt; 
+ 
+The contents of this file are hereby released in the public domain (CC0) 
+Full text of the CC0 license: 
+  https://creativecommons.org/publicdomain/zero/1.0/ 
+ 
+Independence War 2: Edge Of Chaos - Texture File Format - 16 October 2001 
+ 
+The textures used for 3D objects in Independence War 2: Edge Of Chaos are in a 
+packed custom format called FTEX. This file format uses file extensions FTC 
+and FTU. 
+* FTC files are compressed textures (using standard texture compression). 
+* FTU files are not compressed. 
+Texture File Format 
+The FTC and FTU texture files both use the same format. This 
+has the following structure: 
+{header} 
+{format_directory} 
+{data} 
+Where: 
+{header} = { 
+    u32:magic, 
+    u32:version, 
+    u32:width, 
+    u32:height, 
+    u32:mipmap_count, 
+    u32:format_count 
+} 
+ 
+* The &quot;magic&quot; number is &quot;FTEX&quot;. 
+* &quot;width&quot; and &quot;height&quot; are the dimensions of the texture. 
+* &quot;mipmap_count&quot; is the number of mipmaps in the texture. 
+* &quot;format_count&quot; is the number of texture formats (different versions of the 
+same texture) in this file. 
+ 
+{format_directory} = format_count * { u32:format, u32:where } 
+ 
+The format value is 0 for DXT1 compressed textures and 1 for 24-bit RGB 
+uncompressed textures. 
+The texture data for a format starts at the position &quot;where&quot; in the file. 
+ 
+Each set of texture data in the file has the following structure: 
+{data} = format_count * { u32:mipmap_size, mipmap_size * { u8 } } 
+* &quot;mipmap_size&quot; is the number of bytes in that mip level. For compressed 
+textures this is the size of the texture data compressed with DXT1. For 24 bit 
+uncompressed textures, this is 3 * width * height. Following this are the image 
+bytes for that mipmap level. 
+ 
+Note: All data is stored in little-Endian (Intel) byte order. 
+&quot;&quot;&quot;</span>
+
+<span class="s2">import </span><span class="s1">struct</span>
+<span class="s2">from </span><span class="s1">enum </span><span class="s2">import </span><span class="s1">IntEnum</span>
+<span class="s2">from </span><span class="s1">io </span><span class="s2">import </span><span class="s1">BytesIO</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span>
+<span class="s2">from </span><span class="s1">._deprecate </span><span class="s2">import </span><span class="s1">deprecate</span>
+
+<span class="s1">MAGIC = </span><span class="s3">b&quot;FTEX&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">Format(IntEnum):</span>
+    <span class="s1">DXT1 = </span><span class="s4">0</span>
+    <span class="s1">UNCOMPRESSED = </span><span class="s4">1</span>
+
+
+<span class="s2">def </span><span class="s1">__getattr__(name):</span>
+    <span class="s2">for </span><span class="s1">enum</span><span class="s2">, </span><span class="s1">prefix </span><span class="s2">in </span><span class="s1">{Format: </span><span class="s5">&quot;FORMAT_&quot;</span><span class="s1">}.items():</span>
+        <span class="s2">if </span><span class="s1">name.startswith(prefix):</span>
+            <span class="s1">name = name[len(prefix) :]</span>
+            <span class="s2">if </span><span class="s1">name </span><span class="s2">in </span><span class="s1">enum.__members__:</span>
+                <span class="s1">deprecate(</span><span class="s5">f&quot;</span><span class="s2">{</span><span class="s1">prefix</span><span class="s2">}{</span><span class="s1">name</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s2">, </span><span class="s4">10</span><span class="s2">, </span><span class="s5">f&quot;</span><span class="s2">{</span><span class="s1">enum.__name__</span><span class="s2">}</span><span class="s5">.</span><span class="s2">{</span><span class="s1">name</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s1">)</span>
+                <span class="s2">return </span><span class="s1">enum[name]</span>
+    <span class="s2">raise </span><span class="s1">AttributeError(</span><span class="s5">f&quot;module '</span><span class="s2">{</span><span class="s1">__name__</span><span class="s2">}</span><span class="s5">' has no attribute '</span><span class="s2">{</span><span class="s1">name</span><span class="s2">}</span><span class="s5">'&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">FtexImageFile(ImageFile.ImageFile):</span>
+    <span class="s1">format = </span><span class="s5">&quot;FTEX&quot;</span>
+    <span class="s1">format_description = </span><span class="s5">&quot;Texture File Format (IW2:EOC)&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+        <span class="s2">if not </span><span class="s1">_accept(self.fp.read(</span><span class="s4">4</span><span class="s1">)):</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s5">&quot;not an FTEX file&quot;</span><span class="s1">)</span>
+        <span class="s1">struct.unpack(</span><span class="s5">&quot;&lt;i&quot;</span><span class="s2">, </span><span class="s1">self.fp.read(</span><span class="s4">4</span><span class="s1">))  </span><span class="s6"># version</span>
+        <span class="s1">self._size = struct.unpack(</span><span class="s5">&quot;&lt;2i&quot;</span><span class="s2">, </span><span class="s1">self.fp.read(</span><span class="s4">8</span><span class="s1">))</span>
+        <span class="s1">mipmap_count</span><span class="s2">, </span><span class="s1">format_count = struct.unpack(</span><span class="s5">&quot;&lt;2i&quot;</span><span class="s2">, </span><span class="s1">self.fp.read(</span><span class="s4">8</span><span class="s1">))</span>
+
+        <span class="s1">self.mode = </span><span class="s5">&quot;RGB&quot;</span>
+
+        <span class="s6"># Only support single-format files.</span>
+        <span class="s6"># I don't know of any multi-format file.</span>
+        <span class="s2">assert </span><span class="s1">format_count == </span><span class="s4">1</span>
+
+        <span class="s1">format</span><span class="s2">, </span><span class="s1">where = struct.unpack(</span><span class="s5">&quot;&lt;2i&quot;</span><span class="s2">, </span><span class="s1">self.fp.read(</span><span class="s4">8</span><span class="s1">))</span>
+        <span class="s1">self.fp.seek(where)</span>
+        <span class="s1">(mipmap_size</span><span class="s2">,</span><span class="s1">) = struct.unpack(</span><span class="s5">&quot;&lt;i&quot;</span><span class="s2">, </span><span class="s1">self.fp.read(</span><span class="s4">4</span><span class="s1">))</span>
+
+        <span class="s1">data = self.fp.read(mipmap_size)</span>
+
+        <span class="s2">if </span><span class="s1">format == Format.DXT1:</span>
+            <span class="s1">self.mode = </span><span class="s5">&quot;RGBA&quot;</span>
+            <span class="s1">self.tile = [(</span><span class="s5">&quot;bcn&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s4">1</span><span class="s1">)]</span>
+        <span class="s2">elif </span><span class="s1">format == Format.UNCOMPRESSED:</span>
+            <span class="s1">self.tile = [(</span><span class="s5">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">(</span><span class="s5">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s4">1</span><span class="s1">))]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s5">f&quot;Invalid texture compression format: </span><span class="s2">{</span><span class="s1">repr(format)</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s1">)</span>
+
+        <span class="s1">self.fp.close()</span>
+        <span class="s1">self.fp = BytesIO(data)</span>
+
+    <span class="s2">def </span><span class="s1">load_seek(self</span><span class="s2">, </span><span class="s1">pos):</span>
+        <span class="s2">pass</span>
+
+
+<span class="s2">def </span><span class="s1">_accept(prefix):</span>
+    <span class="s2">return </span><span class="s1">prefix[:</span><span class="s4">4</span><span class="s1">] == MAGIC</span>
+
+
+<span class="s1">Image.register_open(FtexImageFile.format</span><span class="s2">, </span><span class="s1">FtexImageFile</span><span class="s2">, </span><span class="s1">_accept)</span>
+<span class="s1">Image.register_extensions(FtexImageFile.format</span><span class="s2">, </span><span class="s1">[</span><span class="s5">&quot;.ftc&quot;</span><span class="s2">, </span><span class="s5">&quot;.ftu&quot;</span><span class="s1">])</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,213 @@
+<html>
+<head>
+<title>typ.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #629755; font-style: italic;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #808080;}
+.s4 { color: #6a8759;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+typ.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Module with additional types used by the index&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">binascii </span><span class="s2">import </span><span class="s1">b2a_hex</span>
+<span class="s2">from </span><span class="s1">pathlib </span><span class="s2">import </span><span class="s1">Path</span>
+
+<span class="s2">from </span><span class="s1">.util </span><span class="s2">import </span><span class="s1">pack</span><span class="s2">, </span><span class="s1">unpack</span>
+<span class="s2">from </span><span class="s1">git.objects </span><span class="s2">import </span><span class="s1">Blob</span>
+
+
+<span class="s3"># typing ----------------------------------------------------------------------</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">NamedTuple</span><span class="s2">, </span><span class="s1">Sequence</span><span class="s2">, </span><span class="s1">TYPE_CHECKING</span><span class="s2">, </span><span class="s1">Tuple</span><span class="s2">, </span><span class="s1">Union</span><span class="s2">, </span><span class="s1">cast</span><span class="s2">, </span><span class="s1">List</span>
+
+<span class="s2">from </span><span class="s1">git.types </span><span class="s2">import </span><span class="s1">PathLike</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">git.repo </span><span class="s2">import </span><span class="s1">Repo</span>
+
+<span class="s1">StageType = int</span>
+
+<span class="s3"># ---------------------------------------------------------------------------------</span>
+
+<span class="s1">__all__ = (</span><span class="s4">&quot;BlobFilter&quot;</span><span class="s2">, </span><span class="s4">&quot;BaseIndexEntry&quot;</span><span class="s2">, </span><span class="s4">&quot;IndexEntry&quot;</span><span class="s2">, </span><span class="s4">&quot;StageType&quot;</span><span class="s1">)</span>
+
+<span class="s3"># { Invariants</span>
+<span class="s1">CE_NAMEMASK = </span><span class="s5">0x0FFF</span>
+<span class="s1">CE_STAGEMASK = </span><span class="s5">0x3000</span>
+<span class="s1">CE_EXTENDED = </span><span class="s5">0x4000</span>
+<span class="s1">CE_VALID = </span><span class="s5">0x8000</span>
+<span class="s1">CE_STAGESHIFT = </span><span class="s5">12</span>
+
+<span class="s3"># } END invariants</span>
+
+
+<span class="s2">class </span><span class="s1">BlobFilter(object):</span>
+
+    <span class="s0">&quot;&quot;&quot; 
+    Predicate to be used by iter_blobs allowing to filter only return blobs which 
+    match the given list of directories or files. 
+ 
+    The given paths are given relative to the repository. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = </span><span class="s4">&quot;paths&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">paths: Sequence[PathLike]) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot; 
+        :param paths: 
+            tuple or list of paths which are either pointing to directories or 
+            to files relative to the current repository 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.paths = paths</span>
+
+    <span class="s2">def </span><span class="s1">__call__(self</span><span class="s2">, </span><span class="s1">stage_blob: Tuple[StageType</span><span class="s2">, </span><span class="s1">Blob]) -&gt; bool:</span>
+        <span class="s1">blob_pathlike: PathLike = stage_blob[</span><span class="s5">1</span><span class="s1">].path</span>
+        <span class="s1">blob_path: Path = blob_pathlike </span><span class="s2">if </span><span class="s1">isinstance(blob_pathlike</span><span class="s2">, </span><span class="s1">Path) </span><span class="s2">else </span><span class="s1">Path(blob_pathlike)</span>
+        <span class="s2">for </span><span class="s1">pathlike </span><span class="s2">in </span><span class="s1">self.paths:</span>
+            <span class="s1">path: Path = pathlike </span><span class="s2">if </span><span class="s1">isinstance(pathlike</span><span class="s2">, </span><span class="s1">Path) </span><span class="s2">else </span><span class="s1">Path(pathlike)</span>
+            <span class="s3"># TODO: Change to use `PosixPath.is_relative_to` once Python 3.8 is no longer supported.</span>
+            <span class="s1">filter_parts: List[str] = path.parts</span>
+            <span class="s1">blob_parts: List[str] = blob_path.parts</span>
+            <span class="s2">if </span><span class="s1">len(filter_parts) &gt; len(blob_parts):</span>
+                <span class="s2">continue</span>
+            <span class="s2">if </span><span class="s1">all(i == j </span><span class="s2">for </span><span class="s1">i</span><span class="s2">, </span><span class="s1">j </span><span class="s2">in </span><span class="s1">zip(filter_parts</span><span class="s2">, </span><span class="s1">blob_parts)):</span>
+                <span class="s2">return True</span>
+        <span class="s2">return False</span>
+
+
+<span class="s2">class </span><span class="s1">BaseIndexEntryHelper(NamedTuple):</span>
+    <span class="s0">&quot;&quot;&quot;Typed namedtuple to provide named attribute access for BaseIndexEntry. 
+    Needed to allow overriding __new__ in child class to preserve backwards compat.&quot;&quot;&quot;</span>
+
+    <span class="s1">mode: int</span>
+    <span class="s1">binsha: bytes</span>
+    <span class="s1">flags: int</span>
+    <span class="s1">path: PathLike</span>
+    <span class="s1">ctime_bytes: bytes = pack(</span><span class="s4">&quot;&gt;LL&quot;</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s1">)</span>
+    <span class="s1">mtime_bytes: bytes = pack(</span><span class="s4">&quot;&gt;LL&quot;</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s1">)</span>
+    <span class="s1">dev: int = </span><span class="s5">0</span>
+    <span class="s1">inode: int = </span><span class="s5">0</span>
+    <span class="s1">uid: int = </span><span class="s5">0</span>
+    <span class="s1">gid: int = </span><span class="s5">0</span>
+    <span class="s1">size: int = </span><span class="s5">0</span>
+
+
+<span class="s2">class </span><span class="s1">BaseIndexEntry(BaseIndexEntryHelper):</span>
+
+    <span class="s0">&quot;&quot;&quot;Small Brother of an index entry which can be created to describe changes 
+    done to the index in which case plenty of additional information is not required. 
+ 
+    As the first 4 data members match exactly to the IndexEntry type, methods 
+    expecting a BaseIndexEntry can also handle full IndexEntries even if they 
+    use numeric indices for performance reasons. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__new__(</span>
+        <span class="s1">cls</span><span class="s2">,</span>
+        <span class="s1">inp_tuple: Union[</span>
+            <span class="s1">Tuple[int</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">int</span><span class="s2">, </span><span class="s1">PathLike]</span><span class="s2">,</span>
+            <span class="s1">Tuple[int</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">int</span><span class="s2">, </span><span class="s1">PathLike</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">int</span><span class="s2">, </span><span class="s1">int</span><span class="s2">, </span><span class="s1">int</span><span class="s2">, </span><span class="s1">int</span><span class="s2">, </span><span class="s1">int]</span><span class="s2">,</span>
+        <span class="s1">]</span><span class="s2">,</span>
+    <span class="s1">) -&gt; </span><span class="s4">&quot;BaseIndexEntry&quot;</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;Override __new__ to allow construction from a tuple for backwards compatibility&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">super().__new__(cls</span><span class="s2">, </span><span class="s1">*inp_tuple)</span>
+
+    <span class="s2">def </span><span class="s1">__str__(self) -&gt; str:</span>
+        <span class="s2">return </span><span class="s4">&quot;%o %s %i</span><span class="s2">\t</span><span class="s4">%s&quot; </span><span class="s1">% (self.mode</span><span class="s2">, </span><span class="s1">self.hexsha</span><span class="s2">, </span><span class="s1">self.stage</span><span class="s2">, </span><span class="s1">self.path)</span>
+
+    <span class="s2">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s2">return </span><span class="s4">&quot;(%o, %s, %i, %s)&quot; </span><span class="s1">% (self.mode</span><span class="s2">, </span><span class="s1">self.hexsha</span><span class="s2">, </span><span class="s1">self.stage</span><span class="s2">, </span><span class="s1">self.path)</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">hexsha(self) -&gt; str:</span>
+        <span class="s0">&quot;&quot;&quot;hex version of our sha&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">b2a_hex(self.binsha).decode(</span><span class="s4">&quot;ascii&quot;</span><span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">stage(self) -&gt; int:</span>
+        <span class="s0">&quot;&quot;&quot;Stage of the entry, either: 
+ 
+            * 0 = default stage 
+            * 1 = stage before a merge or common ancestor entry in case of a 3 way merge 
+            * 2 = stage of entries from the 'left' side of the merge 
+            * 3 = stage of entries from the right side of the merge 
+ 
+        :note: For more information, see http://www.kernel.org/pub/software/scm/git/docs/git-read-tree.html 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">(self.flags &amp; CE_STAGEMASK) &gt;&gt; CE_STAGESHIFT</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">from_blob(cls</span><span class="s2">, </span><span class="s1">blob: Blob</span><span class="s2">, </span><span class="s1">stage: int = </span><span class="s5">0</span><span class="s1">) -&gt; </span><span class="s4">&quot;BaseIndexEntry&quot;</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;:return: Fully equipped BaseIndexEntry at the given stage&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">cls((blob.mode</span><span class="s2">, </span><span class="s1">blob.binsha</span><span class="s2">, </span><span class="s1">stage &lt;&lt; CE_STAGESHIFT</span><span class="s2">, </span><span class="s1">blob.path))</span>
+
+    <span class="s2">def </span><span class="s1">to_blob(self</span><span class="s2">, </span><span class="s1">repo: </span><span class="s4">&quot;Repo&quot;</span><span class="s1">) -&gt; Blob:</span>
+        <span class="s0">&quot;&quot;&quot;:return: Blob using the information of this index entry&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">Blob(repo</span><span class="s2">, </span><span class="s1">self.binsha</span><span class="s2">, </span><span class="s1">self.mode</span><span class="s2">, </span><span class="s1">self.path)</span>
+
+
+<span class="s2">class </span><span class="s1">IndexEntry(BaseIndexEntry):</span>
+
+    <span class="s0">&quot;&quot;&quot;Allows convenient access to IndexEntry data without completely unpacking it. 
+ 
+    Attributes usully accessed often are cached in the tuple whereas others are 
+    unpacked on demand. 
+ 
+    See the properties for a mapping between names and tuple indices.&quot;&quot;&quot;</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">ctime(self) -&gt; Tuple[int</span><span class="s2">, </span><span class="s1">int]:</span>
+        <span class="s0">&quot;&quot;&quot; 
+        :return: 
+            Tuple(int_time_seconds_since_epoch, int_nano_seconds) of the 
+            file's creation time&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">cast(Tuple[int</span><span class="s2">, </span><span class="s1">int]</span><span class="s2">, </span><span class="s1">unpack(</span><span class="s4">&quot;&gt;LL&quot;</span><span class="s2">, </span><span class="s1">self.ctime_bytes))</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">mtime(self) -&gt; Tuple[int</span><span class="s2">, </span><span class="s1">int]:</span>
+        <span class="s0">&quot;&quot;&quot;See ctime property, but returns modification time&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">cast(Tuple[int</span><span class="s2">, </span><span class="s1">int]</span><span class="s2">, </span><span class="s1">unpack(</span><span class="s4">&quot;&gt;LL&quot;</span><span class="s2">, </span><span class="s1">self.mtime_bytes))</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">from_base(cls</span><span class="s2">, </span><span class="s1">base: </span><span class="s4">&quot;BaseIndexEntry&quot;</span><span class="s1">) -&gt; </span><span class="s4">&quot;IndexEntry&quot;</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot; 
+        :return: 
+            Minimal entry as created from the given BaseIndexEntry instance. 
+            Missing values will be set to null-like values 
+ 
+        :param base: Instance of type BaseIndexEntry&quot;&quot;&quot;</span>
+        <span class="s1">time = pack(</span><span class="s4">&quot;&gt;LL&quot;</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">IndexEntry((base.mode</span><span class="s2">, </span><span class="s1">base.binsha</span><span class="s2">, </span><span class="s1">base.flags</span><span class="s2">, </span><span class="s1">base.path</span><span class="s2">, </span><span class="s1">time</span><span class="s2">, </span><span class="s1">time</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s1">))</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">from_blob(cls</span><span class="s2">, </span><span class="s1">blob: Blob</span><span class="s2">, </span><span class="s1">stage: int = </span><span class="s5">0</span><span class="s1">) -&gt; </span><span class="s4">&quot;IndexEntry&quot;</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;:return: Minimal entry resembling the given blob object&quot;&quot;&quot;</span>
+        <span class="s1">time = pack(</span><span class="s4">&quot;&gt;LL&quot;</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">IndexEntry(</span>
+            <span class="s1">(</span>
+                <span class="s1">blob.mode</span><span class="s2">,</span>
+                <span class="s1">blob.binsha</span><span class="s2">,</span>
+                <span class="s1">stage &lt;&lt; CE_STAGESHIFT</span><span class="s2">,</span>
+                <span class="s1">blob.path</span><span class="s2">,</span>
+                <span class="s1">time</span><span class="s2">,</span>
+                <span class="s1">time</span><span class="s2">,</span>
+                <span class="s5">0</span><span class="s2">,</span>
+                <span class="s5">0</span><span class="s2">,</span>
+                <span class="s5">0</span><span class="s2">,</span>
+                <span class="s5">0</span><span class="s2">,</span>
+                <span class="s1">blob.size</span><span class="s2">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+</pre>
+</body>
+</html>

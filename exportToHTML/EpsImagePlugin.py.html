@@ -1,0 +1,437 @@
+<html>
+<head>
+<title>EpsImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6a8759;}
+.s4 { color: #6897bb;}
+.s5 { color: #629755; font-style: italic;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+EpsImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># EPS file handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1995-09-01 fl   Created (0.1)</span>
+<span class="s0"># 1996-05-18 fl   Don't choke on &quot;atend&quot; fields, Ghostscript interface (0.2)</span>
+<span class="s0"># 1996-08-22 fl   Don't choke on floating point BoundingBox values</span>
+<span class="s0"># 1996-08-23 fl   Handle files from Macintosh (0.3)</span>
+<span class="s0"># 2001-02-17 fl   Use 're' instead of 'regex' (Python 2.1) (0.4)</span>
+<span class="s0"># 2003-09-07 fl   Check gs.close status (from Federico Di Gregorio) (0.5)</span>
+<span class="s0"># 2014-05-07 e    Handling of EPS with binary preview and fixed resolution</span>
+<span class="s0">#                 resizing</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2003 by Secret Labs AB.</span>
+<span class="s0"># Copyright (c) 1995-2003 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">import </span><span class="s1">io</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">import </span><span class="s1">subprocess</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">import </span><span class="s1">tempfile</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">i32le </span><span class="s2">as </span><span class="s1">i32</span>
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+
+<span class="s1">split = re.compile(</span><span class="s3">r&quot;^%%([^:]*):[ \t]*(.*)[ \t]*$&quot;</span><span class="s1">)</span>
+<span class="s1">field = re.compile(</span><span class="s3">r&quot;^%[%!\w]([^:]*)[ \t]*$&quot;</span><span class="s1">)</span>
+
+<span class="s1">gs_windows_binary = </span><span class="s2">None</span>
+<span class="s2">if </span><span class="s1">sys.platform.startswith(</span><span class="s3">&quot;win&quot;</span><span class="s1">):</span>
+    <span class="s2">import </span><span class="s1">shutil</span>
+
+    <span class="s2">for </span><span class="s1">binary </span><span class="s2">in </span><span class="s1">(</span><span class="s3">&quot;gswin32c&quot;</span><span class="s2">, </span><span class="s3">&quot;gswin64c&quot;</span><span class="s2">, </span><span class="s3">&quot;gs&quot;</span><span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">shutil.which(binary) </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">gs_windows_binary = binary</span>
+            <span class="s2">break</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">gs_windows_binary = </span><span class="s2">False</span>
+
+
+<span class="s2">def </span><span class="s1">has_ghostscript():</span>
+    <span class="s2">if </span><span class="s1">gs_windows_binary:</span>
+        <span class="s2">return True</span>
+    <span class="s2">if not </span><span class="s1">sys.platform.startswith(</span><span class="s3">&quot;win&quot;</span><span class="s1">):</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">subprocess.check_call([</span><span class="s3">&quot;gs&quot;</span><span class="s2">, </span><span class="s3">&quot;--version&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s1">stdout=subprocess.DEVNULL)</span>
+            <span class="s2">return True</span>
+        <span class="s2">except </span><span class="s1">OSError:</span>
+            <span class="s0"># No Ghostscript</span>
+            <span class="s2">pass</span>
+    <span class="s2">return False</span>
+
+
+<span class="s2">def </span><span class="s1">Ghostscript(tile</span><span class="s2">, </span><span class="s1">size</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">scale=</span><span class="s4">1</span><span class="s2">, </span><span class="s1">transparency=</span><span class="s2">False</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot;Render an image using Ghostscript&quot;&quot;&quot;</span>
+
+    <span class="s0"># Unpack decoder tile</span>
+    <span class="s1">decoder</span><span class="s2">, </span><span class="s1">tile</span><span class="s2">, </span><span class="s1">offset</span><span class="s2">, </span><span class="s1">data = tile[</span><span class="s4">0</span><span class="s1">]</span>
+    <span class="s1">length</span><span class="s2">, </span><span class="s1">bbox = data</span>
+
+    <span class="s0"># Hack to support hi-res rendering</span>
+    <span class="s1">scale = int(scale) </span><span class="s2">or </span><span class="s4">1</span>
+    <span class="s0"># orig_size = size</span>
+    <span class="s0"># orig_bbox = bbox</span>
+    <span class="s1">size = (size[</span><span class="s4">0</span><span class="s1">] * scale</span><span class="s2">, </span><span class="s1">size[</span><span class="s4">1</span><span class="s1">] * scale)</span>
+    <span class="s0"># resolution is dependent on bbox and size</span>
+    <span class="s1">res = (</span>
+        <span class="s4">72.0 </span><span class="s1">* size[</span><span class="s4">0</span><span class="s1">] / (bbox[</span><span class="s4">2</span><span class="s1">] - bbox[</span><span class="s4">0</span><span class="s1">])</span><span class="s2">,</span>
+        <span class="s4">72.0 </span><span class="s1">* size[</span><span class="s4">1</span><span class="s1">] / (bbox[</span><span class="s4">3</span><span class="s1">] - bbox[</span><span class="s4">1</span><span class="s1">])</span><span class="s2">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">out_fd</span><span class="s2">, </span><span class="s1">outfile = tempfile.mkstemp()</span>
+    <span class="s1">os.close(out_fd)</span>
+
+    <span class="s1">infile_temp = </span><span class="s2">None</span>
+    <span class="s2">if </span><span class="s1">hasattr(fp</span><span class="s2">, </span><span class="s3">&quot;name&quot;</span><span class="s1">) </span><span class="s2">and </span><span class="s1">os.path.exists(fp.name):</span>
+        <span class="s1">infile = fp.name</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">in_fd</span><span class="s2">, </span><span class="s1">infile_temp = tempfile.mkstemp()</span>
+        <span class="s1">os.close(in_fd)</span>
+        <span class="s1">infile = infile_temp</span>
+
+        <span class="s0"># Ignore length and offset!</span>
+        <span class="s0"># Ghostscript can read it</span>
+        <span class="s0"># Copy whole file to read in Ghostscript</span>
+        <span class="s2">with </span><span class="s1">open(infile_temp</span><span class="s2">, </span><span class="s3">&quot;wb&quot;</span><span class="s1">) </span><span class="s2">as </span><span class="s1">f:</span>
+            <span class="s0"># fetch length of fp</span>
+            <span class="s1">fp.seek(</span><span class="s4">0</span><span class="s2">, </span><span class="s1">io.SEEK_END)</span>
+            <span class="s1">fsize = fp.tell()</span>
+            <span class="s0"># ensure start position</span>
+            <span class="s0"># go back</span>
+            <span class="s1">fp.seek(</span><span class="s4">0</span><span class="s1">)</span>
+            <span class="s1">lengthfile = fsize</span>
+            <span class="s2">while </span><span class="s1">lengthfile &gt; </span><span class="s4">0</span><span class="s1">:</span>
+                <span class="s1">s = fp.read(min(lengthfile</span><span class="s2">, </span><span class="s4">100 </span><span class="s1">* </span><span class="s4">1024</span><span class="s1">))</span>
+                <span class="s2">if not </span><span class="s1">s:</span>
+                    <span class="s2">break</span>
+                <span class="s1">lengthfile -= len(s)</span>
+                <span class="s1">f.write(s)</span>
+
+    <span class="s1">device = </span><span class="s3">&quot;pngalpha&quot; </span><span class="s2">if </span><span class="s1">transparency </span><span class="s2">else </span><span class="s3">&quot;ppmraw&quot;</span>
+
+    <span class="s0"># Build Ghostscript command</span>
+    <span class="s1">command = [</span>
+        <span class="s3">&quot;gs&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;-q&quot;</span><span class="s2">,  </span><span class="s0"># quiet mode</span>
+        <span class="s3">&quot;-g%dx%d&quot; </span><span class="s1">% size</span><span class="s2">,  </span><span class="s0"># set output geometry (pixels)</span>
+        <span class="s3">&quot;-r%fx%f&quot; </span><span class="s1">% res</span><span class="s2">,  </span><span class="s0"># set input DPI (dots per inch)</span>
+        <span class="s3">&quot;-dBATCH&quot;</span><span class="s2">,  </span><span class="s0"># exit after processing</span>
+        <span class="s3">&quot;-dNOPAUSE&quot;</span><span class="s2">,  </span><span class="s0"># don't pause between pages</span>
+        <span class="s3">&quot;-dSAFER&quot;</span><span class="s2">,  </span><span class="s0"># safe mode</span>
+        <span class="s3">f&quot;-sDEVICE=</span><span class="s2">{</span><span class="s1">device</span><span class="s2">}</span><span class="s3">&quot;</span><span class="s2">,</span>
+        <span class="s3">f&quot;-sOutputFile=</span><span class="s2">{</span><span class="s1">outfile</span><span class="s2">}</span><span class="s3">&quot;</span><span class="s2">,  </span><span class="s0"># output file</span>
+        <span class="s0"># adjust for image origin</span>
+        <span class="s3">&quot;-c&quot;</span><span class="s2">,</span>
+        <span class="s3">f&quot;</span><span class="s2">{</span><span class="s1">-bbox[</span><span class="s4">0</span><span class="s1">]</span><span class="s2">} {</span><span class="s1">-bbox[</span><span class="s4">1</span><span class="s1">]</span><span class="s2">} </span><span class="s3">translate&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;-f&quot;</span><span class="s2">,</span>
+        <span class="s1">infile</span><span class="s2">,  </span><span class="s0"># input file</span>
+        <span class="s0"># showpage (see https://bugs.ghostscript.com/show_bug.cgi?id=698272)</span>
+        <span class="s3">&quot;-c&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;showpage&quot;</span><span class="s2">,</span>
+    <span class="s1">]</span>
+
+    <span class="s2">if </span><span class="s1">gs_windows_binary </span><span class="s2">is not None</span><span class="s1">:</span>
+        <span class="s2">if not </span><span class="s1">gs_windows_binary:</span>
+            <span class="s2">raise </span><span class="s1">OSError(</span><span class="s3">&quot;Unable to locate Ghostscript on paths&quot;</span><span class="s1">)</span>
+        <span class="s1">command[</span><span class="s4">0</span><span class="s1">] = gs_windows_binary</span>
+
+    <span class="s0"># push data through Ghostscript</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">startupinfo = </span><span class="s2">None</span>
+        <span class="s2">if </span><span class="s1">sys.platform.startswith(</span><span class="s3">&quot;win&quot;</span><span class="s1">):</span>
+            <span class="s1">startupinfo = subprocess.STARTUPINFO()</span>
+            <span class="s1">startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW</span>
+        <span class="s1">subprocess.check_call(command</span><span class="s2">, </span><span class="s1">startupinfo=startupinfo)</span>
+        <span class="s1">out_im = Image.open(outfile)</span>
+        <span class="s1">out_im.load()</span>
+    <span class="s2">finally</span><span class="s1">:</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">os.unlink(outfile)</span>
+            <span class="s2">if </span><span class="s1">infile_temp:</span>
+                <span class="s1">os.unlink(infile_temp)</span>
+        <span class="s2">except </span><span class="s1">OSError:</span>
+            <span class="s2">pass</span>
+
+    <span class="s1">im = out_im.im.copy()</span>
+    <span class="s1">out_im.close()</span>
+    <span class="s2">return </span><span class="s1">im</span>
+
+
+<span class="s2">class </span><span class="s1">PSFile:</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Wrapper for bytesio object that treats either CR or LF as end of line. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">fp):</span>
+        <span class="s1">self.fp = fp</span>
+        <span class="s1">self.char = </span><span class="s2">None</span>
+
+    <span class="s2">def </span><span class="s1">seek(self</span><span class="s2">, </span><span class="s1">offset</span><span class="s2">, </span><span class="s1">whence=io.SEEK_SET):</span>
+        <span class="s1">self.char = </span><span class="s2">None</span>
+        <span class="s1">self.fp.seek(offset</span><span class="s2">, </span><span class="s1">whence)</span>
+
+    <span class="s2">def </span><span class="s1">readline(self):</span>
+        <span class="s1">s = [self.char </span><span class="s2">or </span><span class="s6">b&quot;&quot;</span><span class="s1">]</span>
+        <span class="s1">self.char = </span><span class="s2">None</span>
+
+        <span class="s1">c = self.fp.read(</span><span class="s4">1</span><span class="s1">)</span>
+        <span class="s2">while </span><span class="s1">(c </span><span class="s2">not in </span><span class="s6">b&quot;</span><span class="s2">\r\n</span><span class="s6">&quot;</span><span class="s1">) </span><span class="s2">and </span><span class="s1">len(c):</span>
+            <span class="s1">s.append(c)</span>
+            <span class="s1">c = self.fp.read(</span><span class="s4">1</span><span class="s1">)</span>
+
+        <span class="s1">self.char = self.fp.read(</span><span class="s4">1</span><span class="s1">)</span>
+        <span class="s0"># line endings can be 1 or 2 of \r \n, in either order</span>
+        <span class="s2">if </span><span class="s1">self.char </span><span class="s2">in </span><span class="s6">b&quot;</span><span class="s2">\r\n</span><span class="s6">&quot;</span><span class="s1">:</span>
+            <span class="s1">self.char = </span><span class="s2">None</span>
+
+        <span class="s2">return </span><span class="s6">b&quot;&quot;</span><span class="s1">.join(s).decode(</span><span class="s3">&quot;latin-1&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">_accept(prefix):</span>
+    <span class="s2">return </span><span class="s1">prefix[:</span><span class="s4">4</span><span class="s1">] == </span><span class="s6">b&quot;%!PS&quot; </span><span class="s2">or </span><span class="s1">(len(prefix) &gt;= </span><span class="s4">4 </span><span class="s2">and </span><span class="s1">i32(prefix) == </span><span class="s4">0xC6D3D0C5</span><span class="s1">)</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for Encapsulated PostScript.  This plugin supports only</span>
+<span class="s0"># a few variants of this format.</span>
+
+
+<span class="s2">class </span><span class="s1">EpsImageFile(ImageFile.ImageFile):</span>
+    <span class="s5">&quot;&quot;&quot;EPS File Parser for the Python Imaging Library&quot;&quot;&quot;</span>
+
+    <span class="s1">format = </span><span class="s3">&quot;EPS&quot;</span>
+    <span class="s1">format_description = </span><span class="s3">&quot;Encapsulated Postscript&quot;</span>
+
+    <span class="s1">mode_map = {</span><span class="s4">1</span><span class="s1">: </span><span class="s3">&quot;L&quot;</span><span class="s2">, </span><span class="s4">2</span><span class="s1">: </span><span class="s3">&quot;LAB&quot;</span><span class="s2">, </span><span class="s4">3</span><span class="s1">: </span><span class="s3">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">4</span><span class="s1">: </span><span class="s3">&quot;CMYK&quot;</span><span class="s1">}</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+        <span class="s1">(length</span><span class="s2">, </span><span class="s1">offset) = self._find_offset(self.fp)</span>
+
+        <span class="s0"># Rewrap the open file pointer in something that will</span>
+        <span class="s0"># convert line endings and decode to latin-1.</span>
+        <span class="s1">fp = PSFile(self.fp)</span>
+
+        <span class="s0"># go to offset - start of &quot;%!PS&quot;</span>
+        <span class="s1">fp.seek(offset)</span>
+
+        <span class="s1">box = </span><span class="s2">None</span>
+
+        <span class="s1">self.mode = </span><span class="s3">&quot;RGB&quot;</span>
+        <span class="s1">self._size = </span><span class="s4">1</span><span class="s2">, </span><span class="s4">1  </span><span class="s0"># FIXME: huh?</span>
+
+        <span class="s0">#</span>
+        <span class="s0"># Load EPS header</span>
+
+        <span class="s1">s_raw = fp.readline()</span>
+        <span class="s1">s = s_raw.strip(</span><span class="s3">&quot;</span><span class="s2">\r\n</span><span class="s3">&quot;</span><span class="s1">)</span>
+
+        <span class="s2">while </span><span class="s1">s_raw:</span>
+            <span class="s2">if </span><span class="s1">s:</span>
+                <span class="s2">if </span><span class="s1">len(s) &gt; </span><span class="s4">255</span><span class="s1">:</span>
+                    <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s3">&quot;not an EPS file&quot;</span><span class="s1">)</span>
+
+                <span class="s2">try</span><span class="s1">:</span>
+                    <span class="s1">m = split.match(s)</span>
+                <span class="s2">except </span><span class="s1">re.error </span><span class="s2">as </span><span class="s1">e:</span>
+                    <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s3">&quot;not an EPS file&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+
+                <span class="s2">if </span><span class="s1">m:</span>
+                    <span class="s1">k</span><span class="s2">, </span><span class="s1">v = m.group(</span><span class="s4">1</span><span class="s2">, </span><span class="s4">2</span><span class="s1">)</span>
+                    <span class="s1">self.info[k] = v</span>
+                    <span class="s2">if </span><span class="s1">k == </span><span class="s3">&quot;BoundingBox&quot;</span><span class="s1">:</span>
+                        <span class="s2">try</span><span class="s1">:</span>
+                            <span class="s0"># Note: The DSC spec says that BoundingBox</span>
+                            <span class="s0"># fields should be integers, but some drivers</span>
+                            <span class="s0"># put floating point values there anyway.</span>
+                            <span class="s1">box = [int(float(i)) </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">v.split()]</span>
+                            <span class="s1">self._size = box[</span><span class="s4">2</span><span class="s1">] - box[</span><span class="s4">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">box[</span><span class="s4">3</span><span class="s1">] - box[</span><span class="s4">1</span><span class="s1">]</span>
+                            <span class="s1">self.tile = [</span>
+                                <span class="s1">(</span><span class="s3">&quot;eps&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s1">offset</span><span class="s2">, </span><span class="s1">(length</span><span class="s2">, </span><span class="s1">box))</span>
+                            <span class="s1">]</span>
+                        <span class="s2">except </span><span class="s1">Exception:</span>
+                            <span class="s2">pass</span>
+
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">m = field.match(s)</span>
+                    <span class="s2">if </span><span class="s1">m:</span>
+                        <span class="s1">k = m.group(</span><span class="s4">1</span><span class="s1">)</span>
+
+                        <span class="s2">if </span><span class="s1">k == </span><span class="s3">&quot;EndComments&quot;</span><span class="s1">:</span>
+                            <span class="s2">break</span>
+                        <span class="s2">if </span><span class="s1">k[:</span><span class="s4">8</span><span class="s1">] == </span><span class="s3">&quot;PS-Adobe&quot;</span><span class="s1">:</span>
+                            <span class="s1">self.info[k[:</span><span class="s4">8</span><span class="s1">]] = k[</span><span class="s4">9</span><span class="s1">:]</span>
+                        <span class="s2">else</span><span class="s1">:</span>
+                            <span class="s1">self.info[k] = </span><span class="s3">&quot;&quot;</span>
+                    <span class="s2">elif </span><span class="s1">s[</span><span class="s4">0</span><span class="s1">] == </span><span class="s3">&quot;%&quot;</span><span class="s1">:</span>
+                        <span class="s0"># handle non-DSC PostScript comments that some</span>
+                        <span class="s0"># tools mistakenly put in the Comments section</span>
+                        <span class="s2">pass</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s2">raise </span><span class="s1">OSError(</span><span class="s3">&quot;bad EPS header&quot;</span><span class="s1">)</span>
+
+            <span class="s1">s_raw = fp.readline()</span>
+            <span class="s1">s = s_raw.strip(</span><span class="s3">&quot;</span><span class="s2">\r\n</span><span class="s3">&quot;</span><span class="s1">)</span>
+
+            <span class="s2">if </span><span class="s1">s </span><span class="s2">and </span><span class="s1">s[:</span><span class="s4">1</span><span class="s1">] != </span><span class="s3">&quot;%&quot;</span><span class="s1">:</span>
+                <span class="s2">break</span>
+
+        <span class="s0">#</span>
+        <span class="s0"># Scan for an &quot;ImageData&quot; descriptor</span>
+
+        <span class="s2">while </span><span class="s1">s[:</span><span class="s4">1</span><span class="s1">] == </span><span class="s3">&quot;%&quot;</span><span class="s1">:</span>
+
+            <span class="s2">if </span><span class="s1">len(s) &gt; </span><span class="s4">255</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s3">&quot;not an EPS file&quot;</span><span class="s1">)</span>
+
+            <span class="s2">if </span><span class="s1">s[:</span><span class="s4">11</span><span class="s1">] == </span><span class="s3">&quot;%ImageData:&quot;</span><span class="s1">:</span>
+                <span class="s0"># Encoded bitmapped image.</span>
+                <span class="s1">x</span><span class="s2">, </span><span class="s1">y</span><span class="s2">, </span><span class="s1">bi</span><span class="s2">, </span><span class="s1">mo = s[</span><span class="s4">11</span><span class="s1">:].split(</span><span class="s2">None, </span><span class="s4">7</span><span class="s1">)[:</span><span class="s4">4</span><span class="s1">]</span>
+
+                <span class="s2">if </span><span class="s1">int(bi) == </span><span class="s4">1</span><span class="s1">:</span>
+                    <span class="s1">self.mode = </span><span class="s3">&quot;1&quot;</span>
+                <span class="s2">elif </span><span class="s1">int(bi) == </span><span class="s4">8</span><span class="s1">:</span>
+                    <span class="s2">try</span><span class="s1">:</span>
+                        <span class="s1">self.mode = self.mode_map[int(mo)]</span>
+                    <span class="s2">except </span><span class="s1">ValueError:</span>
+                        <span class="s2">break</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">break</span>
+
+                <span class="s1">self._size = int(x)</span><span class="s2">, </span><span class="s1">int(y)</span>
+                <span class="s2">return</span>
+
+            <span class="s1">s = fp.readline().strip(</span><span class="s3">&quot;</span><span class="s2">\r\n</span><span class="s3">&quot;</span><span class="s1">)</span>
+            <span class="s2">if not </span><span class="s1">s:</span>
+                <span class="s2">break</span>
+
+        <span class="s2">if not </span><span class="s1">box:</span>
+            <span class="s2">raise </span><span class="s1">OSError(</span><span class="s3">&quot;cannot determine EPS bounding box&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_find_offset(self</span><span class="s2">, </span><span class="s1">fp):</span>
+
+        <span class="s1">s = fp.read(</span><span class="s4">160</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">s[:</span><span class="s4">4</span><span class="s1">] == </span><span class="s6">b&quot;%!PS&quot;</span><span class="s1">:</span>
+            <span class="s0"># for HEAD without binary preview</span>
+            <span class="s1">fp.seek(</span><span class="s4">0</span><span class="s2">, </span><span class="s1">io.SEEK_END)</span>
+            <span class="s1">length = fp.tell()</span>
+            <span class="s1">offset = </span><span class="s4">0</span>
+        <span class="s2">elif </span><span class="s1">i32(s</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) == </span><span class="s4">0xC6D3D0C5</span><span class="s1">:</span>
+            <span class="s0"># FIX for: Some EPS file not handled correctly / issue #302</span>
+            <span class="s0"># EPS can contain binary data</span>
+            <span class="s0"># or start directly with latin coding</span>
+            <span class="s0"># more info see:</span>
+            <span class="s0"># https://web.archive.org/web/20160528181353/http://partners.adobe.com/public/developer/en/ps/5002.EPSF_Spec.pdf</span>
+            <span class="s1">offset = i32(s</span><span class="s2">, </span><span class="s4">4</span><span class="s1">)</span>
+            <span class="s1">length = i32(s</span><span class="s2">, </span><span class="s4">8</span><span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s3">&quot;not an EPS file&quot;</span><span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s1">length</span><span class="s2">, </span><span class="s1">offset</span>
+
+    <span class="s2">def </span><span class="s1">load(self</span><span class="s2">, </span><span class="s1">scale=</span><span class="s4">1</span><span class="s2">, </span><span class="s1">transparency=</span><span class="s2">False</span><span class="s1">):</span>
+        <span class="s0"># Load EPS via Ghostscript</span>
+        <span class="s2">if </span><span class="s1">self.tile:</span>
+            <span class="s1">self.im = Ghostscript(self.tile</span><span class="s2">, </span><span class="s1">self.size</span><span class="s2">, </span><span class="s1">self.fp</span><span class="s2">, </span><span class="s1">scale</span><span class="s2">, </span><span class="s1">transparency)</span>
+            <span class="s1">self.mode = self.im.mode</span>
+            <span class="s1">self._size = self.im.size</span>
+            <span class="s1">self.tile = []</span>
+        <span class="s2">return </span><span class="s1">Image.Image.load(self)</span>
+
+    <span class="s2">def </span><span class="s1">load_seek(self</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s0"># we can't incrementally load, so force ImageFile.parser to</span>
+        <span class="s0"># use our custom load method by defining this method.</span>
+        <span class="s2">pass</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+
+
+<span class="s2">def </span><span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename</span><span class="s2">, </span><span class="s1">eps=</span><span class="s4">1</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot;EPS Writer for the Python Imaging Library.&quot;&quot;&quot;</span>
+
+    <span class="s0">#</span>
+    <span class="s0"># make sure image data is available</span>
+    <span class="s1">im.load()</span>
+
+    <span class="s0">#</span>
+    <span class="s0"># determine PostScript image mode</span>
+    <span class="s2">if </span><span class="s1">im.mode == </span><span class="s3">&quot;L&quot;</span><span class="s1">:</span>
+        <span class="s1">operator = (</span><span class="s4">8</span><span class="s2">, </span><span class="s4">1</span><span class="s2">, </span><span class="s6">b&quot;image&quot;</span><span class="s1">)</span>
+    <span class="s2">elif </span><span class="s1">im.mode == </span><span class="s3">&quot;RGB&quot;</span><span class="s1">:</span>
+        <span class="s1">operator = (</span><span class="s4">8</span><span class="s2">, </span><span class="s4">3</span><span class="s2">, </span><span class="s6">b&quot;false 3 colorimage&quot;</span><span class="s1">)</span>
+    <span class="s2">elif </span><span class="s1">im.mode == </span><span class="s3">&quot;CMYK&quot;</span><span class="s1">:</span>
+        <span class="s1">operator = (</span><span class="s4">8</span><span class="s2">, </span><span class="s4">4</span><span class="s2">, </span><span class="s6">b&quot;false 4 colorimage&quot;</span><span class="s1">)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;image mode is not supported&quot;</span><span class="s1">)</span>
+
+    <span class="s2">if </span><span class="s1">eps:</span>
+        <span class="s0">#</span>
+        <span class="s0"># write EPS header</span>
+        <span class="s1">fp.write(</span><span class="s6">b&quot;%!PS-Adobe-3.0 EPSF-3.0</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+        <span class="s1">fp.write(</span><span class="s6">b&quot;%%Creator: PIL 0.1 EpsEncode</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+        <span class="s0"># fp.write(&quot;%%CreationDate: %s&quot;...)</span>
+        <span class="s1">fp.write(</span><span class="s6">b&quot;%%%%BoundingBox: 0 0 %d %d</span><span class="s2">\n</span><span class="s6">&quot; </span><span class="s1">% im.size)</span>
+        <span class="s1">fp.write(</span><span class="s6">b&quot;%%Pages: 1</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+        <span class="s1">fp.write(</span><span class="s6">b&quot;%%EndComments</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+        <span class="s1">fp.write(</span><span class="s6">b&quot;%%Page: 1 1</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+        <span class="s1">fp.write(</span><span class="s6">b&quot;%%ImageData: %d %d &quot; </span><span class="s1">% im.size)</span>
+        <span class="s1">fp.write(</span><span class="s6">b'%d %d 0 1 1 &quot;%s&quot;</span><span class="s2">\n</span><span class="s6">' </span><span class="s1">% operator)</span>
+
+    <span class="s0">#</span>
+    <span class="s0"># image header</span>
+    <span class="s1">fp.write(</span><span class="s6">b&quot;gsave</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+    <span class="s1">fp.write(</span><span class="s6">b&quot;10 dict begin</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+    <span class="s1">fp.write(</span><span class="s6">b&quot;/buf %d string def</span><span class="s2">\n</span><span class="s6">&quot; </span><span class="s1">% (im.size[</span><span class="s4">0</span><span class="s1">] * operator[</span><span class="s4">1</span><span class="s1">]))</span>
+    <span class="s1">fp.write(</span><span class="s6">b&quot;%d %d scale</span><span class="s2">\n</span><span class="s6">&quot; </span><span class="s1">% im.size)</span>
+    <span class="s1">fp.write(</span><span class="s6">b&quot;%d %d 8</span><span class="s2">\n</span><span class="s6">&quot; </span><span class="s1">% im.size)  </span><span class="s0"># &lt;= bits</span>
+    <span class="s1">fp.write(</span><span class="s6">b&quot;[%d 0 0 -%d 0 %d]</span><span class="s2">\n</span><span class="s6">&quot; </span><span class="s1">% (im.size[</span><span class="s4">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">im.size[</span><span class="s4">1</span><span class="s1">]</span><span class="s2">, </span><span class="s1">im.size[</span><span class="s4">1</span><span class="s1">]))</span>
+    <span class="s1">fp.write(</span><span class="s6">b&quot;{ currentfile buf readhexstring pop } bind</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+    <span class="s1">fp.write(operator[</span><span class="s4">2</span><span class="s1">] + </span><span class="s6">b&quot;</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">hasattr(fp</span><span class="s2">, </span><span class="s3">&quot;flush&quot;</span><span class="s1">):</span>
+        <span class="s1">fp.flush()</span>
+
+    <span class="s1">ImageFile._save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">[(</span><span class="s3">&quot;eps&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + im.size</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, None</span><span class="s1">)])</span>
+
+    <span class="s1">fp.write(</span><span class="s6">b&quot;</span><span class="s2">\n</span><span class="s6">%%%%EndBinary</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+    <span class="s1">fp.write(</span><span class="s6">b&quot;grestore end</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">hasattr(fp</span><span class="s2">, </span><span class="s3">&quot;flush&quot;</span><span class="s1">):</span>
+        <span class="s1">fp.flush()</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+
+
+<span class="s1">Image.register_open(EpsImageFile.format</span><span class="s2">, </span><span class="s1">EpsImageFile</span><span class="s2">, </span><span class="s1">_accept)</span>
+
+<span class="s1">Image.register_save(EpsImageFile.format</span><span class="s2">, </span><span class="s1">_save)</span>
+
+<span class="s1">Image.register_extensions(EpsImageFile.format</span><span class="s2">, </span><span class="s1">[</span><span class="s3">&quot;.ps&quot;</span><span class="s2">, </span><span class="s3">&quot;.eps&quot;</span><span class="s1">])</span>
+
+<span class="s1">Image.register_mime(EpsImageFile.format</span><span class="s2">, </span><span class="s3">&quot;application/postscript&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

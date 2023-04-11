@@ -1,0 +1,785 @@
+<html>
+<head>
+<title>commit.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6a8759;}
+.s4 { color: #629755; font-style: italic;}
+.s5 { color: #6897bb;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+commit.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># commit.py</span>
+<span class="s0"># Copyright (C) 2008, 2009 Michael Trier (mtrier@gmail.com) and contributors</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of GitPython and is released under</span>
+<span class="s0"># the BSD License: http://www.opensource.org/licenses/bsd-license.php</span>
+<span class="s2">import </span><span class="s1">datetime</span>
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">from </span><span class="s1">subprocess </span><span class="s2">import </span><span class="s1">Popen</span><span class="s2">, </span><span class="s1">PIPE</span>
+<span class="s2">from </span><span class="s1">gitdb </span><span class="s2">import </span><span class="s1">IStream</span>
+<span class="s2">from </span><span class="s1">git.util </span><span class="s2">import </span><span class="s1">hex_to_bin</span><span class="s2">, </span><span class="s1">Actor</span><span class="s2">, </span><span class="s1">Stats</span><span class="s2">, </span><span class="s1">finalize_process</span>
+<span class="s2">from </span><span class="s1">git.diff </span><span class="s2">import </span><span class="s1">Diffable</span>
+<span class="s2">from </span><span class="s1">git.cmd </span><span class="s2">import </span><span class="s1">Git</span>
+
+<span class="s2">from </span><span class="s1">.tree </span><span class="s2">import </span><span class="s1">Tree</span>
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">base</span>
+<span class="s2">from </span><span class="s1">.util </span><span class="s2">import </span><span class="s1">(</span>
+    <span class="s1">Serializable</span><span class="s2">,</span>
+    <span class="s1">TraversableIterableObj</span><span class="s2">,</span>
+    <span class="s1">parse_date</span><span class="s2">,</span>
+    <span class="s1">altz_to_utctz_str</span><span class="s2">,</span>
+    <span class="s1">parse_actor_and_date</span><span class="s2">,</span>
+    <span class="s1">from_timestamp</span><span class="s2">,</span>
+<span class="s1">)</span>
+
+<span class="s2">from </span><span class="s1">time </span><span class="s2">import </span><span class="s1">time</span><span class="s2">, </span><span class="s1">daylight</span><span class="s2">, </span><span class="s1">altzone</span><span class="s2">, </span><span class="s1">timezone</span><span class="s2">, </span><span class="s1">localtime</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">from </span><span class="s1">io </span><span class="s2">import </span><span class="s1">BytesIO</span>
+<span class="s2">import </span><span class="s1">logging</span>
+
+
+<span class="s0"># typing ------------------------------------------------------------------</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">(</span>
+    <span class="s1">Any</span><span class="s2">,</span>
+    <span class="s1">IO</span><span class="s2">,</span>
+    <span class="s1">Iterator</span><span class="s2">,</span>
+    <span class="s1">List</span><span class="s2">,</span>
+    <span class="s1">Sequence</span><span class="s2">,</span>
+    <span class="s1">Tuple</span><span class="s2">,</span>
+    <span class="s1">Union</span><span class="s2">,</span>
+    <span class="s1">TYPE_CHECKING</span><span class="s2">,</span>
+    <span class="s1">cast</span><span class="s2">,</span>
+    <span class="s1">Dict</span><span class="s2">,</span>
+<span class="s1">)</span>
+
+<span class="s2">from </span><span class="s1">git.types </span><span class="s2">import </span><span class="s1">PathLike</span><span class="s2">, </span><span class="s1">Literal</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">git.repo </span><span class="s2">import </span><span class="s1">Repo</span>
+    <span class="s2">from </span><span class="s1">git.refs </span><span class="s2">import </span><span class="s1">SymbolicReference</span>
+
+<span class="s0"># ------------------------------------------------------------------------</span>
+
+<span class="s1">log = logging.getLogger(</span><span class="s3">&quot;git.objects.commit&quot;</span><span class="s1">)</span>
+<span class="s1">log.addHandler(logging.NullHandler())</span>
+
+<span class="s1">__all__ = (</span><span class="s3">&quot;Commit&quot;</span><span class="s2">,</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">Commit(base.Object</span><span class="s2">, </span><span class="s1">TraversableIterableObj</span><span class="s2">, </span><span class="s1">Diffable</span><span class="s2">, </span><span class="s1">Serializable):</span>
+
+    <span class="s4">&quot;&quot;&quot;Wraps a git Commit object. 
+ 
+    This class will act lazily on some of its attributes and will query the 
+    value on demand only if it involves calling the git binary.&quot;&quot;&quot;</span>
+
+    <span class="s0"># ENVIRONMENT VARIABLES</span>
+    <span class="s0"># read when creating new commits</span>
+    <span class="s1">env_author_date = </span><span class="s3">&quot;GIT_AUTHOR_DATE&quot;</span>
+    <span class="s1">env_committer_date = </span><span class="s3">&quot;GIT_COMMITTER_DATE&quot;</span>
+
+    <span class="s0"># CONFIGURATION KEYS</span>
+    <span class="s1">conf_encoding = </span><span class="s3">&quot;i18n.commitencoding&quot;</span>
+
+    <span class="s0"># INVARIANTS</span>
+    <span class="s1">default_encoding = </span><span class="s3">&quot;UTF-8&quot;</span>
+
+    <span class="s0"># object configuration</span>
+    <span class="s1">type: Literal[</span><span class="s3">&quot;commit&quot;</span><span class="s1">] = </span><span class="s3">&quot;commit&quot;</span>
+    <span class="s1">__slots__ = (</span>
+        <span class="s3">&quot;tree&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;author&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;authored_date&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;author_tz_offset&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;committer&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;committed_date&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;committer_tz_offset&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;message&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;parents&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;encoding&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;gpgsig&quot;</span><span class="s2">,</span>
+    <span class="s1">)</span>
+    <span class="s1">_id_attribute_ = </span><span class="s3">&quot;hexsha&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s2">,</span>
+        <span class="s1">binsha: bytes</span><span class="s2">,</span>
+        <span class="s1">tree: Union[Tree</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">author: Union[Actor</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">authored_date: Union[int</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">author_tz_offset: Union[</span><span class="s2">None, </span><span class="s1">float] = </span><span class="s2">None,</span>
+        <span class="s1">committer: Union[Actor</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">committed_date: Union[int</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">committer_tz_offset: Union[</span><span class="s2">None, </span><span class="s1">float] = </span><span class="s2">None,</span>
+        <span class="s1">message: Union[str</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">parents: Union[Sequence[</span><span class="s3">&quot;Commit&quot;</span><span class="s1">]</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">encoding: Union[str</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">gpgsig: Union[str</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+    <span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Instantiate a new Commit. All keyword arguments taking None as default will 
+        be implicitly set on first query. 
+ 
+        :param binsha: 20 byte sha1 
+        :param parents: tuple( Commit, ... ) 
+            is a tuple of commit ids or actual Commits 
+        :param tree: Tree object 
+        :param author: Actor 
+            is the author Actor object 
+        :param authored_date: int_seconds_since_epoch 
+            is the authored DateTime - use time.gmtime() to convert it into a 
+            different format 
+        :param author_tz_offset: int_seconds_west_of_utc 
+            is the timezone that the authored_date is in 
+        :param committer: Actor 
+            is the committer string 
+        :param committed_date: int_seconds_since_epoch 
+            is the committed DateTime - use time.gmtime() to convert it into a 
+            different format 
+        :param committer_tz_offset: int_seconds_west_of_utc 
+            is the timezone that the committed_date is in 
+        :param message: string 
+            is the commit message 
+        :param encoding: string 
+            encoding of the message, defaults to UTF-8 
+        :param parents: 
+            List or tuple of Commit objects which are our parent(s) in the commit 
+            dependency graph 
+        :return: git.Commit 
+ 
+        :note: 
+            Timezone information is in the same format and in the same sign 
+            as what time.altzone returns. The sign is inverted compared to git's 
+            UTC timezone.&quot;&quot;&quot;</span>
+        <span class="s1">super(Commit</span><span class="s2">, </span><span class="s1">self).__init__(repo</span><span class="s2">, </span><span class="s1">binsha)</span>
+        <span class="s1">self.binsha = binsha</span>
+        <span class="s2">if </span><span class="s1">tree </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s2">assert </span><span class="s1">isinstance(tree</span><span class="s2">, </span><span class="s1">Tree)</span><span class="s2">, </span><span class="s3">&quot;Tree needs to be a Tree instance, was %s&quot; </span><span class="s1">% type(tree)</span>
+        <span class="s2">if </span><span class="s1">tree </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.tree = tree</span>
+        <span class="s2">if </span><span class="s1">author </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.author = author</span>
+        <span class="s2">if </span><span class="s1">authored_date </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.authored_date = authored_date</span>
+        <span class="s2">if </span><span class="s1">author_tz_offset </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.author_tz_offset = author_tz_offset</span>
+        <span class="s2">if </span><span class="s1">committer </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.committer = committer</span>
+        <span class="s2">if </span><span class="s1">committed_date </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.committed_date = committed_date</span>
+        <span class="s2">if </span><span class="s1">committer_tz_offset </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.committer_tz_offset = committer_tz_offset</span>
+        <span class="s2">if </span><span class="s1">message </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.message = message</span>
+        <span class="s2">if </span><span class="s1">parents </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.parents = parents</span>
+        <span class="s2">if </span><span class="s1">encoding </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.encoding = encoding</span>
+        <span class="s2">if </span><span class="s1">gpgsig </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.gpgsig = gpgsig</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_get_intermediate_items(cls</span><span class="s2">, </span><span class="s1">commit: </span><span class="s3">&quot;Commit&quot;</span><span class="s1">) -&gt; Tuple[</span><span class="s3">&quot;Commit&quot;</span><span class="s2">, </span><span class="s1">...]:</span>
+        <span class="s2">return </span><span class="s1">tuple(commit.parents)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_calculate_sha_(cls</span><span class="s2">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s2">, </span><span class="s1">commit: </span><span class="s3">&quot;Commit&quot;</span><span class="s1">) -&gt; bytes:</span>
+        <span class="s4">&quot;&quot;&quot;Calculate the sha of a commit. 
+ 
+        :param repo: Repo object the commit should be part of 
+        :param commit: Commit object for which to generate the sha 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">stream = BytesIO()</span>
+        <span class="s1">commit._serialize(stream)</span>
+        <span class="s1">streamlen = stream.tell()</span>
+        <span class="s1">stream.seek(</span><span class="s5">0</span><span class="s1">)</span>
+
+        <span class="s1">istream = repo.odb.store(IStream(cls.type</span><span class="s2">, </span><span class="s1">streamlen</span><span class="s2">, </span><span class="s1">stream))</span>
+        <span class="s2">return </span><span class="s1">istream.binsha</span>
+
+    <span class="s2">def </span><span class="s1">replace(self</span><span class="s2">, </span><span class="s1">**kwargs: Any) -&gt; </span><span class="s3">&quot;Commit&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Create new commit object from existing commit object. 
+ 
+        Any values provided as keyword arguments will replace the 
+        corresponding attribute in the new object. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">attrs = {k: getattr(self</span><span class="s2">, </span><span class="s1">k) </span><span class="s2">for </span><span class="s1">k </span><span class="s2">in </span><span class="s1">self.__slots__}</span>
+
+        <span class="s2">for </span><span class="s1">attrname </span><span class="s2">in </span><span class="s1">kwargs:</span>
+            <span class="s2">if </span><span class="s1">attrname </span><span class="s2">not in </span><span class="s1">self.__slots__:</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;invalid attribute name&quot;</span><span class="s1">)</span>
+
+        <span class="s1">attrs.update(kwargs)</span>
+        <span class="s1">new_commit = self.__class__(self.repo</span><span class="s2">, </span><span class="s1">self.NULL_BIN_SHA</span><span class="s2">, </span><span class="s1">**attrs)</span>
+        <span class="s1">new_commit.binsha = self._calculate_sha_(self.repo</span><span class="s2">, </span><span class="s1">new_commit)</span>
+
+        <span class="s2">return </span><span class="s1">new_commit</span>
+
+    <span class="s2">def </span><span class="s1">_set_cache_(self</span><span class="s2">, </span><span class="s1">attr: str) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">attr </span><span class="s2">in </span><span class="s1">Commit.__slots__:</span>
+            <span class="s0"># read the data in a chunk, its faster - then provide a file wrapper</span>
+            <span class="s1">_binsha</span><span class="s2">, </span><span class="s1">_typename</span><span class="s2">, </span><span class="s1">self.size</span><span class="s2">, </span><span class="s1">stream = self.repo.odb.stream(self.binsha)</span>
+            <span class="s1">self._deserialize(BytesIO(stream.read()))</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">super(Commit</span><span class="s2">, </span><span class="s1">self)._set_cache_(attr)</span>
+        <span class="s0"># END handle attrs</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">authored_datetime(self) -&gt; datetime.datetime:</span>
+        <span class="s2">return </span><span class="s1">from_timestamp(self.authored_date</span><span class="s2">, </span><span class="s1">self.author_tz_offset)</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">committed_datetime(self) -&gt; datetime.datetime:</span>
+        <span class="s2">return </span><span class="s1">from_timestamp(self.committed_date</span><span class="s2">, </span><span class="s1">self.committer_tz_offset)</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">summary(self) -&gt; Union[str</span><span class="s2">, </span><span class="s1">bytes]:</span>
+        <span class="s4">&quot;&quot;&quot;:return: First line of the commit message&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">isinstance(self.message</span><span class="s2">, </span><span class="s1">str):</span>
+            <span class="s2">return </span><span class="s1">self.message.split(</span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">&quot;</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)[</span><span class="s5">0</span><span class="s1">]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">self.message.split(</span><span class="s6">b&quot;</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)[</span><span class="s5">0</span><span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">count(self</span><span class="s2">, </span><span class="s1">paths: Union[PathLike</span><span class="s2">, </span><span class="s1">Sequence[PathLike]] = </span><span class="s3">&quot;&quot;</span><span class="s2">, </span><span class="s1">**kwargs: Any) -&gt; int:</span>
+        <span class="s4">&quot;&quot;&quot;Count the number of commits reachable from this commit 
+ 
+        :param paths: 
+            is an optional path or a list of paths restricting the return value 
+            to commits actually containing the paths 
+ 
+        :param kwargs: 
+            Additional options to be passed to git-rev-list. They must not alter 
+            the output style of the command, or parsing will yield incorrect results 
+        :return: int defining the number of reachable commits&quot;&quot;&quot;</span>
+        <span class="s0"># yes, it makes a difference whether empty paths are given or not in our case</span>
+        <span class="s0"># as the empty paths version will ignore merge commits for some reason.</span>
+        <span class="s2">if </span><span class="s1">paths:</span>
+            <span class="s2">return </span><span class="s1">len(self.repo.git.rev_list(self.hexsha</span><span class="s2">, </span><span class="s3">&quot;--&quot;</span><span class="s2">, </span><span class="s1">paths</span><span class="s2">, </span><span class="s1">**kwargs).splitlines())</span>
+        <span class="s2">return </span><span class="s1">len(self.repo.git.rev_list(self.hexsha</span><span class="s2">, </span><span class="s1">**kwargs).splitlines())</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">name_rev(self) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: 
+            String describing the commits hex sha based on the closest Reference. 
+            Mostly useful for UI purposes&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self.repo.git.name_rev(self)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">iter_items(</span>
+        <span class="s1">cls</span><span class="s2">,</span>
+        <span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s2">,</span>
+        <span class="s1">rev: Union[str</span><span class="s2">, </span><span class="s3">&quot;Commit&quot;</span><span class="s2">, </span><span class="s3">&quot;SymbolicReference&quot;</span><span class="s1">]</span><span class="s2">,  </span><span class="s0"># type: ignore</span>
+        <span class="s1">paths: Union[PathLike</span><span class="s2">, </span><span class="s1">Sequence[PathLike]] = </span><span class="s3">&quot;&quot;</span><span class="s2">,</span>
+        <span class="s1">**kwargs: Any</span><span class="s2">,</span>
+    <span class="s1">) -&gt; Iterator[</span><span class="s3">&quot;Commit&quot;</span><span class="s1">]:</span>
+        <span class="s4">&quot;&quot;&quot;Find all commits matching the given criteria. 
+ 
+        :param repo: is the Repo 
+        :param rev: revision specifier, see git-rev-parse for viable options 
+        :param paths: 
+            is an optional path or list of paths, if set only Commits that include the path 
+            or paths will be considered 
+        :param kwargs: 
+            optional keyword arguments to git rev-list where 
+            ``max_count`` is the maximum number of commits to fetch 
+            ``skip`` is the number of commits to skip 
+            ``since`` all commits since i.e. '1970-01-01' 
+        :return: iterator yielding Commit items&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s3">&quot;pretty&quot; </span><span class="s2">in </span><span class="s1">kwargs:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;--pretty cannot be used as parsing expects single sha's only&quot;</span><span class="s1">)</span>
+        <span class="s0"># END handle pretty</span>
+
+        <span class="s0"># use -- in any case, to prevent possibility of ambiguous arguments</span>
+        <span class="s0"># see https://github.com/gitpython-developers/GitPython/issues/264</span>
+
+        <span class="s1">args_list: List[PathLike] = [</span><span class="s3">&quot;--&quot;</span><span class="s1">]</span>
+
+        <span class="s2">if </span><span class="s1">paths:</span>
+            <span class="s1">paths_tup: Tuple[PathLike</span><span class="s2">, </span><span class="s1">...]</span>
+            <span class="s2">if </span><span class="s1">isinstance(paths</span><span class="s2">, </span><span class="s1">(str</span><span class="s2">, </span><span class="s1">os.PathLike)):</span>
+                <span class="s1">paths_tup = (paths</span><span class="s2">,</span><span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">paths_tup = tuple(paths)</span>
+
+            <span class="s1">args_list.extend(paths_tup)</span>
+        <span class="s0"># END if paths</span>
+
+        <span class="s1">proc = repo.git.rev_list(rev</span><span class="s2">, </span><span class="s1">args_list</span><span class="s2">, </span><span class="s1">as_process=</span><span class="s2">True, </span><span class="s1">**kwargs)</span>
+        <span class="s2">return </span><span class="s1">cls._iter_from_process_or_stream(repo</span><span class="s2">, </span><span class="s1">proc)</span>
+
+    <span class="s2">def </span><span class="s1">iter_parents(self</span><span class="s2">, </span><span class="s1">paths: Union[PathLike</span><span class="s2">, </span><span class="s1">Sequence[PathLike]] = </span><span class="s3">&quot;&quot;</span><span class="s2">, </span><span class="s1">**kwargs: Any) -&gt; Iterator[</span><span class="s3">&quot;Commit&quot;</span><span class="s1">]:</span>
+        <span class="s4">&quot;&quot;&quot;Iterate _all_ parents of this commit. 
+ 
+        :param paths: 
+            Optional path or list of paths limiting the Commits to those that 
+            contain at least one of the paths 
+        :param kwargs: All arguments allowed by git-rev-list 
+        :return: Iterator yielding Commit objects which are parents of self&quot;&quot;&quot;</span>
+        <span class="s0"># skip ourselves</span>
+        <span class="s1">skip = kwargs.get(</span><span class="s3">&quot;skip&quot;</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">skip == </span><span class="s5">0</span><span class="s1">:  </span><span class="s0"># skip ourselves</span>
+            <span class="s1">skip = </span><span class="s5">1</span>
+        <span class="s1">kwargs[</span><span class="s3">&quot;skip&quot;</span><span class="s1">] = skip</span>
+
+        <span class="s2">return </span><span class="s1">self.iter_items(self.repo</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">paths</span><span class="s2">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">stats(self) -&gt; Stats:</span>
+        <span class="s4">&quot;&quot;&quot;Create a git stat from changes between this commit and its first parent 
+        or from all changes done if this is the very first commit. 
+ 
+        :return: git.Stats&quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">self.parents:</span>
+            <span class="s1">text = self.repo.git.diff_tree(self.hexsha</span><span class="s2">, </span><span class="s3">&quot;--&quot;</span><span class="s2">, </span><span class="s1">numstat=</span><span class="s2">True, </span><span class="s1">no_renames=</span><span class="s2">True, </span><span class="s1">root=</span><span class="s2">True</span><span class="s1">)</span>
+            <span class="s1">text2 = </span><span class="s3">&quot;&quot;</span>
+            <span class="s2">for </span><span class="s1">line </span><span class="s2">in </span><span class="s1">text.splitlines()[</span><span class="s5">1</span><span class="s1">:]:</span>
+                <span class="s1">(insertions</span><span class="s2">, </span><span class="s1">deletions</span><span class="s2">, </span><span class="s1">filename) = line.split(</span><span class="s3">&quot;</span><span class="s2">\t</span><span class="s3">&quot;</span><span class="s1">)</span>
+                <span class="s1">text2 += </span><span class="s3">&quot;%s</span><span class="s2">\t</span><span class="s3">%s</span><span class="s2">\t</span><span class="s3">%s</span><span class="s2">\n</span><span class="s3">&quot; </span><span class="s1">% (insertions</span><span class="s2">, </span><span class="s1">deletions</span><span class="s2">, </span><span class="s1">filename)</span>
+            <span class="s1">text = text2</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">text = self.repo.git.diff(self.parents[</span><span class="s5">0</span><span class="s1">].hexsha</span><span class="s2">, </span><span class="s1">self.hexsha</span><span class="s2">, </span><span class="s3">&quot;--&quot;</span><span class="s2">, </span><span class="s1">numstat=</span><span class="s2">True, </span><span class="s1">no_renames=</span><span class="s2">True</span><span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">Stats._list_from_string(self.repo</span><span class="s2">, </span><span class="s1">text)</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">trailers(self) -&gt; Dict:</span>
+        <span class="s4">&quot;&quot;&quot;Get the trailers of the message as dictionary 
+ 
+        Git messages can contain trailer information that are similar to RFC 822 
+        e-mail headers (see: https://git-scm.com/docs/git-interpret-trailers). 
+ 
+        This functions calls ``git interpret-trailers --parse`` onto the message 
+        to extract the trailer information. The key value pairs are stripped of 
+        leading and trailing whitespaces before they get saved into a dictionary. 
+ 
+        Valid message with trailer: 
+ 
+        .. code-block:: 
+ 
+            Subject line 
+ 
+            some body information 
+ 
+            another information 
+ 
+            key1: value1 
+            key2 :    value 2 with inner spaces 
+ 
+        dictionary will look like this: 
+ 
+        .. code-block:: 
+ 
+            { 
+                &quot;key1&quot;: &quot;value1&quot;, 
+                &quot;key2&quot;: &quot;value 2 with inner spaces&quot; 
+            } 
+ 
+        :return: Dictionary containing whitespace stripped trailer information 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">d = {}</span>
+        <span class="s1">cmd = [</span><span class="s3">&quot;git&quot;</span><span class="s2">, </span><span class="s3">&quot;interpret-trailers&quot;</span><span class="s2">, </span><span class="s3">&quot;--parse&quot;</span><span class="s1">]</span>
+        <span class="s1">proc: Git.AutoInterrupt = self.repo.git.execute(cmd</span><span class="s2">, </span><span class="s1">as_process=</span><span class="s2">True, </span><span class="s1">istream=PIPE)  </span><span class="s0"># type: ignore</span>
+        <span class="s1">trailer: str = proc.communicate(str(self.message).encode())[</span><span class="s5">0</span><span class="s1">].decode()</span>
+        <span class="s2">if </span><span class="s1">trailer.endswith(</span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">&quot;</span><span class="s1">):</span>
+            <span class="s1">trailer = trailer[</span><span class="s5">0</span><span class="s1">:-</span><span class="s5">1</span><span class="s1">]</span>
+        <span class="s2">if </span><span class="s1">trailer != </span><span class="s3">&quot;&quot;</span><span class="s1">:</span>
+            <span class="s2">for </span><span class="s1">line </span><span class="s2">in </span><span class="s1">trailer.split(</span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">&quot;</span><span class="s1">):</span>
+                <span class="s1">key</span><span class="s2">, </span><span class="s1">value = line.split(</span><span class="s3">&quot;:&quot;</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)</span>
+                <span class="s1">d[key.strip()] = value.strip()</span>
+        <span class="s2">return </span><span class="s1">d</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_iter_from_process_or_stream(cls</span><span class="s2">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s2">, </span><span class="s1">proc_or_stream: Union[Popen</span><span class="s2">, </span><span class="s1">IO]) -&gt; Iterator[</span><span class="s3">&quot;Commit&quot;</span><span class="s1">]:</span>
+        <span class="s4">&quot;&quot;&quot;Parse out commit information into a list of Commit objects 
+        We expect one-line per commit, and parse the actual commit information directly 
+        from our lighting fast object database 
+ 
+        :param proc: git-rev-list process instance - one sha per line 
+        :return: iterator returning Commit objects&quot;&quot;&quot;</span>
+
+        <span class="s0"># def is_proc(inp) -&gt; TypeGuard[Popen]:</span>
+        <span class="s0">#     return hasattr(proc_or_stream, 'wait') and not hasattr(proc_or_stream, 'readline')</span>
+
+        <span class="s0"># def is_stream(inp) -&gt; TypeGuard[IO]:</span>
+        <span class="s0">#     return hasattr(proc_or_stream, 'readline')</span>
+
+        <span class="s2">if </span><span class="s1">hasattr(proc_or_stream</span><span class="s2">, </span><span class="s3">&quot;wait&quot;</span><span class="s1">):</span>
+            <span class="s1">proc_or_stream = cast(Popen</span><span class="s2">, </span><span class="s1">proc_or_stream)</span>
+            <span class="s2">if </span><span class="s1">proc_or_stream.stdout </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s1">stream = proc_or_stream.stdout</span>
+        <span class="s2">elif </span><span class="s1">hasattr(proc_or_stream</span><span class="s2">, </span><span class="s3">&quot;readline&quot;</span><span class="s1">):</span>
+            <span class="s1">proc_or_stream = cast(IO</span><span class="s2">, </span><span class="s1">proc_or_stream)</span>
+            <span class="s1">stream = proc_or_stream</span>
+
+        <span class="s1">readline = stream.readline</span>
+        <span class="s2">while True</span><span class="s1">:</span>
+            <span class="s1">line = readline()</span>
+            <span class="s2">if not </span><span class="s1">line:</span>
+                <span class="s2">break</span>
+            <span class="s1">hexsha = line.strip()</span>
+            <span class="s2">if </span><span class="s1">len(hexsha) &gt; </span><span class="s5">40</span><span class="s1">:</span>
+                <span class="s0"># split additional information, as returned by bisect for instance</span>
+                <span class="s1">hexsha</span><span class="s2">, </span><span class="s1">_ = line.split(</span><span class="s2">None, </span><span class="s5">1</span><span class="s1">)</span>
+            <span class="s0"># END handle extra info</span>
+
+            <span class="s2">assert </span><span class="s1">len(hexsha) == </span><span class="s5">40</span><span class="s2">, </span><span class="s3">&quot;Invalid line: %s&quot; </span><span class="s1">% hexsha</span>
+            <span class="s2">yield </span><span class="s1">cls(repo</span><span class="s2">, </span><span class="s1">hex_to_bin(hexsha))</span>
+        <span class="s0"># END for each line in stream</span>
+        <span class="s0"># TODO: Review this - it seems process handling got a bit out of control</span>
+        <span class="s0"># due to many developers trying to fix the open file handles issue</span>
+        <span class="s2">if </span><span class="s1">hasattr(proc_or_stream</span><span class="s2">, </span><span class="s3">&quot;wait&quot;</span><span class="s1">):</span>
+            <span class="s1">proc_or_stream = cast(Popen</span><span class="s2">, </span><span class="s1">proc_or_stream)</span>
+            <span class="s1">finalize_process(proc_or_stream)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">create_from_tree(</span>
+        <span class="s1">cls</span><span class="s2">,</span>
+        <span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s2">,</span>
+        <span class="s1">tree: Union[Tree</span><span class="s2">, </span><span class="s1">str]</span><span class="s2">,</span>
+        <span class="s1">message: str</span><span class="s2">,</span>
+        <span class="s1">parent_commits: Union[</span><span class="s2">None, </span><span class="s1">List[</span><span class="s3">&quot;Commit&quot;</span><span class="s1">]] = </span><span class="s2">None,</span>
+        <span class="s1">head: bool = </span><span class="s2">False,</span>
+        <span class="s1">author: Union[</span><span class="s2">None, </span><span class="s1">Actor] = </span><span class="s2">None,</span>
+        <span class="s1">committer: Union[</span><span class="s2">None, </span><span class="s1">Actor] = </span><span class="s2">None,</span>
+        <span class="s1">author_date: Union[</span><span class="s2">None, </span><span class="s1">str</span><span class="s2">, </span><span class="s1">datetime.datetime] = </span><span class="s2">None,</span>
+        <span class="s1">commit_date: Union[</span><span class="s2">None, </span><span class="s1">str</span><span class="s2">, </span><span class="s1">datetime.datetime] = </span><span class="s2">None,</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;Commit&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Commit the given tree, creating a commit object. 
+ 
+        :param repo: Repo object the commit should be part of 
+        :param tree: Tree object or hex or bin sha 
+            the tree of the new commit 
+        :param message: Commit message. It may be an empty string if no message is provided. 
+            It will be converted to a string , in any case. 
+        :param parent_commits: 
+            Optional Commit objects to use as parents for the new commit. 
+            If empty list, the commit will have no parents at all and become 
+            a root commit. 
+            If None , the current head commit will be the parent of the 
+            new commit object 
+        :param head: 
+            If True, the HEAD will be advanced to the new commit automatically. 
+            Else the HEAD will remain pointing on the previous commit. This could 
+            lead to undesired results when diffing files. 
+        :param author: The name of the author, optional. If unset, the repository 
+            configuration is used to obtain this value. 
+        :param committer: The name of the committer, optional. If unset, the 
+            repository configuration is used to obtain this value. 
+        :param author_date: The timestamp for the author field 
+        :param commit_date: The timestamp for the committer field 
+ 
+        :return: Commit object representing the new commit 
+ 
+        :note: 
+            Additional information about the committer and Author are taken from the 
+            environment or from the git configuration, see git-commit-tree for 
+            more information&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">parent_commits </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">parent_commits = [repo.head.commit]</span>
+            <span class="s2">except </span><span class="s1">ValueError:</span>
+                <span class="s0"># empty repositories have no head commit</span>
+                <span class="s1">parent_commits = []</span>
+            <span class="s0"># END handle parent commits</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">for </span><span class="s1">p </span><span class="s2">in </span><span class="s1">parent_commits:</span>
+                <span class="s2">if not </span><span class="s1">isinstance(p</span><span class="s2">, </span><span class="s1">cls):</span>
+                    <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">f&quot;Parent commit '</span><span class="s2">{</span><span class="s1">p</span><span class="s2">!r}</span><span class="s3">' must be of type </span><span class="s2">{</span><span class="s1">cls</span><span class="s2">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+            <span class="s0"># end check parent commit types</span>
+        <span class="s0"># END if parent commits are unset</span>
+
+        <span class="s0"># retrieve all additional information, create a commit object, and</span>
+        <span class="s0"># serialize it</span>
+        <span class="s0"># Generally:</span>
+        <span class="s0"># * Environment variables override configuration values</span>
+        <span class="s0"># * Sensible defaults are set according to the git documentation</span>
+
+        <span class="s0"># COMMITTER AND AUTHOR INFO</span>
+        <span class="s1">cr = repo.config_reader()</span>
+        <span class="s1">env = os.environ</span>
+
+        <span class="s1">committer = committer </span><span class="s2">or </span><span class="s1">Actor.committer(cr)</span>
+        <span class="s1">author = author </span><span class="s2">or </span><span class="s1">Actor.author(cr)</span>
+
+        <span class="s0"># PARSE THE DATES</span>
+        <span class="s1">unix_time = int(time())</span>
+        <span class="s1">is_dst = daylight </span><span class="s2">and </span><span class="s1">localtime().tm_isdst &gt; </span><span class="s5">0</span>
+        <span class="s1">offset = altzone </span><span class="s2">if </span><span class="s1">is_dst </span><span class="s2">else </span><span class="s1">timezone</span>
+
+        <span class="s1">author_date_str = env.get(cls.env_author_date</span><span class="s2">, </span><span class="s3">&quot;&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">author_date:</span>
+            <span class="s1">author_time</span><span class="s2">, </span><span class="s1">author_offset = parse_date(author_date)</span>
+        <span class="s2">elif </span><span class="s1">author_date_str:</span>
+            <span class="s1">author_time</span><span class="s2">, </span><span class="s1">author_offset = parse_date(author_date_str)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">author_time</span><span class="s2">, </span><span class="s1">author_offset = unix_time</span><span class="s2">, </span><span class="s1">offset</span>
+        <span class="s0"># END set author time</span>
+
+        <span class="s1">committer_date_str = env.get(cls.env_committer_date</span><span class="s2">, </span><span class="s3">&quot;&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">commit_date:</span>
+            <span class="s1">committer_time</span><span class="s2">, </span><span class="s1">committer_offset = parse_date(commit_date)</span>
+        <span class="s2">elif </span><span class="s1">committer_date_str:</span>
+            <span class="s1">committer_time</span><span class="s2">, </span><span class="s1">committer_offset = parse_date(committer_date_str)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">committer_time</span><span class="s2">, </span><span class="s1">committer_offset = unix_time</span><span class="s2">, </span><span class="s1">offset</span>
+        <span class="s0"># END set committer time</span>
+
+        <span class="s0"># assume utf8 encoding</span>
+        <span class="s1">enc_section</span><span class="s2">, </span><span class="s1">enc_option = cls.conf_encoding.split(</span><span class="s3">&quot;.&quot;</span><span class="s1">)</span>
+        <span class="s1">conf_encoding = cr.get_value(enc_section</span><span class="s2">, </span><span class="s1">enc_option</span><span class="s2">, </span><span class="s1">cls.default_encoding)</span>
+        <span class="s2">if not </span><span class="s1">isinstance(conf_encoding</span><span class="s2">, </span><span class="s1">str):</span>
+            <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s3">&quot;conf_encoding could not be coerced to str&quot;</span><span class="s1">)</span>
+
+        <span class="s0"># if the tree is no object, make sure we create one - otherwise</span>
+        <span class="s0"># the created commit object is invalid</span>
+        <span class="s2">if </span><span class="s1">isinstance(tree</span><span class="s2">, </span><span class="s1">str):</span>
+            <span class="s1">tree = repo.tree(tree)</span>
+        <span class="s0"># END tree conversion</span>
+
+        <span class="s0"># CREATE NEW COMMIT</span>
+        <span class="s1">new_commit = cls(</span>
+            <span class="s1">repo</span><span class="s2">,</span>
+            <span class="s1">cls.NULL_BIN_SHA</span><span class="s2">,</span>
+            <span class="s1">tree</span><span class="s2">,</span>
+            <span class="s1">author</span><span class="s2">,</span>
+            <span class="s1">author_time</span><span class="s2">,</span>
+            <span class="s1">author_offset</span><span class="s2">,</span>
+            <span class="s1">committer</span><span class="s2">,</span>
+            <span class="s1">committer_time</span><span class="s2">,</span>
+            <span class="s1">committer_offset</span><span class="s2">,</span>
+            <span class="s1">message</span><span class="s2">,</span>
+            <span class="s1">parent_commits</span><span class="s2">,</span>
+            <span class="s1">conf_encoding</span><span class="s2">,</span>
+        <span class="s1">)</span>
+
+        <span class="s1">new_commit.binsha = cls._calculate_sha_(repo</span><span class="s2">, </span><span class="s1">new_commit)</span>
+
+        <span class="s2">if </span><span class="s1">head:</span>
+            <span class="s0"># need late import here, importing git at the very beginning throws</span>
+            <span class="s0"># as well ...</span>
+            <span class="s2">import </span><span class="s1">git.refs</span>
+
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">repo.head.set_commit(new_commit</span><span class="s2">, </span><span class="s1">logmsg=message)</span>
+            <span class="s2">except </span><span class="s1">ValueError:</span>
+                <span class="s0"># head is not yet set to the ref our HEAD points to</span>
+                <span class="s0"># Happens on first commit</span>
+                <span class="s1">master = git.refs.Head.create(</span>
+                    <span class="s1">repo</span><span class="s2">,</span>
+                    <span class="s1">repo.head.ref</span><span class="s2">,</span>
+                    <span class="s1">new_commit</span><span class="s2">,</span>
+                    <span class="s1">logmsg=</span><span class="s3">&quot;commit (initial): %s&quot; </span><span class="s1">% message</span><span class="s2">,</span>
+                <span class="s1">)</span>
+                <span class="s1">repo.head.set_reference(master</span><span class="s2">, </span><span class="s1">logmsg=</span><span class="s3">&quot;commit: Switching to %s&quot; </span><span class="s1">% master)</span>
+            <span class="s0"># END handle empty repositories</span>
+        <span class="s0"># END advance head handling</span>
+
+        <span class="s2">return </span><span class="s1">new_commit</span>
+
+    <span class="s0"># { Serializable Implementation</span>
+
+    <span class="s2">def </span><span class="s1">_serialize(self</span><span class="s2">, </span><span class="s1">stream: BytesIO) -&gt; </span><span class="s3">&quot;Commit&quot;</span><span class="s1">:</span>
+        <span class="s1">write = stream.write</span>
+        <span class="s1">write((</span><span class="s3">&quot;tree %s</span><span class="s2">\n</span><span class="s3">&quot; </span><span class="s1">% self.tree).encode(</span><span class="s3">&quot;ascii&quot;</span><span class="s1">))</span>
+        <span class="s2">for </span><span class="s1">p </span><span class="s2">in </span><span class="s1">self.parents:</span>
+            <span class="s1">write((</span><span class="s3">&quot;parent %s</span><span class="s2">\n</span><span class="s3">&quot; </span><span class="s1">% p).encode(</span><span class="s3">&quot;ascii&quot;</span><span class="s1">))</span>
+
+        <span class="s1">a = self.author</span>
+        <span class="s1">aname = a.name</span>
+        <span class="s1">c = self.committer</span>
+        <span class="s1">fmt = </span><span class="s3">&quot;%s %s &lt;%s&gt; %s %s</span><span class="s2">\n</span><span class="s3">&quot;</span>
+        <span class="s1">write(</span>
+            <span class="s1">(</span>
+                <span class="s1">fmt</span>
+                <span class="s1">% (</span>
+                    <span class="s3">&quot;author&quot;</span><span class="s2">,</span>
+                    <span class="s1">aname</span><span class="s2">,</span>
+                    <span class="s1">a.email</span><span class="s2">,</span>
+                    <span class="s1">self.authored_date</span><span class="s2">,</span>
+                    <span class="s1">altz_to_utctz_str(self.author_tz_offset)</span><span class="s2">,</span>
+                <span class="s1">)</span>
+            <span class="s1">).encode(self.encoding)</span>
+        <span class="s1">)</span>
+
+        <span class="s0"># encode committer</span>
+        <span class="s1">aname = c.name</span>
+        <span class="s1">write(</span>
+            <span class="s1">(</span>
+                <span class="s1">fmt</span>
+                <span class="s1">% (</span>
+                    <span class="s3">&quot;committer&quot;</span><span class="s2">,</span>
+                    <span class="s1">aname</span><span class="s2">,</span>
+                    <span class="s1">c.email</span><span class="s2">,</span>
+                    <span class="s1">self.committed_date</span><span class="s2">,</span>
+                    <span class="s1">altz_to_utctz_str(self.committer_tz_offset)</span><span class="s2">,</span>
+                <span class="s1">)</span>
+            <span class="s1">).encode(self.encoding)</span>
+        <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">self.encoding != self.default_encoding:</span>
+            <span class="s1">write((</span><span class="s3">&quot;encoding %s</span><span class="s2">\n</span><span class="s3">&quot; </span><span class="s1">% self.encoding).encode(</span><span class="s3">&quot;ascii&quot;</span><span class="s1">))</span>
+
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">self.__getattribute__(</span><span class="s3">&quot;gpgsig&quot;</span><span class="s1">):</span>
+                <span class="s1">write(</span><span class="s6">b&quot;gpgsig&quot;</span><span class="s1">)</span>
+                <span class="s2">for </span><span class="s1">sigline </span><span class="s2">in </span><span class="s1">self.gpgsig.rstrip(</span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">&quot;</span><span class="s1">).split(</span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">&quot;</span><span class="s1">):</span>
+                    <span class="s1">write((</span><span class="s3">&quot; &quot; </span><span class="s1">+ sigline + </span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">&quot;</span><span class="s1">).encode(</span><span class="s3">&quot;ascii&quot;</span><span class="s1">))</span>
+        <span class="s2">except </span><span class="s1">AttributeError:</span>
+            <span class="s2">pass</span>
+
+        <span class="s1">write(</span><span class="s6">b&quot;</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+
+        <span class="s0"># write plain bytes, be sure its encoded according to our encoding</span>
+        <span class="s2">if </span><span class="s1">isinstance(self.message</span><span class="s2">, </span><span class="s1">str):</span>
+            <span class="s1">write(self.message.encode(self.encoding))</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">write(self.message)</span>
+        <span class="s0"># END handle encoding</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">def </span><span class="s1">_deserialize(self</span><span class="s2">, </span><span class="s1">stream: BytesIO) -&gt; </span><span class="s3">&quot;Commit&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :param from_rev_list: if true, the stream format is coming from the rev-list command 
+            Otherwise it is assumed to be a plain data stream from our object 
+        &quot;&quot;&quot;</span>
+        <span class="s1">readline = stream.readline</span>
+        <span class="s1">self.tree = Tree(self.repo</span><span class="s2">, </span><span class="s1">hex_to_bin(readline().split()[</span><span class="s5">1</span><span class="s1">])</span><span class="s2">, </span><span class="s1">Tree.tree_id &lt;&lt; </span><span class="s5">12</span><span class="s2">, </span><span class="s3">&quot;&quot;</span><span class="s1">)</span>
+
+        <span class="s1">self.parents = []</span>
+        <span class="s1">next_line = </span><span class="s2">None</span>
+        <span class="s2">while True</span><span class="s1">:</span>
+            <span class="s1">parent_line = readline()</span>
+            <span class="s2">if not </span><span class="s1">parent_line.startswith(</span><span class="s6">b&quot;parent&quot;</span><span class="s1">):</span>
+                <span class="s1">next_line = parent_line</span>
+                <span class="s2">break</span>
+            <span class="s0"># END abort reading parents</span>
+            <span class="s1">self.parents.append(type(self)(self.repo</span><span class="s2">, </span><span class="s1">hex_to_bin(parent_line.split()[-</span><span class="s5">1</span><span class="s1">].decode(</span><span class="s3">&quot;ascii&quot;</span><span class="s1">))))</span>
+        <span class="s0"># END for each parent line</span>
+        <span class="s1">self.parents = tuple(self.parents)</span>
+
+        <span class="s0"># we don't know actual author encoding before we have parsed it, so keep the lines around</span>
+        <span class="s1">author_line = next_line</span>
+        <span class="s1">committer_line = readline()</span>
+
+        <span class="s0"># we might run into one or more mergetag blocks, skip those for now</span>
+        <span class="s1">next_line = readline()</span>
+        <span class="s2">while </span><span class="s1">next_line.startswith(</span><span class="s6">b&quot;mergetag &quot;</span><span class="s1">):</span>
+            <span class="s1">next_line = readline()</span>
+            <span class="s2">while </span><span class="s1">next_line.startswith(</span><span class="s6">b&quot; &quot;</span><span class="s1">):</span>
+                <span class="s1">next_line = readline()</span>
+        <span class="s0"># end skip mergetags</span>
+
+        <span class="s0"># now we can have the encoding line, or an empty line followed by the optional</span>
+        <span class="s0"># message.</span>
+        <span class="s1">self.encoding = self.default_encoding</span>
+        <span class="s1">self.gpgsig = </span><span class="s3">&quot;&quot;</span>
+
+        <span class="s0"># read headers</span>
+        <span class="s1">enc = next_line</span>
+        <span class="s1">buf = enc.strip()</span>
+        <span class="s2">while </span><span class="s1">buf:</span>
+            <span class="s2">if </span><span class="s1">buf[</span><span class="s5">0</span><span class="s1">:</span><span class="s5">10</span><span class="s1">] == </span><span class="s6">b&quot;encoding &quot;</span><span class="s1">:</span>
+                <span class="s1">self.encoding = buf[buf.find(</span><span class="s6">b&quot; &quot;</span><span class="s1">) + </span><span class="s5">1 </span><span class="s1">:].decode(self.encoding</span><span class="s2">, </span><span class="s3">&quot;ignore&quot;</span><span class="s1">)</span>
+            <span class="s2">elif </span><span class="s1">buf[</span><span class="s5">0</span><span class="s1">:</span><span class="s5">7</span><span class="s1">] == </span><span class="s6">b&quot;gpgsig &quot;</span><span class="s1">:</span>
+                <span class="s1">sig = buf[buf.find(</span><span class="s6">b&quot; &quot;</span><span class="s1">) + </span><span class="s5">1 </span><span class="s1">:] + </span><span class="s6">b&quot;</span><span class="s2">\n</span><span class="s6">&quot;</span>
+                <span class="s1">is_next_header = </span><span class="s2">False</span>
+                <span class="s2">while True</span><span class="s1">:</span>
+                    <span class="s1">sigbuf = readline()</span>
+                    <span class="s2">if not </span><span class="s1">sigbuf:</span>
+                        <span class="s2">break</span>
+                    <span class="s2">if </span><span class="s1">sigbuf[</span><span class="s5">0</span><span class="s1">:</span><span class="s5">1</span><span class="s1">] != </span><span class="s6">b&quot; &quot;</span><span class="s1">:</span>
+                        <span class="s1">buf = sigbuf.strip()</span>
+                        <span class="s1">is_next_header = </span><span class="s2">True</span>
+                        <span class="s2">break</span>
+                    <span class="s1">sig += sigbuf[</span><span class="s5">1</span><span class="s1">:]</span>
+                <span class="s0"># end read all signature</span>
+                <span class="s1">self.gpgsig = sig.rstrip(</span><span class="s6">b&quot;</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s1">).decode(self.encoding</span><span class="s2">, </span><span class="s3">&quot;ignore&quot;</span><span class="s1">)</span>
+                <span class="s2">if </span><span class="s1">is_next_header:</span>
+                    <span class="s2">continue</span>
+            <span class="s1">buf = readline().strip()</span>
+        <span class="s0"># decode the authors name</span>
+
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">(</span>
+                <span class="s1">self.author</span><span class="s2">,</span>
+                <span class="s1">self.authored_date</span><span class="s2">,</span>
+                <span class="s1">self.author_tz_offset</span><span class="s2">,</span>
+            <span class="s1">) = parse_actor_and_date(author_line.decode(self.encoding</span><span class="s2">, </span><span class="s3">&quot;replace&quot;</span><span class="s1">))</span>
+        <span class="s2">except </span><span class="s1">UnicodeDecodeError:</span>
+            <span class="s1">log.error(</span>
+                <span class="s3">&quot;Failed to decode author line '%s' using encoding %s&quot;</span><span class="s2">,</span>
+                <span class="s1">author_line</span><span class="s2">,</span>
+                <span class="s1">self.encoding</span><span class="s2">,</span>
+                <span class="s1">exc_info=</span><span class="s2">True,</span>
+            <span class="s1">)</span>
+
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">(</span>
+                <span class="s1">self.committer</span><span class="s2">,</span>
+                <span class="s1">self.committed_date</span><span class="s2">,</span>
+                <span class="s1">self.committer_tz_offset</span><span class="s2">,</span>
+            <span class="s1">) = parse_actor_and_date(committer_line.decode(self.encoding</span><span class="s2">, </span><span class="s3">&quot;replace&quot;</span><span class="s1">))</span>
+        <span class="s2">except </span><span class="s1">UnicodeDecodeError:</span>
+            <span class="s1">log.error(</span>
+                <span class="s3">&quot;Failed to decode committer line '%s' using encoding %s&quot;</span><span class="s2">,</span>
+                <span class="s1">committer_line</span><span class="s2">,</span>
+                <span class="s1">self.encoding</span><span class="s2">,</span>
+                <span class="s1">exc_info=</span><span class="s2">True,</span>
+            <span class="s1">)</span>
+        <span class="s0"># END handle author's encoding</span>
+
+        <span class="s0"># a stream from our data simply gives us the plain message</span>
+        <span class="s0"># The end of our message stream is marked with a newline that we strip</span>
+        <span class="s1">self.message = stream.read()</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">self.message = self.message.decode(self.encoding</span><span class="s2">, </span><span class="s3">&quot;replace&quot;</span><span class="s1">)</span>
+        <span class="s2">except </span><span class="s1">UnicodeDecodeError:</span>
+            <span class="s1">log.error(</span>
+                <span class="s3">&quot;Failed to decode message '%s' using encoding %s&quot;</span><span class="s2">,</span>
+                <span class="s1">self.message</span><span class="s2">,</span>
+                <span class="s1">self.encoding</span><span class="s2">,</span>
+                <span class="s1">exc_info=</span><span class="s2">True,</span>
+            <span class="s1">)</span>
+        <span class="s0"># END exception handling</span>
+
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s0"># } END serializable implementation</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">co_authors(self) -&gt; List[Actor]:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Search the commit message for any co-authors of this commit. 
+        Details on co-authors: https://github.blog/2018-01-29-commit-together-with-co-authors/ 
+ 
+        :return: List of co-authors for this commit (as Actor objects). 
+        &quot;&quot;&quot;</span>
+        <span class="s1">co_authors = []</span>
+
+        <span class="s2">if </span><span class="s1">self.message:</span>
+            <span class="s1">results = re.findall(</span>
+                <span class="s3">r&quot;^Co-authored-by: (.*) &lt;(.*?)&gt;$&quot;</span><span class="s2">,</span>
+                <span class="s1">self.message</span><span class="s2">,</span>
+                <span class="s1">re.MULTILINE</span><span class="s2">,</span>
+            <span class="s1">)</span>
+            <span class="s2">for </span><span class="s1">author </span><span class="s2">in </span><span class="s1">results:</span>
+                <span class="s1">co_authors.append(Actor(*author))</span>
+
+        <span class="s2">return </span><span class="s1">co_authors</span>
+</pre>
+</body>
+</html>

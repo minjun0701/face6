@@ -1,0 +1,117 @@
+<html>
+<head>
+<title>GdImageFile.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #629755; font-style: italic;}
+.s3 { color: #cc7832;}
+.s4 { color: #6a8759;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+GdImageFile.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># GD file handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1996-04-12 fl   Created</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997 by Secret Labs AB.</span>
+<span class="s0"># Copyright (c) 1996 by Fredrik Lundh.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+
+<span class="s2">&quot;&quot;&quot; 
+.. note:: 
+    This format cannot be automatically recognized, so the 
+    class is not registered for use with :py:func:`PIL.Image.open()`.  To open a 
+    gd file, use the :py:func:`PIL.GdImageFile.open()` function instead. 
+ 
+.. warning:: 
+    THE GD FORMAT IS NOT DESIGNED FOR DATA INTERCHANGE.  This 
+    implementation is provided for convenience and demonstrational 
+    purposes only. 
+&quot;&quot;&quot;</span>
+
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">ImageFile</span><span class="s3">, </span><span class="s1">ImagePalette</span><span class="s3">, </span><span class="s1">UnidentifiedImageError</span>
+<span class="s3">from </span><span class="s1">._binary </span><span class="s3">import </span><span class="s1">i16be </span><span class="s3">as </span><span class="s1">i16</span>
+<span class="s3">from </span><span class="s1">._binary </span><span class="s3">import </span><span class="s1">i32be </span><span class="s3">as </span><span class="s1">i32</span>
+
+
+<span class="s3">class </span><span class="s1">GdImageFile(ImageFile.ImageFile):</span>
+    <span class="s2">&quot;&quot;&quot; 
+    Image plugin for the GD uncompressed format.  Note that this format 
+    is not supported by the standard :py:func:`PIL.Image.open()` function.  To use 
+    this plugin, you have to import the :py:mod:`PIL.GdImageFile` module and 
+    use the :py:func:`PIL.GdImageFile.open()` function. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">format = </span><span class="s4">&quot;GD&quot;</span>
+    <span class="s1">format_description = </span><span class="s4">&quot;GD uncompressed images&quot;</span>
+
+    <span class="s3">def </span><span class="s1">_open(self):</span>
+
+        <span class="s0"># Header</span>
+        <span class="s1">s = self.fp.read(</span><span class="s5">1037</span><span class="s1">)</span>
+
+        <span class="s3">if not </span><span class="s1">i16(s) </span><span class="s3">in </span><span class="s1">[</span><span class="s5">65534</span><span class="s3">, </span><span class="s5">65535</span><span class="s1">]:</span>
+            <span class="s3">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;Not a valid GD 2.x .gd file&quot;</span><span class="s1">)</span>
+
+        <span class="s1">self.mode = </span><span class="s4">&quot;L&quot;  </span><span class="s0"># FIXME: &quot;P&quot;</span>
+        <span class="s1">self._size = i16(s</span><span class="s3">, </span><span class="s5">2</span><span class="s1">)</span><span class="s3">, </span><span class="s1">i16(s</span><span class="s3">, </span><span class="s5">4</span><span class="s1">)</span>
+
+        <span class="s1">true_color = s[</span><span class="s5">6</span><span class="s1">]</span>
+        <span class="s1">true_color_offset = </span><span class="s5">2 </span><span class="s3">if </span><span class="s1">true_color </span><span class="s3">else </span><span class="s5">0</span>
+
+        <span class="s0"># transparency index</span>
+        <span class="s1">tindex = i32(s</span><span class="s3">, </span><span class="s5">7 </span><span class="s1">+ true_color_offset)</span>
+        <span class="s3">if </span><span class="s1">tindex &lt; </span><span class="s5">256</span><span class="s1">:</span>
+            <span class="s1">self.info[</span><span class="s4">&quot;transparency&quot;</span><span class="s1">] = tindex</span>
+
+        <span class="s1">self.palette = ImagePalette.raw(</span>
+            <span class="s4">&quot;XBGR&quot;</span><span class="s3">, </span><span class="s1">s[</span><span class="s5">7 </span><span class="s1">+ true_color_offset + </span><span class="s5">4 </span><span class="s1">: </span><span class="s5">7 </span><span class="s1">+ true_color_offset + </span><span class="s5">4 </span><span class="s1">+ </span><span class="s5">256 </span><span class="s1">* </span><span class="s5">4</span><span class="s1">]</span>
+        <span class="s1">)</span>
+
+        <span class="s1">self.tile = [</span>
+            <span class="s1">(</span>
+                <span class="s4">&quot;raw&quot;</span><span class="s3">,</span>
+                <span class="s1">(</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s1">) + self.size</span><span class="s3">,</span>
+                <span class="s5">7 </span><span class="s1">+ true_color_offset + </span><span class="s5">4 </span><span class="s1">+ </span><span class="s5">256 </span><span class="s1">* </span><span class="s5">4</span><span class="s3">,</span>
+                <span class="s1">(</span><span class="s4">&quot;L&quot;</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s5">1</span><span class="s1">)</span><span class="s3">,</span>
+            <span class="s1">)</span>
+        <span class="s1">]</span>
+
+
+<span class="s3">def </span><span class="s1">open(fp</span><span class="s3">, </span><span class="s1">mode=</span><span class="s4">&quot;r&quot;</span><span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot; 
+    Load texture from a GD image file. 
+ 
+    :param fp: GD file name, or an opened file handle. 
+    :param mode: Optional mode.  In this version, if the mode argument 
+        is given, it must be &quot;r&quot;. 
+    :returns: An image instance. 
+    :raises OSError: If the image could not be read. 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">mode != </span><span class="s4">&quot;r&quot;</span><span class="s1">:</span>
+        <span class="s3">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;bad mode&quot;</span><span class="s1">)</span>
+
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s3">return </span><span class="s1">GdImageFile(fp)</span>
+    <span class="s3">except </span><span class="s1">SyntaxError </span><span class="s3">as </span><span class="s1">e:</span>
+        <span class="s3">raise </span><span class="s1">UnidentifiedImageError(</span><span class="s4">&quot;cannot identify this image file&quot;</span><span class="s1">) </span><span class="s3">from </span><span class="s1">e</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,299 @@
+<html>
+<head>
+<title>head.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #808080;}
+.s3 { color: #6a8759;}
+.s4 { color: #6897bb;}
+.s5 { color: #629755; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+head.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">git.config </span><span class="s0">import </span><span class="s1">GitConfigParser</span><span class="s0">, </span><span class="s1">SectionConstraint</span>
+<span class="s0">from </span><span class="s1">git.util </span><span class="s0">import </span><span class="s1">join_path</span>
+<span class="s0">from </span><span class="s1">git.exc </span><span class="s0">import </span><span class="s1">GitCommandError</span>
+
+<span class="s0">from </span><span class="s1">.symbolic </span><span class="s0">import </span><span class="s1">SymbolicReference</span>
+<span class="s0">from </span><span class="s1">.reference </span><span class="s0">import </span><span class="s1">Reference</span>
+
+<span class="s2"># typinng ---------------------------------------------------</span>
+
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span><span class="s0">, </span><span class="s1">Sequence</span><span class="s0">, </span><span class="s1">Union</span><span class="s0">, </span><span class="s1">TYPE_CHECKING</span>
+
+<span class="s0">from </span><span class="s1">git.types </span><span class="s0">import </span><span class="s1">PathLike</span><span class="s0">, </span><span class="s1">Commit_ish</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s0">from </span><span class="s1">git.repo </span><span class="s0">import </span><span class="s1">Repo</span>
+    <span class="s0">from </span><span class="s1">git.objects </span><span class="s0">import </span><span class="s1">Commit</span>
+    <span class="s0">from </span><span class="s1">git.refs </span><span class="s0">import </span><span class="s1">RemoteReference</span>
+
+<span class="s2"># -------------------------------------------------------------------</span>
+
+<span class="s1">__all__ = [</span><span class="s3">&quot;HEAD&quot;</span><span class="s0">, </span><span class="s3">&quot;Head&quot;</span><span class="s1">]</span>
+
+
+<span class="s0">def </span><span class="s1">strip_quotes(string: str) -&gt; str:</span>
+    <span class="s0">if </span><span class="s1">string.startswith(</span><span class="s3">'&quot;'</span><span class="s1">) </span><span class="s0">and </span><span class="s1">string.endswith(</span><span class="s3">'&quot;'</span><span class="s1">):</span>
+        <span class="s0">return </span><span class="s1">string[</span><span class="s4">1</span><span class="s1">:-</span><span class="s4">1</span><span class="s1">]</span>
+    <span class="s0">return </span><span class="s1">string</span>
+
+
+<span class="s0">class </span><span class="s1">HEAD(SymbolicReference):</span>
+
+    <span class="s5">&quot;&quot;&quot;Special case of a Symbolic Reference as it represents the repository's 
+    HEAD reference.&quot;&quot;&quot;</span>
+
+    <span class="s1">_HEAD_NAME = </span><span class="s3">&quot;HEAD&quot;</span>
+    <span class="s1">_ORIG_HEAD_NAME = </span><span class="s3">&quot;ORIG_HEAD&quot;</span>
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s0">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s0">, </span><span class="s1">path: PathLike = _HEAD_NAME):</span>
+        <span class="s0">if </span><span class="s1">path != self._HEAD_NAME:</span>
+            <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;HEAD instance must point to %r, got %r&quot; </span><span class="s1">% (self._HEAD_NAME</span><span class="s0">, </span><span class="s1">path))</span>
+        <span class="s1">super(HEAD</span><span class="s0">, </span><span class="s1">self).__init__(repo</span><span class="s0">, </span><span class="s1">path)</span>
+        <span class="s1">self.commit: </span><span class="s3">&quot;Commit&quot;</span>
+
+    <span class="s0">def </span><span class="s1">orig_head(self) -&gt; SymbolicReference:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        :return: SymbolicReference pointing at the ORIG_HEAD, which is maintained 
+            to contain the previous value of HEAD&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">SymbolicReference(self.repo</span><span class="s0">, </span><span class="s1">self._ORIG_HEAD_NAME)</span>
+
+    <span class="s0">def </span><span class="s1">reset(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">commit: Union[Commit_ish</span><span class="s0">, </span><span class="s1">SymbolicReference</span><span class="s0">, </span><span class="s1">str] = </span><span class="s3">&quot;HEAD&quot;</span><span class="s0">,</span>
+        <span class="s1">index: bool = </span><span class="s0">True,</span>
+        <span class="s1">working_tree: bool = </span><span class="s0">False,</span>
+        <span class="s1">paths: Union[PathLike</span><span class="s0">, </span><span class="s1">Sequence[PathLike]</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None,</span>
+        <span class="s1">**kwargs: Any</span><span class="s0">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;HEAD&quot;</span><span class="s1">:</span>
+        <span class="s5">&quot;&quot;&quot;Reset our HEAD to the given commit optionally synchronizing 
+        the index and working tree. The reference we refer to will be set to 
+        commit as well. 
+ 
+        :param commit: 
+            Commit object, Reference Object or string identifying a revision we 
+            should reset HEAD to. 
+ 
+        :param index: 
+            If True, the index will be set to match the given commit. Otherwise 
+            it will not be touched. 
+ 
+        :param working_tree: 
+            If True, the working tree will be forcefully adjusted to match the given 
+            commit, possibly overwriting uncommitted changes without warning. 
+            If working_tree is True, index must be true as well 
+ 
+        :param paths: 
+            Single path or list of paths relative to the git root directory 
+            that are to be reset. This allows to partially reset individual files. 
+ 
+        :param kwargs: 
+            Additional arguments passed to git-reset. 
+ 
+        :return: self&quot;&quot;&quot;</span>
+        <span class="s1">mode: Union[str</span><span class="s0">, None</span><span class="s1">]</span>
+        <span class="s1">mode = </span><span class="s3">&quot;--soft&quot;</span>
+        <span class="s0">if </span><span class="s1">index:</span>
+            <span class="s1">mode = </span><span class="s3">&quot;--mixed&quot;</span>
+
+            <span class="s2"># it appears, some git-versions declare mixed and paths deprecated</span>
+            <span class="s2"># see http://github.com/Byron/GitPython/issues#issue/2</span>
+            <span class="s0">if </span><span class="s1">paths:</span>
+                <span class="s1">mode = </span><span class="s0">None</span>
+            <span class="s2"># END special case</span>
+        <span class="s2"># END handle index</span>
+
+        <span class="s0">if </span><span class="s1">working_tree:</span>
+            <span class="s1">mode = </span><span class="s3">&quot;--hard&quot;</span>
+            <span class="s0">if not </span><span class="s1">index:</span>
+                <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Cannot reset the working tree if the index is not reset as well&quot;</span><span class="s1">)</span>
+
+        <span class="s2"># END working tree handling</span>
+
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">self.repo.git.reset(mode</span><span class="s0">, </span><span class="s1">commit</span><span class="s0">, </span><span class="s3">&quot;--&quot;</span><span class="s0">, </span><span class="s1">paths</span><span class="s0">, </span><span class="s1">**kwargs)</span>
+        <span class="s0">except </span><span class="s1">GitCommandError </span><span class="s0">as </span><span class="s1">e:</span>
+            <span class="s2"># git nowadays may use 1 as status to indicate there are still unstaged</span>
+            <span class="s2"># modifications after the reset</span>
+            <span class="s0">if </span><span class="s1">e.status != </span><span class="s4">1</span><span class="s1">:</span>
+                <span class="s0">raise</span>
+        <span class="s2"># END handle exception</span>
+
+        <span class="s0">return </span><span class="s1">self</span>
+
+
+<span class="s0">class </span><span class="s1">Head(Reference):</span>
+
+    <span class="s5">&quot;&quot;&quot;A Head is a named reference to a Commit. Every Head instance contains a name 
+    and a Commit object. 
+ 
+    Examples:: 
+ 
+        &gt;&gt;&gt; repo = Repo(&quot;/path/to/repo&quot;) 
+        &gt;&gt;&gt; head = repo.heads[0] 
+ 
+        &gt;&gt;&gt; head.name 
+        'master' 
+ 
+        &gt;&gt;&gt; head.commit 
+        &lt;git.Commit &quot;1c09f116cbc2cb4100fb6935bb162daa4723f455&quot;&gt; 
+ 
+        &gt;&gt;&gt; head.commit.hexsha 
+        '1c09f116cbc2cb4100fb6935bb162daa4723f455'&quot;&quot;&quot;</span>
+
+    <span class="s1">_common_path_default = </span><span class="s3">&quot;refs/heads&quot;</span>
+    <span class="s1">k_config_remote = </span><span class="s3">&quot;remote&quot;</span>
+    <span class="s1">k_config_remote_ref = </span><span class="s3">&quot;merge&quot;  </span><span class="s2"># branch to merge from remote</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">delete(cls</span><span class="s0">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s0">, </span><span class="s1">*heads: </span><span class="s3">&quot;Union[Head, str]&quot;</span><span class="s0">, </span><span class="s1">force: bool = </span><span class="s0">False, </span><span class="s1">**kwargs: Any) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s5">&quot;&quot;&quot;Delete the given heads 
+ 
+        :param force: 
+            If True, the heads will be deleted even if they are not yet merged into 
+            the main development stream. 
+            Default False&quot;&quot;&quot;</span>
+        <span class="s1">flag = </span><span class="s3">&quot;-d&quot;</span>
+        <span class="s0">if </span><span class="s1">force:</span>
+            <span class="s1">flag = </span><span class="s3">&quot;-D&quot;</span>
+        <span class="s1">repo.git.branch(flag</span><span class="s0">, </span><span class="s1">*heads)</span>
+
+    <span class="s0">def </span><span class="s1">set_tracking_branch(self</span><span class="s0">, </span><span class="s1">remote_reference: Union[</span><span class="s3">&quot;RemoteReference&quot;</span><span class="s0">, None</span><span class="s1">]) -&gt; </span><span class="s3">&quot;Head&quot;</span><span class="s1">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Configure this branch to track the given remote reference. This will alter 
+            this branch's configuration accordingly. 
+ 
+        :param remote_reference: The remote reference to track or None to untrack 
+            any references 
+        :return: self&quot;&quot;&quot;</span>
+        <span class="s0">from </span><span class="s1">.remote </span><span class="s0">import </span><span class="s1">RemoteReference</span>
+
+        <span class="s0">if </span><span class="s1">remote_reference </span><span class="s0">is not None and not </span><span class="s1">isinstance(remote_reference</span><span class="s0">, </span><span class="s1">RemoteReference):</span>
+            <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Incorrect parameter type: %r&quot; </span><span class="s1">% remote_reference)</span>
+        <span class="s2"># END handle type</span>
+
+        <span class="s0">with </span><span class="s1">self.config_writer() </span><span class="s0">as </span><span class="s1">writer:</span>
+            <span class="s0">if </span><span class="s1">remote_reference </span><span class="s0">is None</span><span class="s1">:</span>
+                <span class="s1">writer.remove_option(self.k_config_remote)</span>
+                <span class="s1">writer.remove_option(self.k_config_remote_ref)</span>
+                <span class="s0">if </span><span class="s1">len(writer.options()) == </span><span class="s4">0</span><span class="s1">:</span>
+                    <span class="s1">writer.remove_section()</span>
+            <span class="s0">else</span><span class="s1">:</span>
+                <span class="s1">writer.set_value(self.k_config_remote</span><span class="s0">, </span><span class="s1">remote_reference.remote_name)</span>
+                <span class="s1">writer.set_value(</span>
+                    <span class="s1">self.k_config_remote_ref</span><span class="s0">,</span>
+                    <span class="s1">Head.to_full_path(remote_reference.remote_head)</span><span class="s0">,</span>
+                <span class="s1">)</span>
+
+        <span class="s0">return </span><span class="s1">self</span>
+
+    <span class="s0">def </span><span class="s1">tracking_branch(self) -&gt; Union[</span><span class="s3">&quot;RemoteReference&quot;</span><span class="s0">, None</span><span class="s1">]:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        :return: The remote_reference we are tracking, or None if we are 
+            not a tracking branch&quot;&quot;&quot;</span>
+        <span class="s0">from </span><span class="s1">.remote </span><span class="s0">import </span><span class="s1">RemoteReference</span>
+
+        <span class="s1">reader = self.config_reader()</span>
+        <span class="s0">if </span><span class="s1">reader.has_option(self.k_config_remote) </span><span class="s0">and </span><span class="s1">reader.has_option(self.k_config_remote_ref):</span>
+            <span class="s1">ref = Head(</span>
+                <span class="s1">self.repo</span><span class="s0">,</span>
+                <span class="s1">Head.to_full_path(strip_quotes(reader.get_value(self.k_config_remote_ref)))</span><span class="s0">,</span>
+            <span class="s1">)</span>
+            <span class="s1">remote_refpath = RemoteReference.to_full_path(join_path(reader.get_value(self.k_config_remote)</span><span class="s0">, </span><span class="s1">ref.name))</span>
+            <span class="s0">return </span><span class="s1">RemoteReference(self.repo</span><span class="s0">, </span><span class="s1">remote_refpath)</span>
+        <span class="s2"># END handle have tracking branch</span>
+
+        <span class="s2"># we are not a tracking branch</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">def </span><span class="s1">rename(self</span><span class="s0">, </span><span class="s1">new_path: PathLike</span><span class="s0">, </span><span class="s1">force: bool = </span><span class="s0">False</span><span class="s1">) -&gt; </span><span class="s3">&quot;Head&quot;</span><span class="s1">:</span>
+        <span class="s5">&quot;&quot;&quot;Rename self to a new path 
+ 
+        :param new_path: 
+            Either a simple name or a path, i.e. new_name or features/new_name. 
+            The prefix refs/heads is implied 
+ 
+        :param force: 
+            If True, the rename will succeed even if a head with the target name 
+            already exists. 
+ 
+        :return: self 
+        :note: respects the ref log as git commands are used&quot;&quot;&quot;</span>
+        <span class="s1">flag = </span><span class="s3">&quot;-m&quot;</span>
+        <span class="s0">if </span><span class="s1">force:</span>
+            <span class="s1">flag = </span><span class="s3">&quot;-M&quot;</span>
+
+        <span class="s1">self.repo.git.branch(flag</span><span class="s0">, </span><span class="s1">self</span><span class="s0">, </span><span class="s1">new_path)</span>
+        <span class="s1">self.path = </span><span class="s3">&quot;%s/%s&quot; </span><span class="s1">% (self._common_path_default</span><span class="s0">, </span><span class="s1">new_path)</span>
+        <span class="s0">return </span><span class="s1">self</span>
+
+    <span class="s0">def </span><span class="s1">checkout(self</span><span class="s0">, </span><span class="s1">force: bool = </span><span class="s0">False, </span><span class="s1">**kwargs: Any) -&gt; Union[</span><span class="s3">&quot;HEAD&quot;</span><span class="s0">, </span><span class="s3">&quot;Head&quot;</span><span class="s1">]:</span>
+        <span class="s5">&quot;&quot;&quot;Checkout this head by setting the HEAD to this reference, by updating the index 
+        to reflect the tree we point to and by updating the working tree to reflect 
+        the latest index. 
+ 
+        The command will fail if changed working tree files would be overwritten. 
+ 
+        :param force: 
+            If True, changes to the index and the working tree will be discarded. 
+            If False, GitCommandError will be raised in that situation. 
+ 
+        :param kwargs: 
+            Additional keyword arguments to be passed to git checkout, i.e. 
+            b='new_branch' to create a new branch at the given spot. 
+ 
+        :return: 
+            The active branch after the checkout operation, usually self unless 
+            a new branch has been created. 
+            If there is no active branch, as the HEAD is now detached, the HEAD 
+            reference will be returned instead. 
+ 
+        :note: 
+            By default it is only allowed to checkout heads - everything else 
+            will leave the HEAD detached which is allowed and possible, but remains 
+            a special state that some tools might not be able to handle.&quot;&quot;&quot;</span>
+        <span class="s1">kwargs[</span><span class="s3">&quot;f&quot;</span><span class="s1">] = force</span>
+        <span class="s0">if </span><span class="s1">kwargs[</span><span class="s3">&quot;f&quot;</span><span class="s1">] </span><span class="s0">is False</span><span class="s1">:</span>
+            <span class="s1">kwargs.pop(</span><span class="s3">&quot;f&quot;</span><span class="s1">)</span>
+
+        <span class="s1">self.repo.git.checkout(self</span><span class="s0">, </span><span class="s1">**kwargs)</span>
+        <span class="s0">if </span><span class="s1">self.repo.head.is_detached:</span>
+            <span class="s0">return </span><span class="s1">self.repo.head</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s0">return </span><span class="s1">self.repo.active_branch</span>
+
+    <span class="s2"># { Configuration</span>
+    <span class="s0">def </span><span class="s1">_config_parser(self</span><span class="s0">, </span><span class="s1">read_only: bool) -&gt; SectionConstraint[GitConfigParser]:</span>
+        <span class="s0">if </span><span class="s1">read_only:</span>
+            <span class="s1">parser = self.repo.config_reader()</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">parser = self.repo.config_writer()</span>
+        <span class="s2"># END handle parser instance</span>
+
+        <span class="s0">return </span><span class="s1">SectionConstraint(parser</span><span class="s0">, </span><span class="s3">'branch &quot;%s&quot;' </span><span class="s1">% self.name)</span>
+
+    <span class="s0">def </span><span class="s1">config_reader(self) -&gt; SectionConstraint[GitConfigParser]:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        :return: A configuration parser instance constrained to only read 
+            this instance's values&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self._config_parser(read_only=</span><span class="s0">True</span><span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">config_writer(self) -&gt; SectionConstraint[GitConfigParser]:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        :return: A configuration writer instance with read-and write access 
+            to options of this head&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self._config_parser(read_only=</span><span class="s0">False</span><span class="s1">)</span>
+
+    <span class="s2"># } END configuration</span>
+</pre>
+</body>
+</html>

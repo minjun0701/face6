@@ -1,0 +1,53 @@
+<html>
+<head>
+<title>errors.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #629755; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+errors.py</font>
+</center></td></tr></table>
+<pre><span class="s0">class </span><span class="s1">ConsoleError(Exception):</span>
+    <span class="s2">&quot;&quot;&quot;An error in console operation.&quot;&quot;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">StyleError(Exception):</span>
+    <span class="s2">&quot;&quot;&quot;An error in styles.&quot;&quot;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">StyleSyntaxError(ConsoleError):</span>
+    <span class="s2">&quot;&quot;&quot;Style was badly formatted.&quot;&quot;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">MissingStyle(StyleError):</span>
+    <span class="s2">&quot;&quot;&quot;No such style.&quot;&quot;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">StyleStackError(ConsoleError):</span>
+    <span class="s2">&quot;&quot;&quot;Style stack is invalid.&quot;&quot;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">NotRenderableError(ConsoleError):</span>
+    <span class="s2">&quot;&quot;&quot;Object is not renderable.&quot;&quot;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">MarkupError(ConsoleError):</span>
+    <span class="s2">&quot;&quot;&quot;Markup was badly formatted.&quot;&quot;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">LiveError(ConsoleError):</span>
+    <span class="s2">&quot;&quot;&quot;Error related to Live display.&quot;&quot;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">NoAltScreen(ConsoleError):</span>
+    <span class="s2">&quot;&quot;&quot;Alt screen mode was required.&quot;&quot;&quot;</span>
+</pre>
+</body>
+</html>

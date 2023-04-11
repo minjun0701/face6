@@ -1,0 +1,448 @@
+<html>
+<head>
+<title>root.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #808080;}
+.s3 { color: #6a8759;}
+.s4 { color: #629755; font-style: italic;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+root.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">.base </span><span class="s0">import </span><span class="s1">Submodule</span><span class="s0">, </span><span class="s1">UpdateProgress</span>
+<span class="s0">from </span><span class="s1">.util </span><span class="s0">import </span><span class="s1">find_first_remote_branch</span>
+<span class="s0">from </span><span class="s1">git.exc </span><span class="s0">import </span><span class="s1">InvalidGitRepositoryError</span>
+<span class="s0">import </span><span class="s1">git</span>
+
+<span class="s0">import </span><span class="s1">logging</span>
+
+<span class="s2"># typing -------------------------------------------------------------------</span>
+
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">TYPE_CHECKING</span><span class="s0">, </span><span class="s1">Union</span>
+
+<span class="s0">from </span><span class="s1">git.types </span><span class="s0">import </span><span class="s1">Commit_ish</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s0">from </span><span class="s1">git.repo </span><span class="s0">import </span><span class="s1">Repo</span>
+    <span class="s0">from </span><span class="s1">git.util </span><span class="s0">import </span><span class="s1">IterableList</span>
+
+<span class="s2"># ----------------------------------------------------------------------------</span>
+
+<span class="s1">__all__ = [</span><span class="s3">&quot;RootModule&quot;</span><span class="s0">, </span><span class="s3">&quot;RootUpdateProgress&quot;</span><span class="s1">]</span>
+
+<span class="s1">log = logging.getLogger(</span><span class="s3">&quot;git.objects.submodule.root&quot;</span><span class="s1">)</span>
+<span class="s1">log.addHandler(logging.NullHandler())</span>
+
+
+<span class="s0">class </span><span class="s1">RootUpdateProgress(UpdateProgress):</span>
+    <span class="s4">&quot;&quot;&quot;Utility class which adds more opcodes to the UpdateProgress&quot;&quot;&quot;</span>
+
+    <span class="s1">REMOVE</span><span class="s0">, </span><span class="s1">PATHCHANGE</span><span class="s0">, </span><span class="s1">BRANCHCHANGE</span><span class="s0">, </span><span class="s1">URLCHANGE = [</span>
+        <span class="s5">1 </span><span class="s1">&lt;&lt; x </span><span class="s0">for </span><span class="s1">x </span><span class="s0">in </span><span class="s1">range(UpdateProgress._num_op_codes</span><span class="s0">, </span><span class="s1">UpdateProgress._num_op_codes + </span><span class="s5">4</span><span class="s1">)</span>
+    <span class="s1">]</span>
+    <span class="s1">_num_op_codes = UpdateProgress._num_op_codes + </span><span class="s5">4</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s1">BEGIN = RootUpdateProgress.BEGIN</span>
+<span class="s1">END = RootUpdateProgress.END</span>
+<span class="s1">REMOVE = RootUpdateProgress.REMOVE</span>
+<span class="s1">BRANCHCHANGE = RootUpdateProgress.BRANCHCHANGE</span>
+<span class="s1">URLCHANGE = RootUpdateProgress.URLCHANGE</span>
+<span class="s1">PATHCHANGE = RootUpdateProgress.PATHCHANGE</span>
+
+
+<span class="s0">class </span><span class="s1">RootModule(Submodule):</span>
+
+    <span class="s4">&quot;&quot;&quot;A (virtual) Root of all submodules in the given repository. It can be used 
+    to more easily traverse all submodules of the master repository&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">k_root_name = </span><span class="s3">&quot;__ROOT__&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s0">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s1">):</span>
+        <span class="s2"># repo, binsha, mode=None, path=None, name = None, parent_commit=None, url=None, ref=None)</span>
+        <span class="s1">super(RootModule</span><span class="s0">, </span><span class="s1">self).__init__(</span>
+            <span class="s1">repo</span><span class="s0">,</span>
+            <span class="s1">binsha=self.NULL_BIN_SHA</span><span class="s0">,</span>
+            <span class="s1">mode=self.k_default_mode</span><span class="s0">,</span>
+            <span class="s1">path=</span><span class="s3">&quot;&quot;</span><span class="s0">,</span>
+            <span class="s1">name=self.k_root_name</span><span class="s0">,</span>
+            <span class="s1">parent_commit=repo.head.commit</span><span class="s0">,</span>
+            <span class="s1">url=</span><span class="s3">&quot;&quot;</span><span class="s0">,</span>
+            <span class="s1">branch_path=git.Head.to_full_path(self.k_head_default)</span><span class="s0">,</span>
+        <span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">_clear_cache(self) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;May not do anything&quot;&quot;&quot;</span>
+        <span class="s0">pass</span>
+
+    <span class="s2"># { Interface</span>
+
+    <span class="s0">def </span><span class="s1">update(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">previous_commit: Union[Commit_ish</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None,  </span><span class="s2"># type: ignore[override]</span>
+        <span class="s1">recursive: bool = </span><span class="s0">True,</span>
+        <span class="s1">force_remove: bool = </span><span class="s0">False,</span>
+        <span class="s1">init: bool = </span><span class="s0">True,</span>
+        <span class="s1">to_latest_revision: bool = </span><span class="s0">False,</span>
+        <span class="s1">progress: Union[</span><span class="s0">None, </span><span class="s3">&quot;RootUpdateProgress&quot;</span><span class="s1">] = </span><span class="s0">None,</span>
+        <span class="s1">dry_run: bool = </span><span class="s0">False,</span>
+        <span class="s1">force_reset: bool = </span><span class="s0">False,</span>
+        <span class="s1">keep_going: bool = </span><span class="s0">False,</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;RootModule&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Update the submodules of this repository to the current HEAD commit. 
+        This method behaves smartly by determining changes of the path of a submodules 
+        repository, next to changes to the to-be-checked-out commit or the branch to be 
+        checked out. This works if the submodules ID does not change. 
+        Additionally it will detect addition and removal of submodules, which will be handled 
+        gracefully. 
+ 
+        :param previous_commit: If set to a commit'ish, the commit we should use 
+            as the previous commit the HEAD pointed to before it was set to the commit it points to now. 
+            If None, it defaults to HEAD@{1} otherwise 
+        :param recursive: if True, the children of submodules will be updated as well 
+            using the same technique 
+        :param force_remove: If submodules have been deleted, they will be forcibly removed. 
+            Otherwise the update may fail if a submodule's repository cannot be deleted as 
+            changes have been made to it (see Submodule.update() for more information) 
+        :param init: If we encounter a new module which would need to be initialized, then do it. 
+        :param to_latest_revision: If True, instead of checking out the revision pointed to 
+            by this submodule's sha, the checked out tracking branch will be merged with the 
+            latest remote branch fetched from the repository's origin. 
+            Unless force_reset is specified, a local tracking branch will never be reset into its past, therefore 
+            the remote branch must be in the future for this to have an effect. 
+        :param force_reset: if True, submodules may checkout or reset their branch even if the repository has 
+            pending changes that would be overwritten, or if the local tracking branch is in the future of the 
+            remote tracking branch and would be reset into its past. 
+        :param progress: RootUpdateProgress instance or None if no progress should be sent 
+        :param dry_run: if True, operations will not actually be performed. Progress messages 
+            will change accordingly to indicate the WOULD DO state of the operation. 
+        :param keep_going: if True, we will ignore but log all errors, and keep going recursively. 
+            Unless dry_run is set as well, keep_going could cause subsequent/inherited errors you wouldn't see 
+            otherwise. 
+            In conjunction with dry_run, it can be useful to anticipate all errors when updating submodules 
+        :return: self&quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self.repo.bare:</span>
+            <span class="s0">raise </span><span class="s1">InvalidGitRepositoryError(</span><span class="s3">&quot;Cannot update submodules in bare repositories&quot;</span><span class="s1">)</span>
+        <span class="s2"># END handle bare</span>
+
+        <span class="s0">if </span><span class="s1">progress </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">progress = RootUpdateProgress()</span>
+        <span class="s2"># END assure progress is set</span>
+
+        <span class="s1">prefix = </span><span class="s3">&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">dry_run:</span>
+            <span class="s1">prefix = </span><span class="s3">&quot;DRY-RUN: &quot;</span>
+
+        <span class="s1">repo = self.repo</span>
+
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s2"># SETUP BASE COMMIT</span>
+            <span class="s2">###################</span>
+            <span class="s1">cur_commit = repo.head.commit</span>
+            <span class="s0">if </span><span class="s1">previous_commit </span><span class="s0">is None</span><span class="s1">:</span>
+                <span class="s0">try</span><span class="s1">:</span>
+                    <span class="s1">previous_commit = repo.commit(repo.head.log_entry(-</span><span class="s5">1</span><span class="s1">).oldhexsha)</span>
+                    <span class="s0">if </span><span class="s1">previous_commit.binsha == previous_commit.NULL_BIN_SHA:</span>
+                        <span class="s0">raise </span><span class="s1">IndexError</span>
+                    <span class="s2"># END handle initial commit</span>
+                <span class="s0">except </span><span class="s1">IndexError:</span>
+                    <span class="s2"># in new repositories, there is no previous commit</span>
+                    <span class="s1">previous_commit = cur_commit</span>
+                <span class="s2"># END exception handling</span>
+            <span class="s0">else</span><span class="s1">:</span>
+                <span class="s1">previous_commit = repo.commit(previous_commit)  </span><span class="s2"># obtain commit object</span>
+            <span class="s2"># END handle previous commit</span>
+
+            <span class="s1">psms: </span><span class="s3">&quot;IterableList[Submodule]&quot; </span><span class="s1">= self.list_items(repo</span><span class="s0">, </span><span class="s1">parent_commit=previous_commit)</span>
+            <span class="s1">sms: </span><span class="s3">&quot;IterableList[Submodule]&quot; </span><span class="s1">= self.list_items(repo)</span>
+            <span class="s1">spsms = set(psms)</span>
+            <span class="s1">ssms = set(sms)</span>
+
+            <span class="s2"># HANDLE REMOVALS</span>
+            <span class="s2">###################</span>
+            <span class="s1">rrsm = spsms - ssms</span>
+            <span class="s1">len_rrsm = len(rrsm)</span>
+
+            <span class="s0">for </span><span class="s1">i</span><span class="s0">, </span><span class="s1">rsm </span><span class="s0">in </span><span class="s1">enumerate(rrsm):</span>
+                <span class="s1">op = REMOVE</span>
+                <span class="s0">if </span><span class="s1">i == </span><span class="s5">0</span><span class="s1">:</span>
+                    <span class="s1">op |= BEGIN</span>
+                <span class="s2"># END handle begin</span>
+
+                <span class="s2"># fake it into thinking its at the current commit to allow deletion</span>
+                <span class="s2"># of previous module. Trigger the cache to be updated before that</span>
+                <span class="s1">progress.update(</span>
+                    <span class="s1">op</span><span class="s0">,</span>
+                    <span class="s1">i</span><span class="s0">,</span>
+                    <span class="s1">len_rrsm</span><span class="s0">,</span>
+                    <span class="s1">prefix + </span><span class="s3">&quot;Removing submodule %r at %s&quot; </span><span class="s1">% (rsm.name</span><span class="s0">, </span><span class="s1">rsm.abspath)</span><span class="s0">,</span>
+                <span class="s1">)</span>
+                <span class="s1">rsm._parent_commit = repo.head.commit</span>
+                <span class="s1">rsm.remove(</span>
+                    <span class="s1">configuration=</span><span class="s0">False,</span>
+                    <span class="s1">module=</span><span class="s0">True,</span>
+                    <span class="s1">force=force_remove</span><span class="s0">,</span>
+                    <span class="s1">dry_run=dry_run</span><span class="s0">,</span>
+                <span class="s1">)</span>
+
+                <span class="s0">if </span><span class="s1">i == len_rrsm - </span><span class="s5">1</span><span class="s1">:</span>
+                    <span class="s1">op |= END</span>
+                <span class="s2"># END handle end</span>
+                <span class="s1">progress.update(op</span><span class="s0">, </span><span class="s1">i</span><span class="s0">, </span><span class="s1">len_rrsm</span><span class="s0">, </span><span class="s1">prefix + </span><span class="s3">&quot;Done removing submodule %r&quot; </span><span class="s1">% rsm.name)</span>
+            <span class="s2"># END for each removed submodule</span>
+
+            <span class="s2"># HANDLE PATH RENAMES</span>
+            <span class="s2">#####################</span>
+            <span class="s2"># url changes + branch changes</span>
+            <span class="s1">csms = spsms &amp; ssms</span>
+            <span class="s1">len_csms = len(csms)</span>
+            <span class="s0">for </span><span class="s1">i</span><span class="s0">, </span><span class="s1">csm </span><span class="s0">in </span><span class="s1">enumerate(csms):</span>
+                <span class="s1">psm: </span><span class="s3">&quot;Submodule&quot; </span><span class="s1">= psms[csm.name]</span>
+                <span class="s1">sm: </span><span class="s3">&quot;Submodule&quot; </span><span class="s1">= sms[csm.name]</span>
+
+                <span class="s2"># PATH CHANGES</span>
+                <span class="s2">##############</span>
+                <span class="s0">if </span><span class="s1">sm.path != psm.path </span><span class="s0">and </span><span class="s1">psm.module_exists():</span>
+                    <span class="s1">progress.update(</span>
+                        <span class="s1">BEGIN | PATHCHANGE</span><span class="s0">,</span>
+                        <span class="s1">i</span><span class="s0">,</span>
+                        <span class="s1">len_csms</span><span class="s0">,</span>
+                        <span class="s1">prefix + </span><span class="s3">&quot;Moving repository of submodule %r from %s to %s&quot; </span><span class="s1">% (sm.name</span><span class="s0">, </span><span class="s1">psm.abspath</span><span class="s0">, </span><span class="s1">sm.abspath)</span><span class="s0">,</span>
+                    <span class="s1">)</span>
+                    <span class="s2"># move the module to the new path</span>
+                    <span class="s0">if not </span><span class="s1">dry_run:</span>
+                        <span class="s1">psm.move(sm.path</span><span class="s0">, </span><span class="s1">module=</span><span class="s0">True, </span><span class="s1">configuration=</span><span class="s0">False</span><span class="s1">)</span>
+                    <span class="s2"># END handle dry_run</span>
+                    <span class="s1">progress.update(</span>
+                        <span class="s1">END | PATHCHANGE</span><span class="s0">,</span>
+                        <span class="s1">i</span><span class="s0">,</span>
+                        <span class="s1">len_csms</span><span class="s0">,</span>
+                        <span class="s1">prefix + </span><span class="s3">&quot;Done moving repository of submodule %r&quot; </span><span class="s1">% sm.name</span><span class="s0">,</span>
+                    <span class="s1">)</span>
+                <span class="s2"># END handle path changes</span>
+
+                <span class="s0">if </span><span class="s1">sm.module_exists():</span>
+                    <span class="s2"># HANDLE URL CHANGE</span>
+                    <span class="s2">###################</span>
+                    <span class="s0">if </span><span class="s1">sm.url != psm.url:</span>
+                        <span class="s2"># Add the new remote, remove the old one</span>
+                        <span class="s2"># This way, if the url just changes, the commits will not</span>
+                        <span class="s2"># have to be re-retrieved</span>
+                        <span class="s1">nn = </span><span class="s3">&quot;__new_origin__&quot;</span>
+                        <span class="s1">smm = sm.module()</span>
+                        <span class="s1">rmts = smm.remotes</span>
+
+                        <span class="s2"># don't do anything if we already have the url we search in place</span>
+                        <span class="s0">if </span><span class="s1">len([r </span><span class="s0">for </span><span class="s1">r </span><span class="s0">in </span><span class="s1">rmts </span><span class="s0">if </span><span class="s1">r.url == sm.url]) == </span><span class="s5">0</span><span class="s1">:</span>
+                            <span class="s1">progress.update(</span>
+                                <span class="s1">BEGIN | URLCHANGE</span><span class="s0">,</span>
+                                <span class="s1">i</span><span class="s0">,</span>
+                                <span class="s1">len_csms</span><span class="s0">,</span>
+                                <span class="s1">prefix + </span><span class="s3">&quot;Changing url of submodule %r from %s to %s&quot; </span><span class="s1">% (sm.name</span><span class="s0">, </span><span class="s1">psm.url</span><span class="s0">, </span><span class="s1">sm.url)</span><span class="s0">,</span>
+                            <span class="s1">)</span>
+
+                            <span class="s0">if not </span><span class="s1">dry_run:</span>
+                                <span class="s0">assert </span><span class="s1">nn </span><span class="s0">not in </span><span class="s1">[r.name </span><span class="s0">for </span><span class="s1">r </span><span class="s0">in </span><span class="s1">rmts]</span>
+                                <span class="s1">smr = smm.create_remote(nn</span><span class="s0">, </span><span class="s1">sm.url)</span>
+                                <span class="s1">smr.fetch(progress=progress)</span>
+
+                                <span class="s2"># If we have a tracking branch, it should be available</span>
+                                <span class="s2"># in the new remote as well.</span>
+                                <span class="s0">if </span><span class="s1">len([r </span><span class="s0">for </span><span class="s1">r </span><span class="s0">in </span><span class="s1">smr.refs </span><span class="s0">if </span><span class="s1">r.remote_head == sm.branch_name]) == </span><span class="s5">0</span><span class="s1">:</span>
+                                    <span class="s0">raise </span><span class="s1">ValueError(</span>
+                                        <span class="s3">&quot;Submodule branch named %r was not available in new submodule remote at %r&quot;</span>
+                                        <span class="s1">% (sm.branch_name</span><span class="s0">, </span><span class="s1">sm.url)</span>
+                                    <span class="s1">)</span>
+                                <span class="s2"># END head is not detached</span>
+
+                                <span class="s2"># now delete the changed one</span>
+                                <span class="s1">rmt_for_deletion = </span><span class="s0">None</span>
+                                <span class="s0">for </span><span class="s1">remote </span><span class="s0">in </span><span class="s1">rmts:</span>
+                                    <span class="s0">if </span><span class="s1">remote.url == psm.url:</span>
+                                        <span class="s1">rmt_for_deletion = remote</span>
+                                        <span class="s0">break</span>
+                                    <span class="s2"># END if urls match</span>
+                                <span class="s2"># END for each remote</span>
+
+                                <span class="s2"># if we didn't find a matching remote, but have exactly one,</span>
+                                <span class="s2"># we can safely use this one</span>
+                                <span class="s0">if </span><span class="s1">rmt_for_deletion </span><span class="s0">is None</span><span class="s1">:</span>
+                                    <span class="s0">if </span><span class="s1">len(rmts) == </span><span class="s5">1</span><span class="s1">:</span>
+                                        <span class="s1">rmt_for_deletion = rmts[</span><span class="s5">0</span><span class="s1">]</span>
+                                    <span class="s0">else</span><span class="s1">:</span>
+                                        <span class="s2"># if we have not found any remote with the original url</span>
+                                        <span class="s2"># we may not have a name. This is a special case,</span>
+                                        <span class="s2"># and its okay to fail here</span>
+                                        <span class="s2"># Alternatively we could just generate a unique name and leave all</span>
+                                        <span class="s2"># existing ones in place</span>
+                                        <span class="s0">raise </span><span class="s1">InvalidGitRepositoryError(</span>
+                                            <span class="s3">&quot;Couldn't find original remote-repo at url %r&quot; </span><span class="s1">% psm.url</span>
+                                        <span class="s1">)</span>
+                                    <span class="s2"># END handle one single remote</span>
+                                <span class="s2"># END handle check we found a remote</span>
+
+                                <span class="s1">orig_name = rmt_for_deletion.name</span>
+                                <span class="s1">smm.delete_remote(rmt_for_deletion)</span>
+                                <span class="s2"># NOTE: Currently we leave tags from the deleted remotes</span>
+                                <span class="s2"># as well as separate tracking branches in the possibly totally</span>
+                                <span class="s2"># changed repository ( someone could have changed the url to</span>
+                                <span class="s2"># another project ). At some point, one might want to clean</span>
+                                <span class="s2"># it up, but the danger is high to remove stuff the user</span>
+                                <span class="s2"># has added explicitly</span>
+
+                                <span class="s2"># rename the new remote back to what it was</span>
+                                <span class="s1">smr.rename(orig_name)</span>
+
+                                <span class="s2"># early on, we verified that the our current tracking branch</span>
+                                <span class="s2"># exists in the remote. Now we have to assure that the</span>
+                                <span class="s2"># sha we point to is still contained in the new remote</span>
+                                <span class="s2"># tracking branch.</span>
+                                <span class="s1">smsha = sm.binsha</span>
+                                <span class="s1">found = </span><span class="s0">False</span>
+                                <span class="s1">rref = smr.refs[self.branch_name]</span>
+                                <span class="s0">for </span><span class="s1">c </span><span class="s0">in </span><span class="s1">rref.commit.traverse():</span>
+                                    <span class="s0">if </span><span class="s1">c.binsha == smsha:</span>
+                                        <span class="s1">found = </span><span class="s0">True</span>
+                                        <span class="s0">break</span>
+                                    <span class="s2"># END traverse all commits in search for sha</span>
+                                <span class="s2"># END for each commit</span>
+
+                                <span class="s0">if not </span><span class="s1">found:</span>
+                                    <span class="s2"># adjust our internal binsha to use the one of the remote</span>
+                                    <span class="s2"># this way, it will be checked out in the next step</span>
+                                    <span class="s2"># This will change the submodule relative to us, so</span>
+                                    <span class="s2"># the user will be able to commit the change easily</span>
+                                    <span class="s1">log.warning(</span>
+                                        <span class="s3">&quot;Current sha %s was not contained in the tracking</span><span class="s0">\ 
+             </span><span class="s3">branch at the new remote, setting it the the remote's tracking branch&quot;</span><span class="s0">,</span>
+                                        <span class="s1">sm.hexsha</span><span class="s0">,</span>
+                                    <span class="s1">)</span>
+                                    <span class="s1">sm.binsha = rref.commit.binsha</span>
+                                <span class="s2"># END reset binsha</span>
+
+                                <span class="s2"># NOTE: All checkout is performed by the base implementation of update</span>
+                            <span class="s2"># END handle dry_run</span>
+                            <span class="s1">progress.update(</span>
+                                <span class="s1">END | URLCHANGE</span><span class="s0">,</span>
+                                <span class="s1">i</span><span class="s0">,</span>
+                                <span class="s1">len_csms</span><span class="s0">,</span>
+                                <span class="s1">prefix + </span><span class="s3">&quot;Done adjusting url of submodule %r&quot; </span><span class="s1">% (sm.name)</span><span class="s0">,</span>
+                            <span class="s1">)</span>
+                        <span class="s2"># END skip remote handling if new url already exists in module</span>
+                    <span class="s2"># END handle url</span>
+
+                    <span class="s2"># HANDLE PATH CHANGES</span>
+                    <span class="s2">#####################</span>
+                    <span class="s0">if </span><span class="s1">sm.branch_path != psm.branch_path:</span>
+                        <span class="s2"># finally, create a new tracking branch which tracks the</span>
+                        <span class="s2"># new remote branch</span>
+                        <span class="s1">progress.update(</span>
+                            <span class="s1">BEGIN | BRANCHCHANGE</span><span class="s0">,</span>
+                            <span class="s1">i</span><span class="s0">,</span>
+                            <span class="s1">len_csms</span><span class="s0">,</span>
+                            <span class="s1">prefix</span>
+                            <span class="s1">+ </span><span class="s3">&quot;Changing branch of submodule %r from %s to %s&quot;</span>
+                            <span class="s1">% (sm.name</span><span class="s0">, </span><span class="s1">psm.branch_path</span><span class="s0">, </span><span class="s1">sm.branch_path)</span><span class="s0">,</span>
+                        <span class="s1">)</span>
+                        <span class="s0">if not </span><span class="s1">dry_run:</span>
+                            <span class="s1">smm = sm.module()</span>
+                            <span class="s1">smmr = smm.remotes</span>
+                            <span class="s2"># As the branch might not exist yet, we will have to fetch all remotes to be sure ... .</span>
+                            <span class="s0">for </span><span class="s1">remote </span><span class="s0">in </span><span class="s1">smmr:</span>
+                                <span class="s1">remote.fetch(progress=progress)</span>
+                            <span class="s2"># end for each remote</span>
+
+                            <span class="s0">try</span><span class="s1">:</span>
+                                <span class="s1">tbr = git.Head.create(</span>
+                                    <span class="s1">smm</span><span class="s0">,</span>
+                                    <span class="s1">sm.branch_name</span><span class="s0">,</span>
+                                    <span class="s1">logmsg=</span><span class="s3">&quot;branch: Created from HEAD&quot;</span><span class="s0">,</span>
+                                <span class="s1">)</span>
+                            <span class="s0">except </span><span class="s1">OSError:</span>
+                                <span class="s2"># ... or reuse the existing one</span>
+                                <span class="s1">tbr = git.Head(smm</span><span class="s0">, </span><span class="s1">sm.branch_path)</span>
+                            <span class="s2"># END assure tracking branch exists</span>
+
+                            <span class="s1">tbr.set_tracking_branch(find_first_remote_branch(smmr</span><span class="s0">, </span><span class="s1">sm.branch_name))</span>
+                            <span class="s2"># NOTE: All head-resetting is done in the base implementation of update</span>
+                            <span class="s2"># but we will have to checkout the new branch here. As it still points to the currently</span>
+                            <span class="s2"># checkout out commit, we don't do any harm.</span>
+                            <span class="s2"># As we don't want to update working-tree or index, changing the ref is all there is to do</span>
+                            <span class="s1">smm.head.reference = tbr</span>
+                        <span class="s2"># END handle dry_run</span>
+
+                        <span class="s1">progress.update(</span>
+                            <span class="s1">END | BRANCHCHANGE</span><span class="s0">,</span>
+                            <span class="s1">i</span><span class="s0">,</span>
+                            <span class="s1">len_csms</span><span class="s0">,</span>
+                            <span class="s1">prefix + </span><span class="s3">&quot;Done changing branch of submodule %r&quot; </span><span class="s1">% sm.name</span><span class="s0">,</span>
+                        <span class="s1">)</span>
+                    <span class="s2"># END handle branch</span>
+                <span class="s2"># END handle</span>
+            <span class="s2"># END for each common submodule</span>
+        <span class="s0">except </span><span class="s1">Exception </span><span class="s0">as </span><span class="s1">err:</span>
+            <span class="s0">if not </span><span class="s1">keep_going:</span>
+                <span class="s0">raise</span>
+            <span class="s1">log.error(str(err))</span>
+        <span class="s2"># end handle keep_going</span>
+
+        <span class="s2"># FINALLY UPDATE ALL ACTUAL SUBMODULES</span>
+        <span class="s2">######################################</span>
+        <span class="s0">for </span><span class="s1">sm </span><span class="s0">in </span><span class="s1">sms:</span>
+            <span class="s2"># update the submodule using the default method</span>
+            <span class="s1">sm.update(</span>
+                <span class="s1">recursive=</span><span class="s0">False,</span>
+                <span class="s1">init=init</span><span class="s0">,</span>
+                <span class="s1">to_latest_revision=to_latest_revision</span><span class="s0">,</span>
+                <span class="s1">progress=progress</span><span class="s0">,</span>
+                <span class="s1">dry_run=dry_run</span><span class="s0">,</span>
+                <span class="s1">force=force_reset</span><span class="s0">,</span>
+                <span class="s1">keep_going=keep_going</span><span class="s0">,</span>
+            <span class="s1">)</span>
+
+            <span class="s2"># update recursively depth first - question is which inconsistent</span>
+            <span class="s2"># state will be better in case it fails somewhere. Defective branch</span>
+            <span class="s2"># or defective depth. The RootSubmodule type will never process itself,</span>
+            <span class="s2"># which was done in the previous expression</span>
+            <span class="s0">if </span><span class="s1">recursive:</span>
+                <span class="s2"># the module would exist by now if we are not in dry_run mode</span>
+                <span class="s0">if </span><span class="s1">sm.module_exists():</span>
+                    <span class="s1">type(self)(sm.module()).update(</span>
+                        <span class="s1">recursive=</span><span class="s0">True,</span>
+                        <span class="s1">force_remove=force_remove</span><span class="s0">,</span>
+                        <span class="s1">init=init</span><span class="s0">,</span>
+                        <span class="s1">to_latest_revision=to_latest_revision</span><span class="s0">,</span>
+                        <span class="s1">progress=progress</span><span class="s0">,</span>
+                        <span class="s1">dry_run=dry_run</span><span class="s0">,</span>
+                        <span class="s1">force_reset=force_reset</span><span class="s0">,</span>
+                        <span class="s1">keep_going=keep_going</span><span class="s0">,</span>
+                    <span class="s1">)</span>
+                <span class="s2"># END handle dry_run</span>
+            <span class="s2"># END handle recursive</span>
+        <span class="s2"># END for each submodule to update</span>
+
+        <span class="s0">return </span><span class="s1">self</span>
+
+    <span class="s0">def </span><span class="s1">module(self) -&gt; </span><span class="s3">&quot;Repo&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;:return: the actual repository containing the submodules&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self.repo</span>
+
+    <span class="s2"># } END interface</span>
+
+
+<span class="s2"># } END classes</span>
+</pre>
+</body>
+</html>

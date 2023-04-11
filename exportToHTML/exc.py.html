@@ -1,0 +1,208 @@
+<html>
+<head>
+<title>exc.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #629755; font-style: italic;}
+.s3 { color: #cc7832;}
+.s4 { color: #6a8759;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+exc.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># exc.py</span>
+<span class="s0"># Copyright (C) 2008, 2009 Michael Trier (mtrier@gmail.com) and contributors</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of GitPython and is released under</span>
+<span class="s0"># the BSD License: http://www.opensource.org/licenses/bsd-license.php</span>
+<span class="s2">&quot;&quot;&quot; Module containing all exceptions thrown throughout the git package, &quot;&quot;&quot;</span>
+
+<span class="s3">from </span><span class="s1">gitdb.exc </span><span class="s3">import </span><span class="s1">BadName  </span><span class="s0"># NOQA @UnusedWildImport skipcq: PYL-W0401, PYL-W0614</span>
+<span class="s3">from </span><span class="s1">gitdb.exc </span><span class="s3">import </span><span class="s1">*  </span><span class="s0"># NOQA @UnusedWildImport skipcq: PYL-W0401, PYL-W0614</span>
+<span class="s3">from </span><span class="s1">git.compat </span><span class="s3">import </span><span class="s1">safe_decode</span>
+<span class="s3">from </span><span class="s1">git.util </span><span class="s3">import </span><span class="s1">remove_password_if_present</span>
+
+<span class="s0"># typing ----------------------------------------------------</span>
+
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span><span class="s3">, </span><span class="s1">Sequence</span><span class="s3">, </span><span class="s1">Tuple</span><span class="s3">, </span><span class="s1">Union</span><span class="s3">, </span><span class="s1">TYPE_CHECKING</span>
+<span class="s3">from </span><span class="s1">git.types </span><span class="s3">import </span><span class="s1">PathLike</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">git.repo.base </span><span class="s3">import </span><span class="s1">Repo</span>
+
+<span class="s0"># ------------------------------------------------------------------</span>
+
+
+<span class="s3">class </span><span class="s1">GitError(Exception):</span>
+    <span class="s2">&quot;&quot;&quot;Base class for all package exceptions&quot;&quot;&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">InvalidGitRepositoryError(GitError):</span>
+    <span class="s2">&quot;&quot;&quot;Thrown if the given repository appears to have an invalid format.&quot;&quot;&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">WorkTreeRepositoryUnsupported(InvalidGitRepositoryError):</span>
+    <span class="s2">&quot;&quot;&quot;Thrown to indicate we can't handle work tree repositories&quot;&quot;&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">NoSuchPathError(GitError</span><span class="s3">, </span><span class="s1">OSError):</span>
+    <span class="s2">&quot;&quot;&quot;Thrown if a path could not be access by the system.&quot;&quot;&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">UnsafeProtocolError(GitError):</span>
+    <span class="s2">&quot;&quot;&quot;Thrown if unsafe protocols are passed without being explicitly allowed.&quot;&quot;&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">UnsafeOptionError(GitError):</span>
+    <span class="s2">&quot;&quot;&quot;Thrown if unsafe options are passed without being explicitly allowed.&quot;&quot;&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">CommandError(GitError):</span>
+    <span class="s2">&quot;&quot;&quot;Base class for exceptions thrown at every stage of `Popen()` execution. 
+ 
+    :param command: 
+        A non-empty list of argv comprising the command-line. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">#: A unicode print-format with 2 `%s for `&lt;cmdline&gt;` and the rest,</span>
+    <span class="s0">#:  e.g.</span>
+    <span class="s0">#:     &quot;'%s' failed%s&quot;</span>
+    <span class="s1">_msg = </span><span class="s4">&quot;Cmd('%s') failed%s&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">command: Union[List[str]</span><span class="s3">, </span><span class="s1">Tuple[str</span><span class="s3">, </span><span class="s1">...]</span><span class="s3">, </span><span class="s1">str]</span><span class="s3">,</span>
+        <span class="s1">status: Union[str</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, None, </span><span class="s1">Exception] = </span><span class="s3">None,</span>
+        <span class="s1">stderr: Union[bytes</span><span class="s3">, </span><span class="s1">str</span><span class="s3">, None</span><span class="s1">] = </span><span class="s3">None,</span>
+        <span class="s1">stdout: Union[bytes</span><span class="s3">, </span><span class="s1">str</span><span class="s3">, None</span><span class="s1">] = </span><span class="s3">None,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s3">if not </span><span class="s1">isinstance(command</span><span class="s3">, </span><span class="s1">(tuple</span><span class="s3">, </span><span class="s1">list)):</span>
+            <span class="s1">command = command.split()</span>
+        <span class="s1">self.command = remove_password_if_present(command)</span>
+        <span class="s1">self.status = status</span>
+        <span class="s3">if </span><span class="s1">status:</span>
+            <span class="s3">if </span><span class="s1">isinstance(status</span><span class="s3">, </span><span class="s1">Exception):</span>
+                <span class="s1">status = </span><span class="s4">&quot;%s('%s')&quot; </span><span class="s1">% (type(status).__name__</span><span class="s3">, </span><span class="s1">safe_decode(str(status)))</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s3">try</span><span class="s1">:</span>
+                    <span class="s1">status = </span><span class="s4">&quot;exit code(%s)&quot; </span><span class="s1">% int(status)</span>
+                <span class="s3">except </span><span class="s1">(ValueError</span><span class="s3">, </span><span class="s1">TypeError):</span>
+                    <span class="s1">s = safe_decode(str(status))</span>
+                    <span class="s1">status = </span><span class="s4">&quot;'%s'&quot; </span><span class="s1">% s </span><span class="s3">if </span><span class="s1">isinstance(status</span><span class="s3">, </span><span class="s1">str) </span><span class="s3">else </span><span class="s1">s</span>
+
+        <span class="s1">self._cmd = safe_decode(self.command[</span><span class="s5">0</span><span class="s1">])</span>
+        <span class="s1">self._cmdline = </span><span class="s4">&quot; &quot;</span><span class="s1">.join(safe_decode(i) </span><span class="s3">for </span><span class="s1">i </span><span class="s3">in </span><span class="s1">self.command)</span>
+        <span class="s1">self._cause = status </span><span class="s3">and </span><span class="s4">&quot; due to: %s&quot; </span><span class="s1">% status </span><span class="s3">or </span><span class="s4">&quot;!&quot;</span>
+        <span class="s1">stdout_decode = safe_decode(stdout)</span>
+        <span class="s1">stderr_decode = safe_decode(stderr)</span>
+        <span class="s1">self.stdout = stdout_decode </span><span class="s3">and </span><span class="s4">&quot;</span><span class="s3">\n  </span><span class="s4">stdout: '%s'&quot; </span><span class="s1">% stdout_decode </span><span class="s3">or </span><span class="s4">&quot;&quot;</span>
+        <span class="s1">self.stderr = stderr_decode </span><span class="s3">and </span><span class="s4">&quot;</span><span class="s3">\n  </span><span class="s4">stderr: '%s'&quot; </span><span class="s1">% stderr_decode </span><span class="s3">or </span><span class="s4">&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__str__(self) -&gt; str:</span>
+        <span class="s3">return </span><span class="s1">(self._msg + </span><span class="s4">&quot;</span><span class="s3">\n  </span><span class="s4">cmdline: %s%s%s&quot;</span><span class="s1">) % (</span>
+            <span class="s1">self._cmd</span><span class="s3">,</span>
+            <span class="s1">self._cause</span><span class="s3">,</span>
+            <span class="s1">self._cmdline</span><span class="s3">,</span>
+            <span class="s1">self.stdout</span><span class="s3">,</span>
+            <span class="s1">self.stderr</span><span class="s3">,</span>
+        <span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">GitCommandNotFound(CommandError):</span>
+    <span class="s2">&quot;&quot;&quot;Thrown if we cannot find the `git` executable in the PATH or at the path given by 
+    the GIT_PYTHON_GIT_EXECUTABLE environment variable&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">command: Union[List[str]</span><span class="s3">, </span><span class="s1">Tuple[str]</span><span class="s3">, </span><span class="s1">str]</span><span class="s3">, </span><span class="s1">cause: Union[str</span><span class="s3">, </span><span class="s1">Exception]) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super(GitCommandNotFound</span><span class="s3">, </span><span class="s1">self).__init__(command</span><span class="s3">, </span><span class="s1">cause)</span>
+        <span class="s1">self._msg = </span><span class="s4">&quot;Cmd('%s') not found%s&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">GitCommandError(CommandError):</span>
+    <span class="s2">&quot;&quot;&quot;Thrown if execution of the git command fails with non-zero status code.&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">command: Union[List[str]</span><span class="s3">, </span><span class="s1">Tuple[str</span><span class="s3">, </span><span class="s1">...]</span><span class="s3">, </span><span class="s1">str]</span><span class="s3">,</span>
+        <span class="s1">status: Union[str</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, None, </span><span class="s1">Exception] = </span><span class="s3">None,</span>
+        <span class="s1">stderr: Union[bytes</span><span class="s3">, </span><span class="s1">str</span><span class="s3">, None</span><span class="s1">] = </span><span class="s3">None,</span>
+        <span class="s1">stdout: Union[bytes</span><span class="s3">, </span><span class="s1">str</span><span class="s3">, None</span><span class="s1">] = </span><span class="s3">None,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">super(GitCommandError</span><span class="s3">, </span><span class="s1">self).__init__(command</span><span class="s3">, </span><span class="s1">status</span><span class="s3">, </span><span class="s1">stderr</span><span class="s3">, </span><span class="s1">stdout)</span>
+
+
+<span class="s3">class </span><span class="s1">CheckoutError(GitError):</span>
+    <span class="s2">&quot;&quot;&quot;Thrown if a file could not be checked out from the index as it contained 
+    changes. 
+ 
+    The .failed_files attribute contains a list of relative paths that failed 
+    to be checked out as they contained changes that did not exist in the index. 
+ 
+    The .failed_reasons attribute contains a string informing about the actual 
+    cause of the issue. 
+ 
+    The .valid_files attribute contains a list of relative paths to files that 
+    were checked out successfully and hence match the version stored in the 
+    index&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">message: str</span><span class="s3">,</span>
+        <span class="s1">failed_files: Sequence[PathLike]</span><span class="s3">,</span>
+        <span class="s1">valid_files: Sequence[PathLike]</span><span class="s3">,</span>
+        <span class="s1">failed_reasons: List[str]</span><span class="s3">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+
+        <span class="s1">Exception.__init__(self</span><span class="s3">, </span><span class="s1">message)</span>
+        <span class="s1">self.failed_files = failed_files</span>
+        <span class="s1">self.failed_reasons = failed_reasons</span>
+        <span class="s1">self.valid_files = valid_files</span>
+
+    <span class="s3">def </span><span class="s1">__str__(self) -&gt; str:</span>
+        <span class="s3">return </span><span class="s1">Exception.__str__(self) + </span><span class="s4">&quot;:%s&quot; </span><span class="s1">% self.failed_files</span>
+
+
+<span class="s3">class </span><span class="s1">CacheError(GitError):</span>
+
+    <span class="s2">&quot;&quot;&quot;Base for all errors related to the git index, which is called cache internally&quot;&quot;&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">UnmergedEntriesError(CacheError):</span>
+    <span class="s2">&quot;&quot;&quot;Thrown if an operation cannot proceed as there are still unmerged 
+    entries in the cache&quot;&quot;&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">HookExecutionError(CommandError):</span>
+    <span class="s2">&quot;&quot;&quot;Thrown if a hook exits with a non-zero exit code. It provides access to the exit code and the string returned 
+    via standard output&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">command: Union[List[str]</span><span class="s3">, </span><span class="s1">Tuple[str</span><span class="s3">, </span><span class="s1">...]</span><span class="s3">, </span><span class="s1">str]</span><span class="s3">,</span>
+        <span class="s1">status: Union[str</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, None, </span><span class="s1">Exception]</span><span class="s3">,</span>
+        <span class="s1">stderr: Union[bytes</span><span class="s3">, </span><span class="s1">str</span><span class="s3">, None</span><span class="s1">] = </span><span class="s3">None,</span>
+        <span class="s1">stdout: Union[bytes</span><span class="s3">, </span><span class="s1">str</span><span class="s3">, None</span><span class="s1">] = </span><span class="s3">None,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+
+        <span class="s1">super(HookExecutionError</span><span class="s3">, </span><span class="s1">self).__init__(command</span><span class="s3">, </span><span class="s1">status</span><span class="s3">, </span><span class="s1">stderr</span><span class="s3">, </span><span class="s1">stdout)</span>
+        <span class="s1">self._msg = </span><span class="s4">&quot;Hook('%s') failed%s&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">RepositoryDirtyError(GitError):</span>
+    <span class="s2">&quot;&quot;&quot;Thrown whenever an operation on a repository fails as it has uncommitted changes that would be overwritten&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">repo: </span><span class="s4">&quot;Repo&quot;</span><span class="s3">, </span><span class="s1">message: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s1">self.repo = repo</span>
+        <span class="s1">self.message = message</span>
+
+    <span class="s3">def </span><span class="s1">__str__(self) -&gt; str:</span>
+        <span class="s3">return </span><span class="s4">&quot;Operation cannot be performed on %r: %s&quot; </span><span class="s1">% (self.repo</span><span class="s3">, </span><span class="s1">self.message)</span>
+</pre>
+</body>
+</html>

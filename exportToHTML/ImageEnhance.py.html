@@ -1,0 +1,125 @@
+<html>
+<head>
+<title>ImageEnhance.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #629755; font-style: italic;}
+.s4 { color: #6a8759;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageEnhance.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># image enhancement classes</span>
+<span class="s0">#</span>
+<span class="s0"># For a background, see &quot;Image Processing By Interpolation and</span>
+<span class="s0"># Extrapolation&quot;, Paul Haeberli and Douglas Voorhies.  Available</span>
+<span class="s0"># at http://www.graficaobscura.com/interp/index.html</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1996-03-23 fl  Created</span>
+<span class="s0"># 2009-06-16 fl  Fixed mean calculation</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 1997.</span>
+<span class="s0"># Copyright (c) Fredrik Lundh 1996.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFilter</span><span class="s2">, </span><span class="s1">ImageStat</span>
+
+
+<span class="s2">class </span><span class="s1">_Enhance:</span>
+    <span class="s2">def </span><span class="s1">enhance(self</span><span class="s2">, </span><span class="s1">factor):</span>
+        <span class="s3">&quot;&quot;&quot; 
+        Returns an enhanced image. 
+ 
+        :param factor: A floating point value controlling the enhancement. 
+                       Factor 1.0 always returns a copy of the original image, 
+                       lower factors mean less color (brightness, contrast, 
+                       etc), and higher values more. There are no restrictions 
+                       on this value. 
+        :rtype: :py:class:`~PIL.Image.Image` 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">Image.blend(self.degenerate</span><span class="s2">, </span><span class="s1">self.image</span><span class="s2">, </span><span class="s1">factor)</span>
+
+
+<span class="s2">class </span><span class="s1">Color(_Enhance):</span>
+    <span class="s3">&quot;&quot;&quot;Adjust image color balance. 
+ 
+    This class can be used to adjust the colour balance of an image, in 
+    a manner similar to the controls on a colour TV set. An enhancement 
+    factor of 0.0 gives a black and white image. A factor of 1.0 gives 
+    the original image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">image):</span>
+        <span class="s1">self.image = image</span>
+        <span class="s1">self.intermediate_mode = </span><span class="s4">&quot;L&quot;</span>
+        <span class="s2">if </span><span class="s4">&quot;A&quot; </span><span class="s2">in </span><span class="s1">image.getbands():</span>
+            <span class="s1">self.intermediate_mode = </span><span class="s4">&quot;LA&quot;</span>
+
+        <span class="s1">self.degenerate = image.convert(self.intermediate_mode).convert(image.mode)</span>
+
+
+<span class="s2">class </span><span class="s1">Contrast(_Enhance):</span>
+    <span class="s3">&quot;&quot;&quot;Adjust image contrast. 
+ 
+    This class can be used to control the contrast of an image, similar 
+    to the contrast control on a TV set. An enhancement factor of 0.0 
+    gives a solid grey image. A factor of 1.0 gives the original image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">image):</span>
+        <span class="s1">self.image = image</span>
+        <span class="s1">mean = int(ImageStat.Stat(image.convert(</span><span class="s4">&quot;L&quot;</span><span class="s1">)).mean[</span><span class="s5">0</span><span class="s1">] + </span><span class="s5">0.5</span><span class="s1">)</span>
+        <span class="s1">self.degenerate = Image.new(</span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">image.size</span><span class="s2">, </span><span class="s1">mean).convert(image.mode)</span>
+
+        <span class="s2">if </span><span class="s4">&quot;A&quot; </span><span class="s2">in </span><span class="s1">image.getbands():</span>
+            <span class="s1">self.degenerate.putalpha(image.getchannel(</span><span class="s4">&quot;A&quot;</span><span class="s1">))</span>
+
+
+<span class="s2">class </span><span class="s1">Brightness(_Enhance):</span>
+    <span class="s3">&quot;&quot;&quot;Adjust image brightness. 
+ 
+    This class can be used to control the brightness of an image.  An 
+    enhancement factor of 0.0 gives a black image. A factor of 1.0 gives the 
+    original image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">image):</span>
+        <span class="s1">self.image = image</span>
+        <span class="s1">self.degenerate = Image.new(image.mode</span><span class="s2">, </span><span class="s1">image.size</span><span class="s2">, </span><span class="s5">0</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s4">&quot;A&quot; </span><span class="s2">in </span><span class="s1">image.getbands():</span>
+            <span class="s1">self.degenerate.putalpha(image.getchannel(</span><span class="s4">&quot;A&quot;</span><span class="s1">))</span>
+
+
+<span class="s2">class </span><span class="s1">Sharpness(_Enhance):</span>
+    <span class="s3">&quot;&quot;&quot;Adjust image sharpness. 
+ 
+    This class can be used to adjust the sharpness of an image. An 
+    enhancement factor of 0.0 gives a blurred image, a factor of 1.0 gives the 
+    original image, and a factor of 2.0 gives a sharpened image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">image):</span>
+        <span class="s1">self.image = image</span>
+        <span class="s1">self.degenerate = image.filter(ImageFilter.SMOOTH)</span>
+
+        <span class="s2">if </span><span class="s4">&quot;A&quot; </span><span class="s2">in </span><span class="s1">image.getbands():</span>
+            <span class="s1">self.degenerate.putalpha(image.getchannel(</span><span class="s4">&quot;A&quot;</span><span class="s1">))</span>
+</pre>
+</body>
+</html>

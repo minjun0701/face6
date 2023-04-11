@@ -1,0 +1,77 @@
+<html>
+<head>
+<title>_windows_renderer.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #629755; font-style: italic;}
+.s3 { color: #6897bb;}
+.s4 { color: #6a8759;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_windows_renderer.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Iterable</span><span class="s0">, </span><span class="s1">Sequence</span><span class="s0">, </span><span class="s1">Tuple</span><span class="s0">, </span><span class="s1">cast</span>
+
+<span class="s0">from </span><span class="s1">pip._vendor.rich._win32_console </span><span class="s0">import </span><span class="s1">LegacyWindowsTerm</span><span class="s0">, </span><span class="s1">WindowsCoordinates</span>
+<span class="s0">from </span><span class="s1">pip._vendor.rich.segment </span><span class="s0">import </span><span class="s1">ControlCode</span><span class="s0">, </span><span class="s1">ControlType</span><span class="s0">, </span><span class="s1">Segment</span>
+
+
+<span class="s0">def </span><span class="s1">legacy_windows_render(buffer: Iterable[Segment]</span><span class="s0">, </span><span class="s1">term: LegacyWindowsTerm) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+    <span class="s2">&quot;&quot;&quot;Makes appropriate Windows Console API calls based on the segments in the buffer. 
+ 
+    Args: 
+        buffer (Iterable[Segment]): Iterable of Segments to convert to Win32 API calls. 
+        term (LegacyWindowsTerm): Used to call the Windows Console API. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">for </span><span class="s1">text</span><span class="s0">, </span><span class="s1">style</span><span class="s0">, </span><span class="s1">control </span><span class="s0">in </span><span class="s1">buffer:</span>
+        <span class="s0">if not </span><span class="s1">control:</span>
+            <span class="s0">if </span><span class="s1">style:</span>
+                <span class="s1">term.write_styled(text</span><span class="s0">, </span><span class="s1">style)</span>
+            <span class="s0">else</span><span class="s1">:</span>
+                <span class="s1">term.write_text(text)</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">control_codes: Sequence[ControlCode] = control</span>
+            <span class="s0">for </span><span class="s1">control_code </span><span class="s0">in </span><span class="s1">control_codes:</span>
+                <span class="s1">control_type = control_code[</span><span class="s3">0</span><span class="s1">]</span>
+                <span class="s0">if </span><span class="s1">control_type == ControlType.CURSOR_MOVE_TO:</span>
+                    <span class="s1">_</span><span class="s0">, </span><span class="s1">x</span><span class="s0">, </span><span class="s1">y = cast(Tuple[ControlType</span><span class="s0">, </span><span class="s1">int</span><span class="s0">, </span><span class="s1">int]</span><span class="s0">, </span><span class="s1">control_code)</span>
+                    <span class="s1">term.move_cursor_to(WindowsCoordinates(row=y - </span><span class="s3">1</span><span class="s0">, </span><span class="s1">col=x - </span><span class="s3">1</span><span class="s1">))</span>
+                <span class="s0">elif </span><span class="s1">control_type == ControlType.CARRIAGE_RETURN:</span>
+                    <span class="s1">term.write_text(</span><span class="s4">&quot;</span><span class="s0">\r</span><span class="s4">&quot;</span><span class="s1">)</span>
+                <span class="s0">elif </span><span class="s1">control_type == ControlType.HOME:</span>
+                    <span class="s1">term.move_cursor_to(WindowsCoordinates(</span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s1">))</span>
+                <span class="s0">elif </span><span class="s1">control_type == ControlType.CURSOR_UP:</span>
+                    <span class="s1">term.move_cursor_up()</span>
+                <span class="s0">elif </span><span class="s1">control_type == ControlType.CURSOR_DOWN:</span>
+                    <span class="s1">term.move_cursor_down()</span>
+                <span class="s0">elif </span><span class="s1">control_type == ControlType.CURSOR_FORWARD:</span>
+                    <span class="s1">term.move_cursor_forward()</span>
+                <span class="s0">elif </span><span class="s1">control_type == ControlType.CURSOR_BACKWARD:</span>
+                    <span class="s1">term.move_cursor_backward()</span>
+                <span class="s0">elif </span><span class="s1">control_type == ControlType.CURSOR_MOVE_TO_COLUMN:</span>
+                    <span class="s1">_</span><span class="s0">, </span><span class="s1">column = cast(Tuple[ControlType</span><span class="s0">, </span><span class="s1">int]</span><span class="s0">, </span><span class="s1">control_code)</span>
+                    <span class="s1">term.move_cursor_to_column(column - </span><span class="s3">1</span><span class="s1">)</span>
+                <span class="s0">elif </span><span class="s1">control_type == ControlType.HIDE_CURSOR:</span>
+                    <span class="s1">term.hide_cursor()</span>
+                <span class="s0">elif </span><span class="s1">control_type == ControlType.SHOW_CURSOR:</span>
+                    <span class="s1">term.show_cursor()</span>
+                <span class="s0">elif </span><span class="s1">control_type == ControlType.ERASE_IN_LINE:</span>
+                    <span class="s1">_</span><span class="s0">, </span><span class="s1">mode = cast(Tuple[ControlType</span><span class="s0">, </span><span class="s1">int]</span><span class="s0">, </span><span class="s1">control_code)</span>
+                    <span class="s0">if </span><span class="s1">mode == </span><span class="s3">0</span><span class="s1">:</span>
+                        <span class="s1">term.erase_end_of_line()</span>
+                    <span class="s0">elif </span><span class="s1">mode == </span><span class="s3">1</span><span class="s1">:</span>
+                        <span class="s1">term.erase_start_of_line()</span>
+                    <span class="s0">elif </span><span class="s1">mode == </span><span class="s3">2</span><span class="s1">:</span>
+                        <span class="s1">term.erase_line()</span>
+                <span class="s0">elif </span><span class="s1">control_type == ControlType.SET_WINDOW_TITLE:</span>
+                    <span class="s1">_</span><span class="s0">, </span><span class="s1">title = cast(Tuple[ControlType</span><span class="s0">, </span><span class="s1">str]</span><span class="s0">, </span><span class="s1">control_code)</span>
+                    <span class="s1">term.set_title(title)</span>
+</pre>
+</body>
+</html>

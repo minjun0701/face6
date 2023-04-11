@@ -1,0 +1,68 @@
+<html>
+<head>
+<title>train_from_scratch.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #808080;}
+.s3 { color: #6a8759;}
+.s4 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+train_from_scratch.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">uuid   </span><span class="s2"># Unique identifier</span>
+<span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">time</span>
+<span class="s0">import </span><span class="s1">cv2</span>
+
+<span class="s1">IMAGES_PATH = </span><span class="s3">'C:</span><span class="s0">\\</span><span class="s3">Users</span><span class="s0">\\</span><span class="s3">82108</span><span class="s0">\\</span><span class="s3">PycharmProjects</span><span class="s0">\\</span><span class="s3">face6</span><span class="s0">\\</span><span class="s3">venv</span><span class="s0">\\</span><span class="s3">yolov5</span><span class="s0">\\</span><span class="s3">data</span><span class="s0">\\</span><span class="s3">images'</span>
+<span class="s1">labels = [</span><span class="s3">'awake'</span><span class="s0">, </span><span class="s3">'drowsy'</span><span class="s1">]</span>
+<span class="s1">number_imgs = </span><span class="s4">20</span>
+
+<span class="s1">cap = cv2.VideoCapture(</span><span class="s4">0</span><span class="s1">)</span>
+<span class="s2"># Loop through labels</span>
+<span class="s0">for </span><span class="s1">label </span><span class="s0">in </span><span class="s1">labels:</span>
+    <span class="s1">print(</span><span class="s3">'Collecting images for {}'</span><span class="s1">.format(label))</span>
+    <span class="s1">time.sleep(</span><span class="s4">5</span><span class="s1">)</span>
+
+    <span class="s2"># Loop through image range</span>
+    <span class="s0">for </span><span class="s1">img_num </span><span class="s0">in </span><span class="s1">range(number_imgs):</span>
+        <span class="s1">print(</span><span class="s3">'Collecting images for {}, image number {}'</span><span class="s1">.format(label</span><span class="s0">, </span><span class="s1">img_num))</span>
+
+        <span class="s2"># Webcam feed</span>
+        <span class="s1">ret</span><span class="s0">, </span><span class="s1">frame = cap.read()</span>
+
+        <span class="s2"># Naming out image path</span>
+        <span class="s1">imgname = os.path.join(IMAGES_PATH</span><span class="s0">, </span><span class="s1">label + </span><span class="s3">'.' </span><span class="s1">+ str(uuid.uuid1()) + </span><span class="s3">'.jpg'</span><span class="s1">)</span>
+
+        <span class="s2"># Writes out image to file</span>
+        <span class="s1">cv2.imwrite(imgname</span><span class="s0">, </span><span class="s1">frame)</span>
+
+        <span class="s2"># Render to the screen</span>
+        <span class="s1">cv2.imshow(</span><span class="s3">'Image Collection'</span><span class="s0">, </span><span class="s1">frame)</span>
+
+        <span class="s2"># 2 second delay between captures</span>
+        <span class="s1">time.sleep(</span><span class="s4">1</span><span class="s1">)</span>
+
+        <span class="s0">if </span><span class="s1">cv2.waitKey(</span><span class="s4">10</span><span class="s1">) &amp; </span><span class="s4">0xFF </span><span class="s1">== ord(</span><span class="s3">'q'</span><span class="s1">):</span>
+            <span class="s0">break</span>
+<span class="s1">cap.release()</span>
+<span class="s1">cv2.destroyAllWindows()</span>
+
+<span class="s1">print(os.path.join(IMAGES_PATH</span><span class="s0">, </span><span class="s1">labels[</span><span class="s4">0</span><span class="s1">]+</span><span class="s3">'.'</span><span class="s1">+str(uuid.uuid1())+</span><span class="s3">'.jpg'</span><span class="s1">))</span>
+
+<span class="s0">for </span><span class="s1">label </span><span class="s0">in </span><span class="s1">labels:</span>
+    <span class="s1">print(</span><span class="s3">'Collecting images for {}'</span><span class="s1">.format(label))</span>
+    <span class="s0">for </span><span class="s1">img_num </span><span class="s0">in </span><span class="s1">range(number_imgs):</span>
+        <span class="s1">print(</span><span class="s3">'Collecting images for {}, image number {}'</span><span class="s1">.format(label</span><span class="s0">, </span><span class="s1">img_num))</span>
+        <span class="s1">imgname = os.path.join(IMAGES_PATH</span><span class="s0">, </span><span class="s1">label+</span><span class="s3">'.'</span><span class="s1">+str(uuid.uuid1())+</span><span class="s3">'.jpg'</span><span class="s1">)</span>
+        <span class="s1">print(imgname)</span>
+</pre>
+</body>
+</html>

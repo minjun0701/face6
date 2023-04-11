@@ -1,0 +1,96 @@
+<html>
+<head>
+<title>remote.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #6a8759;}
+.s3 { color: #808080;}
+.s4 { color: #629755; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+remote.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">os</span>
+
+<span class="s0">from </span><span class="s1">git.util </span><span class="s0">import </span><span class="s1">join_path</span>
+
+<span class="s0">from </span><span class="s1">.head </span><span class="s0">import </span><span class="s1">Head</span>
+
+
+<span class="s1">__all__ = [</span><span class="s2">&quot;RemoteReference&quot;</span><span class="s1">]</span>
+
+<span class="s3"># typing ------------------------------------------------------------------</span>
+
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span><span class="s0">, </span><span class="s1">Iterator</span><span class="s0">, </span><span class="s1">NoReturn</span><span class="s0">, </span><span class="s1">Union</span><span class="s0">, </span><span class="s1">TYPE_CHECKING</span>
+<span class="s0">from </span><span class="s1">git.types </span><span class="s0">import </span><span class="s1">PathLike</span>
+
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s0">from </span><span class="s1">git.repo </span><span class="s0">import </span><span class="s1">Repo</span>
+    <span class="s0">from </span><span class="s1">git </span><span class="s0">import </span><span class="s1">Remote</span>
+
+<span class="s3"># ------------------------------------------------------------------------------</span>
+
+
+<span class="s0">class </span><span class="s1">RemoteReference(Head):</span>
+
+    <span class="s4">&quot;&quot;&quot;Represents a reference pointing to a remote head.&quot;&quot;&quot;</span>
+
+    <span class="s1">_common_path_default = Head._remote_common_path_default</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">iter_items(</span>
+        <span class="s1">cls</span><span class="s0">,</span>
+        <span class="s1">repo: </span><span class="s2">&quot;Repo&quot;</span><span class="s0">,</span>
+        <span class="s1">common_path: Union[PathLike</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None,</span>
+        <span class="s1">remote: Union[</span><span class="s2">&quot;Remote&quot;</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None,</span>
+        <span class="s1">*args: Any</span><span class="s0">,</span>
+        <span class="s1">**kwargs: Any</span><span class="s0">,</span>
+    <span class="s1">) -&gt; Iterator[</span><span class="s2">&quot;RemoteReference&quot;</span><span class="s1">]:</span>
+        <span class="s4">&quot;&quot;&quot;Iterate remote references, and if given, constrain them to the given remote&quot;&quot;&quot;</span>
+        <span class="s1">common_path = common_path </span><span class="s0">or </span><span class="s1">cls._common_path_default</span>
+        <span class="s0">if </span><span class="s1">remote </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">common_path = join_path(common_path</span><span class="s0">, </span><span class="s1">str(remote))</span>
+        <span class="s3"># END handle remote constraint</span>
+        <span class="s3"># super is Reference</span>
+        <span class="s0">return </span><span class="s1">super(RemoteReference</span><span class="s0">, </span><span class="s1">cls).iter_items(repo</span><span class="s0">, </span><span class="s1">common_path)</span>
+
+    <span class="s3"># The Head implementation of delete also accepts strs, but this</span>
+    <span class="s3"># implementation does not.  mypy doesn't have a way of representing</span>
+    <span class="s3"># tightening the types of arguments in subclasses and recommends Any or</span>
+    <span class="s3"># &quot;type: ignore&quot;.  (See https://github.com/python/typing/issues/241)</span>
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">delete(cls</span><span class="s0">, </span><span class="s1">repo: </span><span class="s2">&quot;Repo&quot;</span><span class="s0">, </span><span class="s1">*refs: </span><span class="s2">&quot;RemoteReference&quot;</span><span class="s0">, </span><span class="s1">**kwargs: Any) -&gt; </span><span class="s0">None</span><span class="s1">:  </span><span class="s3"># type: ignore</span>
+        <span class="s4">&quot;&quot;&quot;Delete the given remote references 
+ 
+        :note: 
+            kwargs are given for comparability with the base class method as we 
+            should not narrow the signature.&quot;&quot;&quot;</span>
+        <span class="s1">repo.git.branch(</span><span class="s2">&quot;-d&quot;</span><span class="s0">, </span><span class="s2">&quot;-r&quot;</span><span class="s0">, </span><span class="s1">*refs)</span>
+        <span class="s3"># the official deletion method will ignore remote symbolic refs - these</span>
+        <span class="s3"># are generally ignored in the refs/ folder. We don't though</span>
+        <span class="s3"># and delete remainders manually</span>
+        <span class="s0">for </span><span class="s1">ref </span><span class="s0">in </span><span class="s1">refs:</span>
+            <span class="s0">try</span><span class="s1">:</span>
+                <span class="s1">os.remove(os.path.join(repo.common_dir</span><span class="s0">, </span><span class="s1">ref.path))</span>
+            <span class="s0">except </span><span class="s1">OSError:</span>
+                <span class="s0">pass</span>
+            <span class="s0">try</span><span class="s1">:</span>
+                <span class="s1">os.remove(os.path.join(repo.git_dir</span><span class="s0">, </span><span class="s1">ref.path))</span>
+            <span class="s0">except </span><span class="s1">OSError:</span>
+                <span class="s0">pass</span>
+        <span class="s3"># END for each ref</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">create(cls</span><span class="s0">, </span><span class="s1">*args: Any</span><span class="s0">, </span><span class="s1">**kwargs: Any) -&gt; NoReturn:</span>
+        <span class="s4">&quot;&quot;&quot;Used to disable this method&quot;&quot;&quot;</span>
+        <span class="s0">raise </span><span class="s1">TypeError(</span><span class="s2">&quot;Cannot explicitly create remote references&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

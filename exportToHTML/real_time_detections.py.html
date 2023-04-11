@@ -1,0 +1,40 @@
+<html>
+<head>
+<title>real_time_detections.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #6a8759;}
+.s3 { color: #6897bb;}
+.s4 { color: #808080;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+real_time_detections.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">torch</span>
+<span class="s0">from </span><span class="s1">matplotlib </span><span class="s0">import </span><span class="s1">pyplot </span><span class="s0">as </span><span class="s1">plt</span>
+<span class="s0">import </span><span class="s1">numpy </span><span class="s0">as </span><span class="s1">np</span>
+<span class="s0">import </span><span class="s1">cv2</span>
+
+<span class="s1">model = torch.hub.load(</span><span class="s2">'ultralytics/yolov5'</span><span class="s0">, </span><span class="s2">'yolov5s'</span><span class="s1">)</span>
+
+<span class="s1">cap = cv2.VideoCapture(</span><span class="s3">0</span><span class="s1">)</span>
+<span class="s0">while </span><span class="s1">cap.isOpened():</span>
+    <span class="s1">ret</span><span class="s0">, </span><span class="s1">frame = cap.read()</span>
+
+    <span class="s4"># Make detections</span>
+    <span class="s1">results = model(frame)</span>
+
+    <span class="s1">cv2.imshow(</span><span class="s2">'YOLO'</span><span class="s0">, </span><span class="s1">np.squeeze(results.render()))</span>
+
+    <span class="s0">if </span><span class="s1">cv2.waitKey(</span><span class="s3">10</span><span class="s1">) &amp; </span><span class="s3">0xFF </span><span class="s1">== ord(</span><span class="s2">'q'</span><span class="s1">):</span>
+        <span class="s0">break</span>
+<span class="s1">cap.release()</span>
+<span class="s1">cv2.destroyAllWindows()</span></pre>
+</body>
+</html>

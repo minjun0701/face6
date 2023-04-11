@@ -1,0 +1,96 @@
+<html>
+<head>
+<title>Hdf5StubImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #629755; font-style: italic;}
+.s4 { color: #6897bb;}
+.s5 { color: #a5c261;}
+.s6 { color: #6a8759;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+Hdf5StubImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># HDF5 stub adapter</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 2000-2003 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span>
+
+<span class="s1">_handler = </span><span class="s2">None</span>
+
+
+<span class="s2">def </span><span class="s1">register_handler(handler):</span>
+    <span class="s3">&quot;&quot;&quot; 
+    Install application-specific HDF5 image handler. 
+ 
+    :param handler: Handler object. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">global </span><span class="s1">_handler</span>
+    <span class="s1">_handler = handler</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Image adapter</span>
+
+
+<span class="s2">def </span><span class="s1">_accept(prefix):</span>
+    <span class="s2">return </span><span class="s1">prefix[:</span><span class="s4">8</span><span class="s1">] == </span><span class="s5">b&quot;</span><span class="s2">\x89</span><span class="s5">HDF</span><span class="s2">\r\n\x1a\n</span><span class="s5">&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">HDF5StubImageFile(ImageFile.StubImageFile):</span>
+
+    <span class="s1">format = </span><span class="s6">&quot;HDF5&quot;</span>
+    <span class="s1">format_description = </span><span class="s6">&quot;HDF5&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+
+        <span class="s1">offset = self.fp.tell()</span>
+
+        <span class="s2">if not </span><span class="s1">_accept(self.fp.read(</span><span class="s4">8</span><span class="s1">)):</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s6">&quot;Not an HDF file&quot;</span><span class="s1">)</span>
+
+        <span class="s1">self.fp.seek(offset)</span>
+
+        <span class="s0"># make something up</span>
+        <span class="s1">self.mode = </span><span class="s6">&quot;F&quot;</span>
+        <span class="s1">self._size = </span><span class="s4">1</span><span class="s2">, </span><span class="s4">1</span>
+
+        <span class="s1">loader = self._load()</span>
+        <span class="s2">if </span><span class="s1">loader:</span>
+            <span class="s1">loader.open(self)</span>
+
+    <span class="s2">def </span><span class="s1">_load(self):</span>
+        <span class="s2">return </span><span class="s1">_handler</span>
+
+
+<span class="s2">def </span><span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename):</span>
+    <span class="s2">if </span><span class="s1">_handler </span><span class="s2">is None or not </span><span class="s1">hasattr(_handler</span><span class="s2">, </span><span class="s6">&quot;save&quot;</span><span class="s1">):</span>
+        <span class="s2">raise </span><span class="s1">OSError(</span><span class="s6">&quot;HDF5 save handler not installed&quot;</span><span class="s1">)</span>
+    <span class="s1">_handler.save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename)</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Registry</span>
+
+<span class="s1">Image.register_open(HDF5StubImageFile.format</span><span class="s2">, </span><span class="s1">HDF5StubImageFile</span><span class="s2">, </span><span class="s1">_accept)</span>
+<span class="s1">Image.register_save(HDF5StubImageFile.format</span><span class="s2">, </span><span class="s1">_save)</span>
+
+<span class="s1">Image.register_extensions(HDF5StubImageFile.format</span><span class="s2">, </span><span class="s1">[</span><span class="s6">&quot;.h5&quot;</span><span class="s2">, </span><span class="s6">&quot;.hdf&quot;</span><span class="s1">])</span>
+</pre>
+</body>
+</html>

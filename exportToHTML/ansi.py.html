@@ -1,0 +1,259 @@
+<html>
+<head>
+<title>ansi.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #6a8759;}
+.s3 { color: #629755; font-style: italic;}
+.s4 { color: #6897bb;}
+.s5 { color: #808080;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ansi.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">re</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">from </span><span class="s1">contextlib </span><span class="s0">import </span><span class="s1">suppress</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Iterable</span><span class="s0">, </span><span class="s1">NamedTuple</span><span class="s0">, </span><span class="s1">Optional</span>
+
+<span class="s0">from </span><span class="s1">.color </span><span class="s0">import </span><span class="s1">Color</span>
+<span class="s0">from </span><span class="s1">.style </span><span class="s0">import </span><span class="s1">Style</span>
+<span class="s0">from </span><span class="s1">.text </span><span class="s0">import </span><span class="s1">Text</span>
+
+<span class="s1">re_ansi = re.compile(</span>
+    <span class="s2">r&quot;&quot;&quot; 
+(?:\x1b\](.*?)\x1b\\)| 
+(?:\x1b([(@-Z\\-_]|\[[0-?]*[ -/]*[@-~])) 
+&quot;&quot;&quot;</span><span class="s0">,</span>
+    <span class="s1">re.VERBOSE</span><span class="s0">,</span>
+<span class="s1">)</span>
+
+
+<span class="s0">class </span><span class="s1">_AnsiToken(NamedTuple):</span>
+    <span class="s3">&quot;&quot;&quot;Result of ansi tokenized string.&quot;&quot;&quot;</span>
+
+    <span class="s1">plain: str = </span><span class="s2">&quot;&quot;</span>
+    <span class="s1">sgr: Optional[str] = </span><span class="s2">&quot;&quot;</span>
+    <span class="s1">osc: Optional[str] = </span><span class="s2">&quot;&quot;</span>
+
+
+<span class="s0">def </span><span class="s1">_ansi_tokenize(ansi_text: str) -&gt; Iterable[_AnsiToken]:</span>
+    <span class="s3">&quot;&quot;&quot;Tokenize a string in to plain text and ANSI codes. 
+ 
+    Args: 
+        ansi_text (str): A String containing ANSI codes. 
+ 
+    Yields: 
+        AnsiToken: A named tuple of (plain, sgr, osc) 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">position = </span><span class="s4">0</span>
+    <span class="s1">sgr: Optional[str]</span>
+    <span class="s1">osc: Optional[str]</span>
+    <span class="s0">for </span><span class="s1">match </span><span class="s0">in </span><span class="s1">re_ansi.finditer(ansi_text):</span>
+        <span class="s1">start</span><span class="s0">, </span><span class="s1">end = match.span(</span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s1">osc</span><span class="s0">, </span><span class="s1">sgr = match.groups()</span>
+        <span class="s0">if </span><span class="s1">start &gt; position:</span>
+            <span class="s0">yield </span><span class="s1">_AnsiToken(ansi_text[position:start])</span>
+        <span class="s0">if </span><span class="s1">sgr:</span>
+            <span class="s0">if </span><span class="s1">sgr.endswith(</span><span class="s2">&quot;m&quot;</span><span class="s1">):</span>
+                <span class="s0">yield </span><span class="s1">_AnsiToken(</span><span class="s2">&quot;&quot;</span><span class="s0">, </span><span class="s1">sgr[</span><span class="s4">1</span><span class="s1">:-</span><span class="s4">1</span><span class="s1">]</span><span class="s0">, </span><span class="s1">osc)</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s0">yield </span><span class="s1">_AnsiToken(</span><span class="s2">&quot;&quot;</span><span class="s0">, </span><span class="s1">sgr</span><span class="s0">, </span><span class="s1">osc)</span>
+        <span class="s1">position = end</span>
+    <span class="s0">if </span><span class="s1">position &lt; len(ansi_text):</span>
+        <span class="s0">yield </span><span class="s1">_AnsiToken(ansi_text[position:])</span>
+
+
+<span class="s1">SGR_STYLE_MAP = {</span>
+    <span class="s4">1</span><span class="s1">: </span><span class="s2">&quot;bold&quot;</span><span class="s0">,</span>
+    <span class="s4">2</span><span class="s1">: </span><span class="s2">&quot;dim&quot;</span><span class="s0">,</span>
+    <span class="s4">3</span><span class="s1">: </span><span class="s2">&quot;italic&quot;</span><span class="s0">,</span>
+    <span class="s4">4</span><span class="s1">: </span><span class="s2">&quot;underline&quot;</span><span class="s0">,</span>
+    <span class="s4">5</span><span class="s1">: </span><span class="s2">&quot;blink&quot;</span><span class="s0">,</span>
+    <span class="s4">6</span><span class="s1">: </span><span class="s2">&quot;blink2&quot;</span><span class="s0">,</span>
+    <span class="s4">7</span><span class="s1">: </span><span class="s2">&quot;reverse&quot;</span><span class="s0">,</span>
+    <span class="s4">8</span><span class="s1">: </span><span class="s2">&quot;conceal&quot;</span><span class="s0">,</span>
+    <span class="s4">9</span><span class="s1">: </span><span class="s2">&quot;strike&quot;</span><span class="s0">,</span>
+    <span class="s4">21</span><span class="s1">: </span><span class="s2">&quot;underline2&quot;</span><span class="s0">,</span>
+    <span class="s4">22</span><span class="s1">: </span><span class="s2">&quot;not dim not bold&quot;</span><span class="s0">,</span>
+    <span class="s4">23</span><span class="s1">: </span><span class="s2">&quot;not italic&quot;</span><span class="s0">,</span>
+    <span class="s4">24</span><span class="s1">: </span><span class="s2">&quot;not underline&quot;</span><span class="s0">,</span>
+    <span class="s4">25</span><span class="s1">: </span><span class="s2">&quot;not blink&quot;</span><span class="s0">,</span>
+    <span class="s4">26</span><span class="s1">: </span><span class="s2">&quot;not blink2&quot;</span><span class="s0">,</span>
+    <span class="s4">27</span><span class="s1">: </span><span class="s2">&quot;not reverse&quot;</span><span class="s0">,</span>
+    <span class="s4">28</span><span class="s1">: </span><span class="s2">&quot;not conceal&quot;</span><span class="s0">,</span>
+    <span class="s4">29</span><span class="s1">: </span><span class="s2">&quot;not strike&quot;</span><span class="s0">,</span>
+    <span class="s4">30</span><span class="s1">: </span><span class="s2">&quot;color(0)&quot;</span><span class="s0">,</span>
+    <span class="s4">31</span><span class="s1">: </span><span class="s2">&quot;color(1)&quot;</span><span class="s0">,</span>
+    <span class="s4">32</span><span class="s1">: </span><span class="s2">&quot;color(2)&quot;</span><span class="s0">,</span>
+    <span class="s4">33</span><span class="s1">: </span><span class="s2">&quot;color(3)&quot;</span><span class="s0">,</span>
+    <span class="s4">34</span><span class="s1">: </span><span class="s2">&quot;color(4)&quot;</span><span class="s0">,</span>
+    <span class="s4">35</span><span class="s1">: </span><span class="s2">&quot;color(5)&quot;</span><span class="s0">,</span>
+    <span class="s4">36</span><span class="s1">: </span><span class="s2">&quot;color(6)&quot;</span><span class="s0">,</span>
+    <span class="s4">37</span><span class="s1">: </span><span class="s2">&quot;color(7)&quot;</span><span class="s0">,</span>
+    <span class="s4">39</span><span class="s1">: </span><span class="s2">&quot;default&quot;</span><span class="s0">,</span>
+    <span class="s4">40</span><span class="s1">: </span><span class="s2">&quot;on color(0)&quot;</span><span class="s0">,</span>
+    <span class="s4">41</span><span class="s1">: </span><span class="s2">&quot;on color(1)&quot;</span><span class="s0">,</span>
+    <span class="s4">42</span><span class="s1">: </span><span class="s2">&quot;on color(2)&quot;</span><span class="s0">,</span>
+    <span class="s4">43</span><span class="s1">: </span><span class="s2">&quot;on color(3)&quot;</span><span class="s0">,</span>
+    <span class="s4">44</span><span class="s1">: </span><span class="s2">&quot;on color(4)&quot;</span><span class="s0">,</span>
+    <span class="s4">45</span><span class="s1">: </span><span class="s2">&quot;on color(5)&quot;</span><span class="s0">,</span>
+    <span class="s4">46</span><span class="s1">: </span><span class="s2">&quot;on color(6)&quot;</span><span class="s0">,</span>
+    <span class="s4">47</span><span class="s1">: </span><span class="s2">&quot;on color(7)&quot;</span><span class="s0">,</span>
+    <span class="s4">49</span><span class="s1">: </span><span class="s2">&quot;on default&quot;</span><span class="s0">,</span>
+    <span class="s4">51</span><span class="s1">: </span><span class="s2">&quot;frame&quot;</span><span class="s0">,</span>
+    <span class="s4">52</span><span class="s1">: </span><span class="s2">&quot;encircle&quot;</span><span class="s0">,</span>
+    <span class="s4">53</span><span class="s1">: </span><span class="s2">&quot;overline&quot;</span><span class="s0">,</span>
+    <span class="s4">54</span><span class="s1">: </span><span class="s2">&quot;not frame not encircle&quot;</span><span class="s0">,</span>
+    <span class="s4">55</span><span class="s1">: </span><span class="s2">&quot;not overline&quot;</span><span class="s0">,</span>
+    <span class="s4">90</span><span class="s1">: </span><span class="s2">&quot;color(8)&quot;</span><span class="s0">,</span>
+    <span class="s4">91</span><span class="s1">: </span><span class="s2">&quot;color(9)&quot;</span><span class="s0">,</span>
+    <span class="s4">92</span><span class="s1">: </span><span class="s2">&quot;color(10)&quot;</span><span class="s0">,</span>
+    <span class="s4">93</span><span class="s1">: </span><span class="s2">&quot;color(11)&quot;</span><span class="s0">,</span>
+    <span class="s4">94</span><span class="s1">: </span><span class="s2">&quot;color(12)&quot;</span><span class="s0">,</span>
+    <span class="s4">95</span><span class="s1">: </span><span class="s2">&quot;color(13)&quot;</span><span class="s0">,</span>
+    <span class="s4">96</span><span class="s1">: </span><span class="s2">&quot;color(14)&quot;</span><span class="s0">,</span>
+    <span class="s4">97</span><span class="s1">: </span><span class="s2">&quot;color(15)&quot;</span><span class="s0">,</span>
+    <span class="s4">100</span><span class="s1">: </span><span class="s2">&quot;on color(8)&quot;</span><span class="s0">,</span>
+    <span class="s4">101</span><span class="s1">: </span><span class="s2">&quot;on color(9)&quot;</span><span class="s0">,</span>
+    <span class="s4">102</span><span class="s1">: </span><span class="s2">&quot;on color(10)&quot;</span><span class="s0">,</span>
+    <span class="s4">103</span><span class="s1">: </span><span class="s2">&quot;on color(11)&quot;</span><span class="s0">,</span>
+    <span class="s4">104</span><span class="s1">: </span><span class="s2">&quot;on color(12)&quot;</span><span class="s0">,</span>
+    <span class="s4">105</span><span class="s1">: </span><span class="s2">&quot;on color(13)&quot;</span><span class="s0">,</span>
+    <span class="s4">106</span><span class="s1">: </span><span class="s2">&quot;on color(14)&quot;</span><span class="s0">,</span>
+    <span class="s4">107</span><span class="s1">: </span><span class="s2">&quot;on color(15)&quot;</span><span class="s0">,</span>
+<span class="s1">}</span>
+
+
+<span class="s0">class </span><span class="s1">AnsiDecoder:</span>
+    <span class="s3">&quot;&quot;&quot;Translate ANSI code in to styled Text.&quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__(self) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">self.style = Style.null()</span>
+
+    <span class="s0">def </span><span class="s1">decode(self</span><span class="s0">, </span><span class="s1">terminal_text: str) -&gt; Iterable[Text]:</span>
+        <span class="s3">&quot;&quot;&quot;Decode ANSI codes in an iterable of lines. 
+ 
+        Args: 
+            lines (Iterable[str]): An iterable of lines of terminal output. 
+ 
+        Yields: 
+            Text: Marked up Text. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">for </span><span class="s1">line </span><span class="s0">in </span><span class="s1">terminal_text.splitlines():</span>
+            <span class="s0">yield </span><span class="s1">self.decode_line(line)</span>
+
+    <span class="s0">def </span><span class="s1">decode_line(self</span><span class="s0">, </span><span class="s1">line: str) -&gt; Text:</span>
+        <span class="s3">&quot;&quot;&quot;Decode a line containing ansi codes. 
+ 
+        Args: 
+            line (str): A line of terminal output. 
+ 
+        Returns: 
+            Text: A Text instance marked up according to ansi codes. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">from_ansi = Color.from_ansi</span>
+        <span class="s1">from_rgb = Color.from_rgb</span>
+        <span class="s1">_Style = Style</span>
+        <span class="s1">text = Text()</span>
+        <span class="s1">append = text.append</span>
+        <span class="s1">line = line.rsplit(</span><span class="s2">&quot;</span><span class="s0">\r</span><span class="s2">&quot;</span><span class="s0">, </span><span class="s4">1</span><span class="s1">)[-</span><span class="s4">1</span><span class="s1">]</span>
+        <span class="s0">for </span><span class="s1">plain_text</span><span class="s0">, </span><span class="s1">sgr</span><span class="s0">, </span><span class="s1">osc </span><span class="s0">in </span><span class="s1">_ansi_tokenize(line):</span>
+            <span class="s0">if </span><span class="s1">plain_text:</span>
+                <span class="s1">append(plain_text</span><span class="s0">, </span><span class="s1">self.style </span><span class="s0">or None</span><span class="s1">)</span>
+            <span class="s0">elif </span><span class="s1">osc </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s0">if </span><span class="s1">osc.startswith(</span><span class="s2">&quot;8;&quot;</span><span class="s1">):</span>
+                    <span class="s1">_params</span><span class="s0">, </span><span class="s1">semicolon</span><span class="s0">, </span><span class="s1">link = osc[</span><span class="s4">2</span><span class="s1">:].partition(</span><span class="s2">&quot;;&quot;</span><span class="s1">)</span>
+                    <span class="s0">if </span><span class="s1">semicolon:</span>
+                        <span class="s1">self.style = self.style.update_link(link </span><span class="s0">or None</span><span class="s1">)</span>
+            <span class="s0">elif </span><span class="s1">sgr </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s5"># Translate in to semi-colon separated codes</span>
+                <span class="s5"># Ignore invalid codes, because we want to be lenient</span>
+                <span class="s1">codes = [</span>
+                    <span class="s1">min(</span><span class="s4">255</span><span class="s0">, </span><span class="s1">int(_code) </span><span class="s0">if </span><span class="s1">_code </span><span class="s0">else </span><span class="s4">0</span><span class="s1">)</span>
+                    <span class="s0">for </span><span class="s1">_code </span><span class="s0">in </span><span class="s1">sgr.split(</span><span class="s2">&quot;;&quot;</span><span class="s1">)</span>
+                    <span class="s0">if </span><span class="s1">_code.isdigit() </span><span class="s0">or </span><span class="s1">_code == </span><span class="s2">&quot;&quot;</span>
+                <span class="s1">]</span>
+                <span class="s1">iter_codes = iter(codes)</span>
+                <span class="s0">for </span><span class="s1">code </span><span class="s0">in </span><span class="s1">iter_codes:</span>
+                    <span class="s0">if </span><span class="s1">code == </span><span class="s4">0</span><span class="s1">:</span>
+                        <span class="s5"># reset</span>
+                        <span class="s1">self.style = _Style.null()</span>
+                    <span class="s0">elif </span><span class="s1">code </span><span class="s0">in </span><span class="s1">SGR_STYLE_MAP:</span>
+                        <span class="s5"># styles</span>
+                        <span class="s1">self.style += _Style.parse(SGR_STYLE_MAP[code])</span>
+                    <span class="s0">elif </span><span class="s1">code == </span><span class="s4">38</span><span class="s1">:</span>
+                        <span class="s5">#  Foreground</span>
+                        <span class="s0">with </span><span class="s1">suppress(StopIteration):</span>
+                            <span class="s1">color_type = next(iter_codes)</span>
+                            <span class="s0">if </span><span class="s1">color_type == </span><span class="s4">5</span><span class="s1">:</span>
+                                <span class="s1">self.style += _Style.from_color(</span>
+                                    <span class="s1">from_ansi(next(iter_codes))</span>
+                                <span class="s1">)</span>
+                            <span class="s0">elif </span><span class="s1">color_type == </span><span class="s4">2</span><span class="s1">:</span>
+                                <span class="s1">self.style += _Style.from_color(</span>
+                                    <span class="s1">from_rgb(</span>
+                                        <span class="s1">next(iter_codes)</span><span class="s0">,</span>
+                                        <span class="s1">next(iter_codes)</span><span class="s0">,</span>
+                                        <span class="s1">next(iter_codes)</span><span class="s0">,</span>
+                                    <span class="s1">)</span>
+                                <span class="s1">)</span>
+                    <span class="s0">elif </span><span class="s1">code == </span><span class="s4">48</span><span class="s1">:</span>
+                        <span class="s5"># Background</span>
+                        <span class="s0">with </span><span class="s1">suppress(StopIteration):</span>
+                            <span class="s1">color_type = next(iter_codes)</span>
+                            <span class="s0">if </span><span class="s1">color_type == </span><span class="s4">5</span><span class="s1">:</span>
+                                <span class="s1">self.style += _Style.from_color(</span>
+                                    <span class="s0">None, </span><span class="s1">from_ansi(next(iter_codes))</span>
+                                <span class="s1">)</span>
+                            <span class="s0">elif </span><span class="s1">color_type == </span><span class="s4">2</span><span class="s1">:</span>
+                                <span class="s1">self.style += _Style.from_color(</span>
+                                    <span class="s0">None,</span>
+                                    <span class="s1">from_rgb(</span>
+                                        <span class="s1">next(iter_codes)</span><span class="s0">,</span>
+                                        <span class="s1">next(iter_codes)</span><span class="s0">,</span>
+                                        <span class="s1">next(iter_codes)</span><span class="s0">,</span>
+                                    <span class="s1">)</span><span class="s0">,</span>
+                                <span class="s1">)</span>
+
+        <span class="s0">return </span><span class="s1">text</span>
+
+
+<span class="s0">if </span><span class="s1">sys.platform != </span><span class="s2">&quot;win32&quot; </span><span class="s0">and </span><span class="s1">__name__ == </span><span class="s2">&quot;__main__&quot;</span><span class="s1">:  </span><span class="s5"># pragma: no cover</span>
+    <span class="s0">import </span><span class="s1">io</span>
+    <span class="s0">import </span><span class="s1">os</span>
+    <span class="s0">import </span><span class="s1">pty</span>
+    <span class="s0">import </span><span class="s1">sys</span>
+
+    <span class="s1">decoder = AnsiDecoder()</span>
+
+    <span class="s1">stdout = io.BytesIO()</span>
+
+    <span class="s0">def </span><span class="s1">read(fd: int) -&gt; bytes:</span>
+        <span class="s1">data = os.read(fd</span><span class="s0">, </span><span class="s4">1024</span><span class="s1">)</span>
+        <span class="s1">stdout.write(data)</span>
+        <span class="s0">return </span><span class="s1">data</span>
+
+    <span class="s1">pty.spawn(sys.argv[</span><span class="s4">1</span><span class="s1">:]</span><span class="s0">, </span><span class="s1">read)</span>
+
+    <span class="s0">from </span><span class="s1">.console </span><span class="s0">import </span><span class="s1">Console</span>
+
+    <span class="s1">console = Console(record=</span><span class="s0">True</span><span class="s1">)</span>
+
+    <span class="s1">stdout_result = stdout.getvalue().decode(</span><span class="s2">&quot;utf-8&quot;</span><span class="s1">)</span>
+    <span class="s1">print(stdout_result)</span>
+
+    <span class="s0">for </span><span class="s1">line </span><span class="s0">in </span><span class="s1">decoder.decode(stdout_result):</span>
+        <span class="s1">console.print(line)</span>
+
+    <span class="s1">console.save_html(</span><span class="s2">&quot;stdout.html&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

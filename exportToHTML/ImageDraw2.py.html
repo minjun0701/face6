@@ -1,0 +1,231 @@
+<html>
+<head>
+<title>ImageDraw2.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #629755; font-style: italic;}
+.s3 { color: #cc7832;}
+.s4 { color: #6897bb;}
+.s5 { color: #6a8759;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageDraw2.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># WCK-style drawing interface operations</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 2003-12-07 fl   created</span>
+<span class="s0"># 2005-05-15 fl   updated; added to PIL as ImageDraw2</span>
+<span class="s0"># 2005-05-15 fl   added text support</span>
+<span class="s0"># 2005-05-20 fl   added arc/chord/pieslice support</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 2003-2005 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 2003-2005 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+
+<span class="s2">&quot;&quot;&quot; 
+(Experimental) WCK-style drawing interface operations 
+ 
+.. seealso:: :py:mod:`PIL.ImageDraw` 
+&quot;&quot;&quot;</span>
+
+
+<span class="s3">import </span><span class="s1">warnings</span>
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImageColor</span><span class="s3">, </span><span class="s1">ImageDraw</span><span class="s3">, </span><span class="s1">ImageFont</span><span class="s3">, </span><span class="s1">ImagePath</span>
+<span class="s3">from </span><span class="s1">._deprecate </span><span class="s3">import </span><span class="s1">deprecate</span>
+
+
+<span class="s3">class </span><span class="s1">Pen:</span>
+    <span class="s2">&quot;&quot;&quot;Stores an outline color and width.&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">color</span><span class="s3">, </span><span class="s1">width=</span><span class="s4">1</span><span class="s3">, </span><span class="s1">opacity=</span><span class="s4">255</span><span class="s1">):</span>
+        <span class="s1">self.color = ImageColor.getrgb(color)</span>
+        <span class="s1">self.width = width</span>
+
+
+<span class="s3">class </span><span class="s1">Brush:</span>
+    <span class="s2">&quot;&quot;&quot;Stores a fill color&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">color</span><span class="s3">, </span><span class="s1">opacity=</span><span class="s4">255</span><span class="s1">):</span>
+        <span class="s1">self.color = ImageColor.getrgb(color)</span>
+
+
+<span class="s3">class </span><span class="s1">Font:</span>
+    <span class="s2">&quot;&quot;&quot;Stores a TrueType font and color&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">color</span><span class="s3">, </span><span class="s1">file</span><span class="s3">, </span><span class="s1">size=</span><span class="s4">12</span><span class="s1">):</span>
+        <span class="s0"># FIXME: add support for bitmap fonts</span>
+        <span class="s1">self.color = ImageColor.getrgb(color)</span>
+        <span class="s1">self.font = ImageFont.truetype(file</span><span class="s3">, </span><span class="s1">size)</span>
+
+
+<span class="s3">class </span><span class="s1">Draw:</span>
+    <span class="s2">&quot;&quot;&quot; 
+    (Experimental) WCK-style drawing interface 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">, </span><span class="s1">size=</span><span class="s3">None, </span><span class="s1">color=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s3">if not </span><span class="s1">hasattr(image</span><span class="s3">, </span><span class="s5">&quot;im&quot;</span><span class="s1">):</span>
+            <span class="s1">image = Image.new(image</span><span class="s3">, </span><span class="s1">size</span><span class="s3">, </span><span class="s1">color)</span>
+        <span class="s1">self.draw = ImageDraw.Draw(image)</span>
+        <span class="s1">self.image = image</span>
+        <span class="s1">self.transform = </span><span class="s3">None</span>
+
+    <span class="s3">def </span><span class="s1">flush(self):</span>
+        <span class="s3">return </span><span class="s1">self.image</span>
+
+    <span class="s3">def </span><span class="s1">render(self</span><span class="s3">, </span><span class="s1">op</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">pen</span><span class="s3">, </span><span class="s1">brush=</span><span class="s3">None</span><span class="s1">):</span>
+        <span class="s0"># handle color arguments</span>
+        <span class="s1">outline = fill = </span><span class="s3">None</span>
+        <span class="s1">width = </span><span class="s4">1</span>
+        <span class="s3">if </span><span class="s1">isinstance(pen</span><span class="s3">, </span><span class="s1">Pen):</span>
+            <span class="s1">outline = pen.color</span>
+            <span class="s1">width = pen.width</span>
+        <span class="s3">elif </span><span class="s1">isinstance(brush</span><span class="s3">, </span><span class="s1">Pen):</span>
+            <span class="s1">outline = brush.color</span>
+            <span class="s1">width = brush.width</span>
+        <span class="s3">if </span><span class="s1">isinstance(brush</span><span class="s3">, </span><span class="s1">Brush):</span>
+            <span class="s1">fill = brush.color</span>
+        <span class="s3">elif </span><span class="s1">isinstance(pen</span><span class="s3">, </span><span class="s1">Brush):</span>
+            <span class="s1">fill = pen.color</span>
+        <span class="s0"># handle transformation</span>
+        <span class="s3">if </span><span class="s1">self.transform:</span>
+            <span class="s1">xy = ImagePath.Path(xy)</span>
+            <span class="s1">xy.transform(self.transform)</span>
+        <span class="s0"># render the item</span>
+        <span class="s3">if </span><span class="s1">op == </span><span class="s5">&quot;line&quot;</span><span class="s1">:</span>
+            <span class="s1">self.draw.line(xy</span><span class="s3">, </span><span class="s1">fill=outline</span><span class="s3">, </span><span class="s1">width=width)</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">getattr(self.draw</span><span class="s3">, </span><span class="s1">op)(xy</span><span class="s3">, </span><span class="s1">fill=fill</span><span class="s3">, </span><span class="s1">outline=outline)</span>
+
+    <span class="s3">def </span><span class="s1">settransform(self</span><span class="s3">, </span><span class="s1">offset):</span>
+        <span class="s2">&quot;&quot;&quot;Sets a transformation offset.&quot;&quot;&quot;</span>
+        <span class="s1">(xoffset</span><span class="s3">, </span><span class="s1">yoffset) = offset</span>
+        <span class="s1">self.transform = (</span><span class="s4">1</span><span class="s3">, </span><span class="s4">0</span><span class="s3">, </span><span class="s1">xoffset</span><span class="s3">, </span><span class="s4">0</span><span class="s3">, </span><span class="s4">1</span><span class="s3">, </span><span class="s1">yoffset)</span>
+
+    <span class="s3">def </span><span class="s1">arc(self</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">start</span><span class="s3">, </span><span class="s1">end</span><span class="s3">, </span><span class="s1">*options):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Draws an arc (a portion of a circle outline) between the start and end 
+        angles, inside the given bounding box. 
+ 
+        .. seealso:: :py:meth:`PIL.ImageDraw.ImageDraw.arc` 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.render(</span><span class="s5">&quot;arc&quot;</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">start</span><span class="s3">, </span><span class="s1">end</span><span class="s3">, </span><span class="s1">*options)</span>
+
+    <span class="s3">def </span><span class="s1">chord(self</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">start</span><span class="s3">, </span><span class="s1">end</span><span class="s3">, </span><span class="s1">*options):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Same as :py:meth:`~PIL.ImageDraw2.Draw.arc`, but connects the end points 
+        with a straight line. 
+ 
+        .. seealso:: :py:meth:`PIL.ImageDraw.ImageDraw.chord` 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.render(</span><span class="s5">&quot;chord&quot;</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">start</span><span class="s3">, </span><span class="s1">end</span><span class="s3">, </span><span class="s1">*options)</span>
+
+    <span class="s3">def </span><span class="s1">ellipse(self</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">*options):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Draws an ellipse inside the given bounding box. 
+ 
+        .. seealso:: :py:meth:`PIL.ImageDraw.ImageDraw.ellipse` 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.render(</span><span class="s5">&quot;ellipse&quot;</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">*options)</span>
+
+    <span class="s3">def </span><span class="s1">line(self</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">*options):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Draws a line between the coordinates in the ``xy`` list. 
+ 
+        .. seealso:: :py:meth:`PIL.ImageDraw.ImageDraw.line` 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.render(</span><span class="s5">&quot;line&quot;</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">*options)</span>
+
+    <span class="s3">def </span><span class="s1">pieslice(self</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">start</span><span class="s3">, </span><span class="s1">end</span><span class="s3">, </span><span class="s1">*options):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Same as arc, but also draws straight lines between the end points and the 
+        center of the bounding box. 
+ 
+        .. seealso:: :py:meth:`PIL.ImageDraw.ImageDraw.pieslice` 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.render(</span><span class="s5">&quot;pieslice&quot;</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">start</span><span class="s3">, </span><span class="s1">end</span><span class="s3">, </span><span class="s1">*options)</span>
+
+    <span class="s3">def </span><span class="s1">polygon(self</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">*options):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Draws a polygon. 
+ 
+        The polygon outline consists of straight lines between the given 
+        coordinates, plus a straight line between the last and the first 
+        coordinate. 
+ 
+ 
+        .. seealso:: :py:meth:`PIL.ImageDraw.ImageDraw.polygon` 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.render(</span><span class="s5">&quot;polygon&quot;</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">*options)</span>
+
+    <span class="s3">def </span><span class="s1">rectangle(self</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">*options):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Draws a rectangle. 
+ 
+        .. seealso:: :py:meth:`PIL.ImageDraw.ImageDraw.rectangle` 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.render(</span><span class="s5">&quot;rectangle&quot;</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">*options)</span>
+
+    <span class="s3">def </span><span class="s1">text(self</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">text</span><span class="s3">, </span><span class="s1">font):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Draws the string at the given position. 
+ 
+        .. seealso:: :py:meth:`PIL.ImageDraw.ImageDraw.text` 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">self.transform:</span>
+            <span class="s1">xy = ImagePath.Path(xy)</span>
+            <span class="s1">xy.transform(self.transform)</span>
+        <span class="s1">self.draw.text(xy</span><span class="s3">, </span><span class="s1">text</span><span class="s3">, </span><span class="s1">font=font.font</span><span class="s3">, </span><span class="s1">fill=font.color)</span>
+
+    <span class="s3">def </span><span class="s1">textsize(self</span><span class="s3">, </span><span class="s1">text</span><span class="s3">, </span><span class="s1">font):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        .. deprecated:: 9.2.0 
+ 
+        Return the size of the given string, in pixels. 
+ 
+        .. seealso:: :py:meth:`PIL.ImageDraw.ImageDraw.textsize` 
+        &quot;&quot;&quot;</span>
+        <span class="s1">deprecate(</span><span class="s5">&quot;textsize&quot;</span><span class="s3">, </span><span class="s4">10</span><span class="s3">, </span><span class="s5">&quot;textbbox or textlength&quot;</span><span class="s1">)</span>
+        <span class="s3">with </span><span class="s1">warnings.catch_warnings():</span>
+            <span class="s1">warnings.filterwarnings(</span><span class="s5">&quot;ignore&quot;</span><span class="s3">, </span><span class="s1">category=DeprecationWarning)</span>
+            <span class="s3">return </span><span class="s1">self.draw.textsize(text</span><span class="s3">, </span><span class="s1">font=font.font)</span>
+
+    <span class="s3">def </span><span class="s1">textbbox(self</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">, </span><span class="s1">text</span><span class="s3">, </span><span class="s1">font):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Returns bounding box (in pixels) of given text. 
+ 
+        :return: ``(left, top, right, bottom)`` bounding box 
+ 
+        .. seealso:: :py:meth:`PIL.ImageDraw.ImageDraw.textbbox` 
+        &quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">self.transform:</span>
+            <span class="s1">xy = ImagePath.Path(xy)</span>
+            <span class="s1">xy.transform(self.transform)</span>
+        <span class="s3">return </span><span class="s1">self.draw.textbbox(xy</span><span class="s3">, </span><span class="s1">text</span><span class="s3">, </span><span class="s1">font=font.font)</span>
+
+    <span class="s3">def </span><span class="s1">textlength(self</span><span class="s3">, </span><span class="s1">text</span><span class="s3">, </span><span class="s1">font):</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Returns length (in pixels) of given text. 
+        This is the amount by which following text should be offset. 
+ 
+        .. seealso:: :py:meth:`PIL.ImageDraw.ImageDraw.textlength` 
+        &quot;&quot;&quot;</span>
+        <span class="s3">return </span><span class="s1">self.draw.textlength(text</span><span class="s3">, </span><span class="s1">font=font.font)</span>
+</pre>
+</body>
+</html>

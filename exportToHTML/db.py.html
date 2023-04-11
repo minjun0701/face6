@@ -1,0 +1,84 @@
+<html>
+<head>
+<title>db.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #629755; font-style: italic;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #808080;}
+.s4 { color: #6a8759;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+db.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Module with our own gitdb implementation - it uses the git command&quot;&quot;&quot;</span>
+<span class="s2">from </span><span class="s1">git.util </span><span class="s2">import </span><span class="s1">bin_to_hex</span><span class="s2">, </span><span class="s1">hex_to_bin</span>
+<span class="s2">from </span><span class="s1">gitdb.base </span><span class="s2">import </span><span class="s1">OInfo</span><span class="s2">, </span><span class="s1">OStream</span>
+<span class="s2">from </span><span class="s1">gitdb.db </span><span class="s2">import </span><span class="s1">GitDB  </span><span class="s3"># @UnusedImport</span>
+<span class="s2">from </span><span class="s1">gitdb.db </span><span class="s2">import </span><span class="s1">LooseObjectDB</span>
+
+<span class="s2">from </span><span class="s1">gitdb.exc </span><span class="s2">import </span><span class="s1">BadObject</span>
+<span class="s2">from </span><span class="s1">git.exc </span><span class="s2">import </span><span class="s1">GitCommandError</span>
+
+<span class="s3"># typing-------------------------------------------------</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span>
+<span class="s2">from </span><span class="s1">git.types </span><span class="s2">import </span><span class="s1">PathLike</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">git.cmd </span><span class="s2">import </span><span class="s1">Git</span>
+
+
+<span class="s3"># --------------------------------------------------------</span>
+
+<span class="s1">__all__ = (</span><span class="s4">&quot;GitCmdObjectDB&quot;</span><span class="s2">, </span><span class="s4">&quot;GitDB&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">GitCmdObjectDB(LooseObjectDB):</span>
+
+    <span class="s0">&quot;&quot;&quot;A database representing the default git object store, which includes loose 
+    objects, pack files and an alternates file 
+ 
+    It will create objects only in the loose object database. 
+    :note: for now, we use the git command to do all the lookup, just until he 
+        have packs and the other implementations 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">root_path: PathLike</span><span class="s2">, </span><span class="s1">git: </span><span class="s4">&quot;Git&quot;</span><span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;Initialize this instance with the root and a git command&quot;&quot;&quot;</span>
+        <span class="s1">super(GitCmdObjectDB</span><span class="s2">, </span><span class="s1">self).__init__(root_path)</span>
+        <span class="s1">self._git = git</span>
+
+    <span class="s2">def </span><span class="s1">info(self</span><span class="s2">, </span><span class="s1">binsha: bytes) -&gt; OInfo:</span>
+        <span class="s1">hexsha</span><span class="s2">, </span><span class="s1">typename</span><span class="s2">, </span><span class="s1">size = self._git.get_object_header(bin_to_hex(binsha))</span>
+        <span class="s2">return </span><span class="s1">OInfo(hex_to_bin(hexsha)</span><span class="s2">, </span><span class="s1">typename</span><span class="s2">, </span><span class="s1">size)</span>
+
+    <span class="s2">def </span><span class="s1">stream(self</span><span class="s2">, </span><span class="s1">binsha: bytes) -&gt; OStream:</span>
+        <span class="s0">&quot;&quot;&quot;For now, all lookup is done by git itself&quot;&quot;&quot;</span>
+        <span class="s1">hexsha</span><span class="s2">, </span><span class="s1">typename</span><span class="s2">, </span><span class="s1">size</span><span class="s2">, </span><span class="s1">stream = self._git.stream_object_data(bin_to_hex(binsha))</span>
+        <span class="s2">return </span><span class="s1">OStream(hex_to_bin(hexsha)</span><span class="s2">, </span><span class="s1">typename</span><span class="s2">, </span><span class="s1">size</span><span class="s2">, </span><span class="s1">stream)</span>
+
+    <span class="s3"># { Interface</span>
+
+    <span class="s2">def </span><span class="s1">partial_to_complete_sha_hex(self</span><span class="s2">, </span><span class="s1">partial_hexsha: str) -&gt; bytes:</span>
+        <span class="s0">&quot;&quot;&quot;:return: Full binary 20 byte sha from the given partial hexsha 
+        :raise AmbiguousObjectName: 
+        :raise BadObject: 
+        :note: currently we only raise BadObject as git does not communicate 
+            AmbiguousObjects separately&quot;&quot;&quot;</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">hexsha</span><span class="s2">, </span><span class="s1">_typename</span><span class="s2">, </span><span class="s1">_size = self._git.get_object_header(partial_hexsha)</span>
+            <span class="s2">return </span><span class="s1">hex_to_bin(hexsha)</span>
+        <span class="s2">except </span><span class="s1">(GitCommandError</span><span class="s2">, </span><span class="s1">ValueError) </span><span class="s2">as </span><span class="s1">e:</span>
+            <span class="s2">raise </span><span class="s1">BadObject(partial_hexsha) </span><span class="s2">from </span><span class="s1">e</span>
+        <span class="s3"># END handle exceptions</span>
+
+    <span class="s3"># } END interface</span>
+</pre>
+</body>
+</html>

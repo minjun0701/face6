@@ -1,0 +1,58 @@
+<html>
+<head>
+<title>blob.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6a8759;}
+.s4 { color: #629755; font-style: italic;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+blob.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># blob.py</span>
+<span class="s0"># Copyright (C) 2008, 2009 Michael Trier (mtrier@gmail.com) and contributors</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of GitPython and is released under</span>
+<span class="s0"># the BSD License: http://www.opensource.org/licenses/bsd-license.php</span>
+<span class="s2">from </span><span class="s1">mimetypes </span><span class="s2">import </span><span class="s1">guess_type</span>
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">base</span>
+
+<span class="s2">from </span><span class="s1">git.types </span><span class="s2">import </span><span class="s1">Literal</span>
+
+<span class="s1">__all__ = (</span><span class="s3">&quot;Blob&quot;</span><span class="s2">,</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">Blob(base.IndexObject):</span>
+
+    <span class="s4">&quot;&quot;&quot;A Blob encapsulates a git blob object&quot;&quot;&quot;</span>
+
+    <span class="s1">DEFAULT_MIME_TYPE = </span><span class="s3">&quot;text/plain&quot;</span>
+    <span class="s1">type: Literal[</span><span class="s3">&quot;blob&quot;</span><span class="s1">] = </span><span class="s3">&quot;blob&quot;</span>
+
+    <span class="s0"># valid blob modes</span>
+    <span class="s1">executable_mode = </span><span class="s5">0o100755</span>
+    <span class="s1">file_mode = </span><span class="s5">0o100644</span>
+    <span class="s1">link_mode = </span><span class="s5">0o120000</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">mime_type(self) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: String describing the mime type of this file (based on the filename) 
+        :note: Defaults to 'text/plain' in case the actual file type is unknown.&quot;&quot;&quot;</span>
+        <span class="s1">guesses = </span><span class="s2">None</span>
+        <span class="s2">if </span><span class="s1">self.path:</span>
+            <span class="s1">guesses = guess_type(str(self.path))</span>
+        <span class="s2">return </span><span class="s1">guesses </span><span class="s2">and </span><span class="s1">guesses[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">or </span><span class="s1">self.DEFAULT_MIME_TYPE</span>
+</pre>
+</body>
+</html>

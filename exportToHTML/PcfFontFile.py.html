@@ -1,0 +1,269 @@
+<html>
+<head>
+<title>PcfFontFile.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6897bb;}
+.s4 { color: #a5c261;}
+.s5 { color: #629755; font-style: italic;}
+.s6 { color: #6a8759;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+PcfFontFile.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># THIS IS WORK IN PROGRESS</span>
+<span class="s0">#</span>
+<span class="s0"># The Python Imaging Library</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># portable compiled font file parser</span>
+<span class="s0">#</span>
+<span class="s0"># history:</span>
+<span class="s0"># 1997-08-19 fl   created</span>
+<span class="s0"># 2003-09-13 fl   fixed loading of unicode fonts</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2003 by Secret Labs AB.</span>
+<span class="s0"># Copyright (c) 1997-2003 by Fredrik Lundh.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">import </span><span class="s1">io</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">FontFile</span><span class="s2">, </span><span class="s1">Image</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">i8</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">i16be </span><span class="s2">as </span><span class="s1">b16</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">i16le </span><span class="s2">as </span><span class="s1">l16</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">i32be </span><span class="s2">as </span><span class="s1">b32</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">i32le </span><span class="s2">as </span><span class="s1">l32</span>
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># declarations</span>
+
+<span class="s1">PCF_MAGIC = </span><span class="s3">0x70636601  </span><span class="s0"># &quot;\x01fcp&quot;</span>
+
+<span class="s1">PCF_PROPERTIES = </span><span class="s3">1 </span><span class="s1">&lt;&lt; </span><span class="s3">0</span>
+<span class="s1">PCF_ACCELERATORS = </span><span class="s3">1 </span><span class="s1">&lt;&lt; </span><span class="s3">1</span>
+<span class="s1">PCF_METRICS = </span><span class="s3">1 </span><span class="s1">&lt;&lt; </span><span class="s3">2</span>
+<span class="s1">PCF_BITMAPS = </span><span class="s3">1 </span><span class="s1">&lt;&lt; </span><span class="s3">3</span>
+<span class="s1">PCF_INK_METRICS = </span><span class="s3">1 </span><span class="s1">&lt;&lt; </span><span class="s3">4</span>
+<span class="s1">PCF_BDF_ENCODINGS = </span><span class="s3">1 </span><span class="s1">&lt;&lt; </span><span class="s3">5</span>
+<span class="s1">PCF_SWIDTHS = </span><span class="s3">1 </span><span class="s1">&lt;&lt; </span><span class="s3">6</span>
+<span class="s1">PCF_GLYPH_NAMES = </span><span class="s3">1 </span><span class="s1">&lt;&lt; </span><span class="s3">7</span>
+<span class="s1">PCF_BDF_ACCELERATORS = </span><span class="s3">1 </span><span class="s1">&lt;&lt; </span><span class="s3">8</span>
+
+<span class="s1">BYTES_PER_ROW = [</span>
+    <span class="s2">lambda </span><span class="s1">bits: ((bits + </span><span class="s3">7</span><span class="s1">) &gt;&gt; </span><span class="s3">3</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s2">lambda </span><span class="s1">bits: ((bits + </span><span class="s3">15</span><span class="s1">) &gt;&gt; </span><span class="s3">3</span><span class="s1">) &amp; ~</span><span class="s3">1</span><span class="s2">,</span>
+    <span class="s2">lambda </span><span class="s1">bits: ((bits + </span><span class="s3">31</span><span class="s1">) &gt;&gt; </span><span class="s3">3</span><span class="s1">) &amp; ~</span><span class="s3">3</span><span class="s2">,</span>
+    <span class="s2">lambda </span><span class="s1">bits: ((bits + </span><span class="s3">63</span><span class="s1">) &gt;&gt; </span><span class="s3">3</span><span class="s1">) &amp; ~</span><span class="s3">7</span><span class="s2">,</span>
+<span class="s1">]</span>
+
+
+<span class="s2">def </span><span class="s1">sz(s</span><span class="s2">, </span><span class="s1">o):</span>
+    <span class="s2">return </span><span class="s1">s[o : s.index(</span><span class="s4">b&quot;</span><span class="s2">\0</span><span class="s4">&quot;</span><span class="s2">, </span><span class="s1">o)]</span>
+
+
+<span class="s2">class </span><span class="s1">PcfFontFile(FontFile.FontFile):</span>
+    <span class="s5">&quot;&quot;&quot;Font file plugin for the X11 PCF format.&quot;&quot;&quot;</span>
+
+    <span class="s1">name = </span><span class="s6">&quot;name&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">charset_encoding=</span><span class="s6">&quot;iso8859-1&quot;</span><span class="s1">):</span>
+
+        <span class="s1">self.charset_encoding = charset_encoding</span>
+
+        <span class="s1">magic = l32(fp.read(</span><span class="s3">4</span><span class="s1">))</span>
+        <span class="s2">if </span><span class="s1">magic != PCF_MAGIC:</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s6">&quot;not a PCF file&quot;</span><span class="s1">)</span>
+
+        <span class="s1">super().__init__()</span>
+
+        <span class="s1">count = l32(fp.read(</span><span class="s3">4</span><span class="s1">))</span>
+        <span class="s1">self.toc = {}</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(count):</span>
+            <span class="s1">type = l32(fp.read(</span><span class="s3">4</span><span class="s1">))</span>
+            <span class="s1">self.toc[type] = l32(fp.read(</span><span class="s3">4</span><span class="s1">))</span><span class="s2">, </span><span class="s1">l32(fp.read(</span><span class="s3">4</span><span class="s1">))</span><span class="s2">, </span><span class="s1">l32(fp.read(</span><span class="s3">4</span><span class="s1">))</span>
+
+        <span class="s1">self.fp = fp</span>
+
+        <span class="s1">self.info = self._load_properties()</span>
+
+        <span class="s1">metrics = self._load_metrics()</span>
+        <span class="s1">bitmaps = self._load_bitmaps(metrics)</span>
+        <span class="s1">encoding = self._load_encoding()</span>
+
+        <span class="s0">#</span>
+        <span class="s0"># create glyph structure</span>
+
+        <span class="s2">for </span><span class="s1">ch</span><span class="s2">, </span><span class="s1">ix </span><span class="s2">in </span><span class="s1">enumerate(encoding):</span>
+            <span class="s2">if </span><span class="s1">ix </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s1">x</span><span class="s2">, </span><span class="s1">y</span><span class="s2">, </span><span class="s1">l</span><span class="s2">, </span><span class="s1">r</span><span class="s2">, </span><span class="s1">w</span><span class="s2">, </span><span class="s1">a</span><span class="s2">, </span><span class="s1">d</span><span class="s2">, </span><span class="s1">f = metrics[ix]</span>
+                <span class="s1">glyph = (w</span><span class="s2">, </span><span class="s3">0</span><span class="s1">)</span><span class="s2">, </span><span class="s1">(l</span><span class="s2">, </span><span class="s1">d - y</span><span class="s2">, </span><span class="s1">x + l</span><span class="s2">, </span><span class="s1">d)</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y)</span><span class="s2">, </span><span class="s1">bitmaps[ix]</span>
+                <span class="s1">self.glyph[ch] = glyph</span>
+
+    <span class="s2">def </span><span class="s1">_getformat(self</span><span class="s2">, </span><span class="s1">tag):</span>
+
+        <span class="s1">format</span><span class="s2">, </span><span class="s1">size</span><span class="s2">, </span><span class="s1">offset = self.toc[tag]</span>
+
+        <span class="s1">fp = self.fp</span>
+        <span class="s1">fp.seek(offset)</span>
+
+        <span class="s1">format = l32(fp.read(</span><span class="s3">4</span><span class="s1">))</span>
+
+        <span class="s2">if </span><span class="s1">format &amp; </span><span class="s3">4</span><span class="s1">:</span>
+            <span class="s1">i16</span><span class="s2">, </span><span class="s1">i32 = b16</span><span class="s2">, </span><span class="s1">b32</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">i16</span><span class="s2">, </span><span class="s1">i32 = l16</span><span class="s2">, </span><span class="s1">l32</span>
+
+        <span class="s2">return </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">format</span><span class="s2">, </span><span class="s1">i16</span><span class="s2">, </span><span class="s1">i32</span>
+
+    <span class="s2">def </span><span class="s1">_load_properties(self):</span>
+
+        <span class="s0">#</span>
+        <span class="s0"># font properties</span>
+
+        <span class="s1">properties = {}</span>
+
+        <span class="s1">fp</span><span class="s2">, </span><span class="s1">format</span><span class="s2">, </span><span class="s1">i16</span><span class="s2">, </span><span class="s1">i32 = self._getformat(PCF_PROPERTIES)</span>
+
+        <span class="s1">nprops = i32(fp.read(</span><span class="s3">4</span><span class="s1">))</span>
+
+        <span class="s0"># read property description</span>
+        <span class="s1">p = []</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(nprops):</span>
+            <span class="s1">p.append((i32(fp.read(</span><span class="s3">4</span><span class="s1">))</span><span class="s2">, </span><span class="s1">i8(fp.read(</span><span class="s3">1</span><span class="s1">))</span><span class="s2">, </span><span class="s1">i32(fp.read(</span><span class="s3">4</span><span class="s1">))))</span>
+        <span class="s2">if </span><span class="s1">nprops &amp; </span><span class="s3">3</span><span class="s1">:</span>
+            <span class="s1">fp.seek(</span><span class="s3">4 </span><span class="s1">- (nprops &amp; </span><span class="s3">3</span><span class="s1">)</span><span class="s2">, </span><span class="s1">io.SEEK_CUR)  </span><span class="s0"># pad</span>
+
+        <span class="s1">data = fp.read(i32(fp.read(</span><span class="s3">4</span><span class="s1">)))</span>
+
+        <span class="s2">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">s</span><span class="s2">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">p:</span>
+            <span class="s1">k = sz(data</span><span class="s2">, </span><span class="s1">k)</span>
+            <span class="s2">if </span><span class="s1">s:</span>
+                <span class="s1">v = sz(data</span><span class="s2">, </span><span class="s1">v)</span>
+            <span class="s1">properties[k] = v</span>
+
+        <span class="s2">return </span><span class="s1">properties</span>
+
+    <span class="s2">def </span><span class="s1">_load_metrics(self):</span>
+
+        <span class="s0">#</span>
+        <span class="s0"># font metrics</span>
+
+        <span class="s1">metrics = []</span>
+
+        <span class="s1">fp</span><span class="s2">, </span><span class="s1">format</span><span class="s2">, </span><span class="s1">i16</span><span class="s2">, </span><span class="s1">i32 = self._getformat(PCF_METRICS)</span>
+
+        <span class="s1">append = metrics.append</span>
+
+        <span class="s2">if </span><span class="s1">(format &amp; </span><span class="s3">0xFF00</span><span class="s1">) == </span><span class="s3">0x100</span><span class="s1">:</span>
+
+            <span class="s0"># &quot;compressed&quot; metrics</span>
+            <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(i16(fp.read(</span><span class="s3">2</span><span class="s1">))):</span>
+                <span class="s1">left = i8(fp.read(</span><span class="s3">1</span><span class="s1">)) - </span><span class="s3">128</span>
+                <span class="s1">right = i8(fp.read(</span><span class="s3">1</span><span class="s1">)) - </span><span class="s3">128</span>
+                <span class="s1">width = i8(fp.read(</span><span class="s3">1</span><span class="s1">)) - </span><span class="s3">128</span>
+                <span class="s1">ascent = i8(fp.read(</span><span class="s3">1</span><span class="s1">)) - </span><span class="s3">128</span>
+                <span class="s1">descent = i8(fp.read(</span><span class="s3">1</span><span class="s1">)) - </span><span class="s3">128</span>
+                <span class="s1">xsize = right - left</span>
+                <span class="s1">ysize = ascent + descent</span>
+                <span class="s1">append((xsize</span><span class="s2">, </span><span class="s1">ysize</span><span class="s2">, </span><span class="s1">left</span><span class="s2">, </span><span class="s1">right</span><span class="s2">, </span><span class="s1">width</span><span class="s2">, </span><span class="s1">ascent</span><span class="s2">, </span><span class="s1">descent</span><span class="s2">, </span><span class="s3">0</span><span class="s1">))</span>
+
+        <span class="s2">else</span><span class="s1">:</span>
+
+            <span class="s0"># &quot;jumbo&quot; metrics</span>
+            <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(i32(fp.read(</span><span class="s3">4</span><span class="s1">))):</span>
+                <span class="s1">left = i16(fp.read(</span><span class="s3">2</span><span class="s1">))</span>
+                <span class="s1">right = i16(fp.read(</span><span class="s3">2</span><span class="s1">))</span>
+                <span class="s1">width = i16(fp.read(</span><span class="s3">2</span><span class="s1">))</span>
+                <span class="s1">ascent = i16(fp.read(</span><span class="s3">2</span><span class="s1">))</span>
+                <span class="s1">descent = i16(fp.read(</span><span class="s3">2</span><span class="s1">))</span>
+                <span class="s1">attributes = i16(fp.read(</span><span class="s3">2</span><span class="s1">))</span>
+                <span class="s1">xsize = right - left</span>
+                <span class="s1">ysize = ascent + descent</span>
+                <span class="s1">append((xsize</span><span class="s2">, </span><span class="s1">ysize</span><span class="s2">, </span><span class="s1">left</span><span class="s2">, </span><span class="s1">right</span><span class="s2">, </span><span class="s1">width</span><span class="s2">, </span><span class="s1">ascent</span><span class="s2">, </span><span class="s1">descent</span><span class="s2">, </span><span class="s1">attributes))</span>
+
+        <span class="s2">return </span><span class="s1">metrics</span>
+
+    <span class="s2">def </span><span class="s1">_load_bitmaps(self</span><span class="s2">, </span><span class="s1">metrics):</span>
+
+        <span class="s0">#</span>
+        <span class="s0"># bitmap data</span>
+
+        <span class="s1">bitmaps = []</span>
+
+        <span class="s1">fp</span><span class="s2">, </span><span class="s1">format</span><span class="s2">, </span><span class="s1">i16</span><span class="s2">, </span><span class="s1">i32 = self._getformat(PCF_BITMAPS)</span>
+
+        <span class="s1">nbitmaps = i32(fp.read(</span><span class="s3">4</span><span class="s1">))</span>
+
+        <span class="s2">if </span><span class="s1">nbitmaps != len(metrics):</span>
+            <span class="s2">raise </span><span class="s1">OSError(</span><span class="s6">&quot;Wrong number of bitmaps&quot;</span><span class="s1">)</span>
+
+        <span class="s1">offsets = []</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(nbitmaps):</span>
+            <span class="s1">offsets.append(i32(fp.read(</span><span class="s3">4</span><span class="s1">)))</span>
+
+        <span class="s1">bitmap_sizes = []</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">4</span><span class="s1">):</span>
+            <span class="s1">bitmap_sizes.append(i32(fp.read(</span><span class="s3">4</span><span class="s1">)))</span>
+
+        <span class="s0"># byteorder = format &amp; 4  # non-zero =&gt; MSB</span>
+        <span class="s1">bitorder = format &amp; </span><span class="s3">8  </span><span class="s0"># non-zero =&gt; MSB</span>
+        <span class="s1">padindex = format &amp; </span><span class="s3">3</span>
+
+        <span class="s1">bitmapsize = bitmap_sizes[padindex]</span>
+        <span class="s1">offsets.append(bitmapsize)</span>
+
+        <span class="s1">data = fp.read(bitmapsize)</span>
+
+        <span class="s1">pad = BYTES_PER_ROW[padindex]</span>
+        <span class="s1">mode = </span><span class="s6">&quot;1;R&quot;</span>
+        <span class="s2">if </span><span class="s1">bitorder:</span>
+            <span class="s1">mode = </span><span class="s6">&quot;1&quot;</span>
+
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(nbitmaps):</span>
+            <span class="s1">x</span><span class="s2">, </span><span class="s1">y</span><span class="s2">, </span><span class="s1">l</span><span class="s2">, </span><span class="s1">r</span><span class="s2">, </span><span class="s1">w</span><span class="s2">, </span><span class="s1">a</span><span class="s2">, </span><span class="s1">d</span><span class="s2">, </span><span class="s1">f = metrics[i]</span>
+            <span class="s1">b</span><span class="s2">, </span><span class="s1">e = offsets[i]</span><span class="s2">, </span><span class="s1">offsets[i + </span><span class="s3">1</span><span class="s1">]</span>
+            <span class="s1">bitmaps.append(Image.frombytes(</span><span class="s6">&quot;1&quot;</span><span class="s2">, </span><span class="s1">(x</span><span class="s2">, </span><span class="s1">y)</span><span class="s2">, </span><span class="s1">data[b:e]</span><span class="s2">, </span><span class="s6">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">pad(x)))</span>
+
+        <span class="s2">return </span><span class="s1">bitmaps</span>
+
+    <span class="s2">def </span><span class="s1">_load_encoding(self):</span>
+        <span class="s1">fp</span><span class="s2">, </span><span class="s1">format</span><span class="s2">, </span><span class="s1">i16</span><span class="s2">, </span><span class="s1">i32 = self._getformat(PCF_BDF_ENCODINGS)</span>
+
+        <span class="s1">first_col</span><span class="s2">, </span><span class="s1">last_col = i16(fp.read(</span><span class="s3">2</span><span class="s1">))</span><span class="s2">, </span><span class="s1">i16(fp.read(</span><span class="s3">2</span><span class="s1">))</span>
+        <span class="s1">first_row</span><span class="s2">, </span><span class="s1">last_row = i16(fp.read(</span><span class="s3">2</span><span class="s1">))</span><span class="s2">, </span><span class="s1">i16(fp.read(</span><span class="s3">2</span><span class="s1">))</span>
+
+        <span class="s1">i16(fp.read(</span><span class="s3">2</span><span class="s1">))  </span><span class="s0"># default</span>
+
+        <span class="s1">nencoding = (last_col - first_col + </span><span class="s3">1</span><span class="s1">) * (last_row - first_row + </span><span class="s3">1</span><span class="s1">)</span>
+
+        <span class="s0"># map character code to bitmap index</span>
+        <span class="s1">encoding = [</span><span class="s2">None</span><span class="s1">] * min(</span><span class="s3">256</span><span class="s2">, </span><span class="s1">nencoding)</span>
+
+        <span class="s1">encoding_offsets = [i16(fp.read(</span><span class="s3">2</span><span class="s1">)) </span><span class="s2">for </span><span class="s1">_ </span><span class="s2">in </span><span class="s1">range(nencoding)]</span>
+
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(first_col</span><span class="s2">, </span><span class="s1">len(encoding)):</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">encoding_offset = encoding_offsets[</span>
+                    <span class="s1">ord(bytearray([i]).decode(self.charset_encoding))</span>
+                <span class="s1">]</span>
+                <span class="s2">if </span><span class="s1">encoding_offset != </span><span class="s3">0xFFFF</span><span class="s1">:</span>
+                    <span class="s1">encoding[i] = encoding_offset</span>
+            <span class="s2">except </span><span class="s1">UnicodeDecodeError:</span>
+                <span class="s0"># character is not supported in selected encoding</span>
+                <span class="s2">pass</span>
+
+        <span class="s2">return </span><span class="s1">encoding</span>
+</pre>
+</body>
+</html>

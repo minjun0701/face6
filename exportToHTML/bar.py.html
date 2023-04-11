@@ -1,0 +1,116 @@
+<html>
+<head>
+<title>bar.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #808080;}
+.s3 { color: #6a8759;}
+.s4 { color: #629755; font-style: italic;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+bar.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Optional</span><span class="s0">, </span><span class="s1">Union</span>
+
+<span class="s0">from </span><span class="s1">.color </span><span class="s0">import </span><span class="s1">Color</span>
+<span class="s0">from </span><span class="s1">.console </span><span class="s0">import </span><span class="s1">Console</span><span class="s0">, </span><span class="s1">ConsoleOptions</span><span class="s0">, </span><span class="s1">RenderResult</span>
+<span class="s0">from </span><span class="s1">.jupyter </span><span class="s0">import </span><span class="s1">JupyterMixin</span>
+<span class="s0">from </span><span class="s1">.measure </span><span class="s0">import </span><span class="s1">Measurement</span>
+<span class="s0">from </span><span class="s1">.segment </span><span class="s0">import </span><span class="s1">Segment</span>
+<span class="s0">from </span><span class="s1">.style </span><span class="s0">import </span><span class="s1">Style</span>
+
+<span class="s2"># There are left-aligned characters for 1/8 to 7/8, but</span>
+<span class="s2"># the right-aligned characters exist only for 1/8 and 4/8.</span>
+<span class="s1">BEGIN_BLOCK_ELEMENTS = [</span><span class="s3">&quot;█&quot;</span><span class="s0">, </span><span class="s3">&quot;█&quot;</span><span class="s0">, </span><span class="s3">&quot;█&quot;</span><span class="s0">, </span><span class="s3">&quot;▐&quot;</span><span class="s0">, </span><span class="s3">&quot;▐&quot;</span><span class="s0">, </span><span class="s3">&quot;▐&quot;</span><span class="s0">, </span><span class="s3">&quot;▕&quot;</span><span class="s0">, </span><span class="s3">&quot;▕&quot;</span><span class="s1">]</span>
+<span class="s1">END_BLOCK_ELEMENTS = [</span><span class="s3">&quot; &quot;</span><span class="s0">, </span><span class="s3">&quot;▏&quot;</span><span class="s0">, </span><span class="s3">&quot;▎&quot;</span><span class="s0">, </span><span class="s3">&quot;▍&quot;</span><span class="s0">, </span><span class="s3">&quot;▌&quot;</span><span class="s0">, </span><span class="s3">&quot;▋&quot;</span><span class="s0">, </span><span class="s3">&quot;▊&quot;</span><span class="s0">, </span><span class="s3">&quot;▉&quot;</span><span class="s1">]</span>
+<span class="s1">FULL_BLOCK = </span><span class="s3">&quot;█&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">Bar(JupyterMixin):</span>
+    <span class="s4">&quot;&quot;&quot;Renders a solid block bar. 
+ 
+    Args: 
+        size (float): Value for the end of the bar. 
+        begin (float): Begin point (between 0 and size, inclusive). 
+        end (float): End point (between 0 and size, inclusive). 
+        width (int, optional): Width of the bar, or ``None`` for maximum width. Defaults to None. 
+        color (Union[Color, str], optional): Color of the bar. Defaults to &quot;default&quot;. 
+        bgcolor (Union[Color, str], optional): Color of bar background. Defaults to &quot;default&quot;. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">size: float</span><span class="s0">,</span>
+        <span class="s1">begin: float</span><span class="s0">,</span>
+        <span class="s1">end: float</span><span class="s0">,</span>
+        <span class="s1">*</span><span class="s0">,</span>
+        <span class="s1">width: Optional[int] = </span><span class="s0">None,</span>
+        <span class="s1">color: Union[Color</span><span class="s0">, </span><span class="s1">str] = </span><span class="s3">&quot;default&quot;</span><span class="s0">,</span>
+        <span class="s1">bgcolor: Union[Color</span><span class="s0">, </span><span class="s1">str] = </span><span class="s3">&quot;default&quot;</span><span class="s0">,</span>
+    <span class="s1">):</span>
+        <span class="s1">self.size = size</span>
+        <span class="s1">self.begin = max(begin</span><span class="s0">, </span><span class="s5">0</span><span class="s1">)</span>
+        <span class="s1">self.end = min(end</span><span class="s0">, </span><span class="s1">size)</span>
+        <span class="s1">self.width = width</span>
+        <span class="s1">self.style = Style(color=color</span><span class="s0">, </span><span class="s1">bgcolor=bgcolor)</span>
+
+    <span class="s0">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s0">return </span><span class="s3">f&quot;Bar(</span><span class="s0">{</span><span class="s1">self.size</span><span class="s0">}</span><span class="s3">, </span><span class="s0">{</span><span class="s1">self.begin</span><span class="s0">}</span><span class="s3">, </span><span class="s0">{</span><span class="s1">self.end</span><span class="s0">}</span><span class="s3">)&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__rich_console__(</span>
+        <span class="s1">self</span><span class="s0">, </span><span class="s1">console: Console</span><span class="s0">, </span><span class="s1">options: ConsoleOptions</span>
+    <span class="s1">) -&gt; RenderResult:</span>
+
+        <span class="s1">width = min(</span>
+            <span class="s1">self.width </span><span class="s0">if </span><span class="s1">self.width </span><span class="s0">is not None else </span><span class="s1">options.max_width</span><span class="s0">,</span>
+            <span class="s1">options.max_width</span><span class="s0">,</span>
+        <span class="s1">)</span>
+
+        <span class="s0">if </span><span class="s1">self.begin &gt;= self.end:</span>
+            <span class="s0">yield </span><span class="s1">Segment(</span><span class="s3">&quot; &quot; </span><span class="s1">* width</span><span class="s0">, </span><span class="s1">self.style)</span>
+            <span class="s0">yield </span><span class="s1">Segment.line()</span>
+            <span class="s0">return</span>
+
+        <span class="s1">prefix_complete_eights = int(width * </span><span class="s5">8 </span><span class="s1">* self.begin / self.size)</span>
+        <span class="s1">prefix_bar_count = prefix_complete_eights // </span><span class="s5">8</span>
+        <span class="s1">prefix_eights_count = prefix_complete_eights % </span><span class="s5">8</span>
+
+        <span class="s1">body_complete_eights = int(width * </span><span class="s5">8 </span><span class="s1">* self.end / self.size)</span>
+        <span class="s1">body_bar_count = body_complete_eights // </span><span class="s5">8</span>
+        <span class="s1">body_eights_count = body_complete_eights % </span><span class="s5">8</span>
+
+        <span class="s2"># When start and end fall into the same cell, we ideally should render</span>
+        <span class="s2"># a symbol that's &quot;center-aligned&quot;, but there is no good symbol in Unicode.</span>
+        <span class="s2"># In this case, we fall back to right-aligned block symbol for simplicity.</span>
+
+        <span class="s1">prefix = </span><span class="s3">&quot; &quot; </span><span class="s1">* prefix_bar_count</span>
+        <span class="s0">if </span><span class="s1">prefix_eights_count:</span>
+            <span class="s1">prefix += BEGIN_BLOCK_ELEMENTS[prefix_eights_count]</span>
+
+        <span class="s1">body = FULL_BLOCK * body_bar_count</span>
+        <span class="s0">if </span><span class="s1">body_eights_count:</span>
+            <span class="s1">body += END_BLOCK_ELEMENTS[body_eights_count]</span>
+
+        <span class="s1">suffix = </span><span class="s3">&quot; &quot; </span><span class="s1">* (width - len(body))</span>
+
+        <span class="s0">yield </span><span class="s1">Segment(prefix + body[len(prefix) :] + suffix</span><span class="s0">, </span><span class="s1">self.style)</span>
+        <span class="s0">yield </span><span class="s1">Segment.line()</span>
+
+    <span class="s0">def </span><span class="s1">__rich_measure__(</span>
+        <span class="s1">self</span><span class="s0">, </span><span class="s1">console: Console</span><span class="s0">, </span><span class="s1">options: ConsoleOptions</span>
+    <span class="s1">) -&gt; Measurement:</span>
+        <span class="s0">return </span><span class="s1">(</span>
+            <span class="s1">Measurement(self.width</span><span class="s0">, </span><span class="s1">self.width)</span>
+            <span class="s0">if </span><span class="s1">self.width </span><span class="s0">is not None</span>
+            <span class="s0">else </span><span class="s1">Measurement(</span><span class="s5">4</span><span class="s0">, </span><span class="s1">options.max_width)</span>
+        <span class="s1">)</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,638 @@
+<html>
+<head>
+<title>ImageOps.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6897bb;}
+.s4 { color: #6a8759;}
+.s5 { color: #629755; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageOps.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># standard image operations</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 2001-10-20 fl   Created</span>
+<span class="s0"># 2001-10-23 fl   Added autocontrast operator</span>
+<span class="s0"># 2001-12-18 fl   Added Kevin's fit operator</span>
+<span class="s0"># 2004-03-14 fl   Fixed potential division by zero in equalize</span>
+<span class="s0"># 2005-05-05 fl   Fixed equalize for low number of values</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 2001-2004 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 2001-2004 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">import </span><span class="s1">functools</span>
+<span class="s2">import </span><span class="s1">operator</span>
+<span class="s2">import </span><span class="s1">re</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImagePalette</span>
+
+<span class="s0">#</span>
+<span class="s0"># helpers</span>
+
+
+<span class="s2">def </span><span class="s1">_border(border):</span>
+    <span class="s2">if </span><span class="s1">isinstance(border</span><span class="s2">, </span><span class="s1">tuple):</span>
+        <span class="s2">if </span><span class="s1">len(border) == </span><span class="s3">2</span><span class="s1">:</span>
+            <span class="s1">left</span><span class="s2">, </span><span class="s1">top = right</span><span class="s2">, </span><span class="s1">bottom = border</span>
+        <span class="s2">elif </span><span class="s1">len(border) == </span><span class="s3">4</span><span class="s1">:</span>
+            <span class="s1">left</span><span class="s2">, </span><span class="s1">top</span><span class="s2">, </span><span class="s1">right</span><span class="s2">, </span><span class="s1">bottom = border</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">left = top = right = bottom = border</span>
+    <span class="s2">return </span><span class="s1">left</span><span class="s2">, </span><span class="s1">top</span><span class="s2">, </span><span class="s1">right</span><span class="s2">, </span><span class="s1">bottom</span>
+
+
+<span class="s2">def </span><span class="s1">_color(color</span><span class="s2">, </span><span class="s1">mode):</span>
+    <span class="s2">if </span><span class="s1">isinstance(color</span><span class="s2">, </span><span class="s1">str):</span>
+        <span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">ImageColor</span>
+
+        <span class="s1">color = ImageColor.getcolor(color</span><span class="s2">, </span><span class="s1">mode)</span>
+    <span class="s2">return </span><span class="s1">color</span>
+
+
+<span class="s2">def </span><span class="s1">_lut(image</span><span class="s2">, </span><span class="s1">lut):</span>
+    <span class="s2">if </span><span class="s1">image.mode == </span><span class="s4">&quot;P&quot;</span><span class="s1">:</span>
+        <span class="s0"># FIXME: apply to lookup table, not image data</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError(</span><span class="s4">&quot;mode P support coming soon&quot;</span><span class="s1">)</span>
+    <span class="s2">elif </span><span class="s1">image.mode </span><span class="s2">in </span><span class="s1">(</span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s4">&quot;RGB&quot;</span><span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">image.mode == </span><span class="s4">&quot;RGB&quot; </span><span class="s2">and </span><span class="s1">len(lut) == </span><span class="s3">256</span><span class="s1">:</span>
+            <span class="s1">lut = lut + lut + lut</span>
+        <span class="s2">return </span><span class="s1">image.point(lut)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">&quot;not supported for this image mode&quot;</span><span class="s1">)</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># actions</span>
+
+
+<span class="s2">def </span><span class="s1">autocontrast(image</span><span class="s2">, </span><span class="s1">cutoff=</span><span class="s3">0</span><span class="s2">, </span><span class="s1">ignore=</span><span class="s2">None, </span><span class="s1">mask=</span><span class="s2">None, </span><span class="s1">preserve_tone=</span><span class="s2">False</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Maximize (normalize) image contrast. This function calculates a 
+    histogram of the input image (or mask region), removes ``cutoff`` percent of the 
+    lightest and darkest pixels from the histogram, and remaps the image 
+    so that the darkest pixel becomes black (0), and the lightest 
+    becomes white (255). 
+ 
+    :param image: The image to process. 
+    :param cutoff: The percent to cut off from the histogram on the low and 
+                   high ends. Either a tuple of (low, high), or a single 
+                   number for both. 
+    :param ignore: The background pixel value (use None for no background). 
+    :param mask: Histogram used in contrast operation is computed using pixels 
+                 within the mask. If no mask is given the entire image is used 
+                 for histogram computation. 
+    :param preserve_tone: Preserve image tone in Photoshop-like style autocontrast. 
+ 
+                          .. versionadded:: 8.2.0 
+ 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">preserve_tone:</span>
+        <span class="s1">histogram = image.convert(</span><span class="s4">&quot;L&quot;</span><span class="s1">).histogram(mask)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">histogram = image.histogram(mask)</span>
+
+    <span class="s1">lut = []</span>
+    <span class="s2">for </span><span class="s1">layer </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">0</span><span class="s2">, </span><span class="s1">len(histogram)</span><span class="s2">, </span><span class="s3">256</span><span class="s1">):</span>
+        <span class="s1">h = histogram[layer : layer + </span><span class="s3">256</span><span class="s1">]</span>
+        <span class="s2">if </span><span class="s1">ignore </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s0"># get rid of outliers</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">h[ignore] = </span><span class="s3">0</span>
+            <span class="s2">except </span><span class="s1">TypeError:</span>
+                <span class="s0"># assume sequence</span>
+                <span class="s2">for </span><span class="s1">ix </span><span class="s2">in </span><span class="s1">ignore:</span>
+                    <span class="s1">h[ix] = </span><span class="s3">0</span>
+        <span class="s2">if </span><span class="s1">cutoff:</span>
+            <span class="s0"># cut off pixels from both ends of the histogram</span>
+            <span class="s2">if not </span><span class="s1">isinstance(cutoff</span><span class="s2">, </span><span class="s1">tuple):</span>
+                <span class="s1">cutoff = (cutoff</span><span class="s2">, </span><span class="s1">cutoff)</span>
+            <span class="s0"># get number of pixels</span>
+            <span class="s1">n = </span><span class="s3">0</span>
+            <span class="s2">for </span><span class="s1">ix </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">256</span><span class="s1">):</span>
+                <span class="s1">n = n + h[ix]</span>
+            <span class="s0"># remove cutoff% pixels from the low end</span>
+            <span class="s1">cut = n * cutoff[</span><span class="s3">0</span><span class="s1">] // </span><span class="s3">100</span>
+            <span class="s2">for </span><span class="s1">lo </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">256</span><span class="s1">):</span>
+                <span class="s2">if </span><span class="s1">cut &gt; h[lo]:</span>
+                    <span class="s1">cut = cut - h[lo]</span>
+                    <span class="s1">h[lo] = </span><span class="s3">0</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">h[lo] -= cut</span>
+                    <span class="s1">cut = </span><span class="s3">0</span>
+                <span class="s2">if </span><span class="s1">cut &lt;= </span><span class="s3">0</span><span class="s1">:</span>
+                    <span class="s2">break</span>
+            <span class="s0"># remove cutoff% samples from the high end</span>
+            <span class="s1">cut = n * cutoff[</span><span class="s3">1</span><span class="s1">] // </span><span class="s3">100</span>
+            <span class="s2">for </span><span class="s1">hi </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">255</span><span class="s2">, </span><span class="s1">-</span><span class="s3">1</span><span class="s2">, </span><span class="s1">-</span><span class="s3">1</span><span class="s1">):</span>
+                <span class="s2">if </span><span class="s1">cut &gt; h[hi]:</span>
+                    <span class="s1">cut = cut - h[hi]</span>
+                    <span class="s1">h[hi] = </span><span class="s3">0</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">h[hi] -= cut</span>
+                    <span class="s1">cut = </span><span class="s3">0</span>
+                <span class="s2">if </span><span class="s1">cut &lt;= </span><span class="s3">0</span><span class="s1">:</span>
+                    <span class="s2">break</span>
+        <span class="s0"># find lowest/highest samples after preprocessing</span>
+        <span class="s2">for </span><span class="s1">lo </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">256</span><span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">h[lo]:</span>
+                <span class="s2">break</span>
+        <span class="s2">for </span><span class="s1">hi </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">255</span><span class="s2">, </span><span class="s1">-</span><span class="s3">1</span><span class="s2">, </span><span class="s1">-</span><span class="s3">1</span><span class="s1">):</span>
+            <span class="s2">if </span><span class="s1">h[hi]:</span>
+                <span class="s2">break</span>
+        <span class="s2">if </span><span class="s1">hi &lt;= lo:</span>
+            <span class="s0"># don't bother</span>
+            <span class="s1">lut.extend(list(range(</span><span class="s3">256</span><span class="s1">)))</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">scale = </span><span class="s3">255.0 </span><span class="s1">/ (hi - lo)</span>
+            <span class="s1">offset = -lo * scale</span>
+            <span class="s2">for </span><span class="s1">ix </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">256</span><span class="s1">):</span>
+                <span class="s1">ix = int(ix * scale + offset)</span>
+                <span class="s2">if </span><span class="s1">ix &lt; </span><span class="s3">0</span><span class="s1">:</span>
+                    <span class="s1">ix = </span><span class="s3">0</span>
+                <span class="s2">elif </span><span class="s1">ix &gt; </span><span class="s3">255</span><span class="s1">:</span>
+                    <span class="s1">ix = </span><span class="s3">255</span>
+                <span class="s1">lut.append(ix)</span>
+    <span class="s2">return </span><span class="s1">_lut(image</span><span class="s2">, </span><span class="s1">lut)</span>
+
+
+<span class="s2">def </span><span class="s1">colorize(image</span><span class="s2">, </span><span class="s1">black</span><span class="s2">, </span><span class="s1">white</span><span class="s2">, </span><span class="s1">mid=</span><span class="s2">None, </span><span class="s1">blackpoint=</span><span class="s3">0</span><span class="s2">, </span><span class="s1">whitepoint=</span><span class="s3">255</span><span class="s2">, </span><span class="s1">midpoint=</span><span class="s3">127</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Colorize grayscale image. 
+    This function calculates a color wedge which maps all black pixels in 
+    the source image to the first color and all white pixels to the 
+    second color. If ``mid`` is specified, it uses three-color mapping. 
+    The ``black`` and ``white`` arguments should be RGB tuples or color names; 
+    optionally you can use three-color mapping by also specifying ``mid``. 
+    Mapping positions for any of the colors can be specified 
+    (e.g. ``blackpoint``), where these parameters are the integer 
+    value corresponding to where the corresponding color should be mapped. 
+    These parameters must have logical order, such that 
+    ``blackpoint &lt;= midpoint &lt;= whitepoint`` (if ``mid`` is specified). 
+ 
+    :param image: The image to colorize. 
+    :param black: The color to use for black input pixels. 
+    :param white: The color to use for white input pixels. 
+    :param mid: The color to use for midtone input pixels. 
+    :param blackpoint: an int value [0, 255] for the black mapping. 
+    :param whitepoint: an int value [0, 255] for the white mapping. 
+    :param midpoint: an int value [0, 255] for the midtone mapping. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0"># Initial asserts</span>
+    <span class="s2">assert </span><span class="s1">image.mode == </span><span class="s4">&quot;L&quot;</span>
+    <span class="s2">if </span><span class="s1">mid </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s2">assert </span><span class="s3">0 </span><span class="s1">&lt;= blackpoint &lt;= whitepoint &lt;= </span><span class="s3">255</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">assert </span><span class="s3">0 </span><span class="s1">&lt;= blackpoint &lt;= midpoint &lt;= whitepoint &lt;= </span><span class="s3">255</span>
+
+    <span class="s0"># Define colors from arguments</span>
+    <span class="s1">black = _color(black</span><span class="s2">, </span><span class="s4">&quot;RGB&quot;</span><span class="s1">)</span>
+    <span class="s1">white = _color(white</span><span class="s2">, </span><span class="s4">&quot;RGB&quot;</span><span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">mid </span><span class="s2">is not None</span><span class="s1">:</span>
+        <span class="s1">mid = _color(mid</span><span class="s2">, </span><span class="s4">&quot;RGB&quot;</span><span class="s1">)</span>
+
+    <span class="s0"># Empty lists for the mapping</span>
+    <span class="s1">red = []</span>
+    <span class="s1">green = []</span>
+    <span class="s1">blue = []</span>
+
+    <span class="s0"># Create the low-end values</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">0</span><span class="s2">, </span><span class="s1">blackpoint):</span>
+        <span class="s1">red.append(black[</span><span class="s3">0</span><span class="s1">])</span>
+        <span class="s1">green.append(black[</span><span class="s3">1</span><span class="s1">])</span>
+        <span class="s1">blue.append(black[</span><span class="s3">2</span><span class="s1">])</span>
+
+    <span class="s0"># Create the mapping (2-color)</span>
+    <span class="s2">if </span><span class="s1">mid </span><span class="s2">is None</span><span class="s1">:</span>
+
+        <span class="s1">range_map = range(</span><span class="s3">0</span><span class="s2">, </span><span class="s1">whitepoint - blackpoint)</span>
+
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range_map:</span>
+            <span class="s1">red.append(black[</span><span class="s3">0</span><span class="s1">] + i * (white[</span><span class="s3">0</span><span class="s1">] - black[</span><span class="s3">0</span><span class="s1">]) // len(range_map))</span>
+            <span class="s1">green.append(black[</span><span class="s3">1</span><span class="s1">] + i * (white[</span><span class="s3">1</span><span class="s1">] - black[</span><span class="s3">1</span><span class="s1">]) // len(range_map))</span>
+            <span class="s1">blue.append(black[</span><span class="s3">2</span><span class="s1">] + i * (white[</span><span class="s3">2</span><span class="s1">] - black[</span><span class="s3">2</span><span class="s1">]) // len(range_map))</span>
+
+    <span class="s0"># Create the mapping (3-color)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+
+        <span class="s1">range_map1 = range(</span><span class="s3">0</span><span class="s2">, </span><span class="s1">midpoint - blackpoint)</span>
+        <span class="s1">range_map2 = range(</span><span class="s3">0</span><span class="s2">, </span><span class="s1">whitepoint - midpoint)</span>
+
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range_map1:</span>
+            <span class="s1">red.append(black[</span><span class="s3">0</span><span class="s1">] + i * (mid[</span><span class="s3">0</span><span class="s1">] - black[</span><span class="s3">0</span><span class="s1">]) // len(range_map1))</span>
+            <span class="s1">green.append(black[</span><span class="s3">1</span><span class="s1">] + i * (mid[</span><span class="s3">1</span><span class="s1">] - black[</span><span class="s3">1</span><span class="s1">]) // len(range_map1))</span>
+            <span class="s1">blue.append(black[</span><span class="s3">2</span><span class="s1">] + i * (mid[</span><span class="s3">2</span><span class="s1">] - black[</span><span class="s3">2</span><span class="s1">]) // len(range_map1))</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range_map2:</span>
+            <span class="s1">red.append(mid[</span><span class="s3">0</span><span class="s1">] + i * (white[</span><span class="s3">0</span><span class="s1">] - mid[</span><span class="s3">0</span><span class="s1">]) // len(range_map2))</span>
+            <span class="s1">green.append(mid[</span><span class="s3">1</span><span class="s1">] + i * (white[</span><span class="s3">1</span><span class="s1">] - mid[</span><span class="s3">1</span><span class="s1">]) // len(range_map2))</span>
+            <span class="s1">blue.append(mid[</span><span class="s3">2</span><span class="s1">] + i * (white[</span><span class="s3">2</span><span class="s1">] - mid[</span><span class="s3">2</span><span class="s1">]) // len(range_map2))</span>
+
+    <span class="s0"># Create the high-end values</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">256 </span><span class="s1">- whitepoint):</span>
+        <span class="s1">red.append(white[</span><span class="s3">0</span><span class="s1">])</span>
+        <span class="s1">green.append(white[</span><span class="s3">1</span><span class="s1">])</span>
+        <span class="s1">blue.append(white[</span><span class="s3">2</span><span class="s1">])</span>
+
+    <span class="s0"># Return converted image</span>
+    <span class="s1">image = image.convert(</span><span class="s4">&quot;RGB&quot;</span><span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">_lut(image</span><span class="s2">, </span><span class="s1">red + green + blue)</span>
+
+
+<span class="s2">def </span><span class="s1">contain(image</span><span class="s2">, </span><span class="s1">size</span><span class="s2">, </span><span class="s1">method=Image.Resampling.BICUBIC):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Returns a resized version of the image, set to the maximum width and height 
+    within the requested size, while maintaining the original aspect ratio. 
+ 
+    :param image: The image to resize and crop. 
+    :param size: The requested output size in pixels, given as a 
+                 (width, height) tuple. 
+    :param method: Resampling method to use. Default is 
+                   :py:attr:`PIL.Image.BICUBIC`. See :ref:`concept-filters`. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">im_ratio = image.width / image.height</span>
+    <span class="s1">dest_ratio = size[</span><span class="s3">0</span><span class="s1">] / size[</span><span class="s3">1</span><span class="s1">]</span>
+
+    <span class="s2">if </span><span class="s1">im_ratio != dest_ratio:</span>
+        <span class="s2">if </span><span class="s1">im_ratio &gt; dest_ratio:</span>
+            <span class="s1">new_height = round(image.height / image.width * size[</span><span class="s3">0</span><span class="s1">])</span>
+            <span class="s2">if </span><span class="s1">new_height != size[</span><span class="s3">1</span><span class="s1">]:</span>
+                <span class="s1">size = (size[</span><span class="s3">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">new_height)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">new_width = round(image.width / image.height * size[</span><span class="s3">1</span><span class="s1">])</span>
+            <span class="s2">if </span><span class="s1">new_width != size[</span><span class="s3">0</span><span class="s1">]:</span>
+                <span class="s1">size = (new_width</span><span class="s2">, </span><span class="s1">size[</span><span class="s3">1</span><span class="s1">])</span>
+    <span class="s2">return </span><span class="s1">image.resize(size</span><span class="s2">, </span><span class="s1">resample=method)</span>
+
+
+<span class="s2">def </span><span class="s1">pad(image</span><span class="s2">, </span><span class="s1">size</span><span class="s2">, </span><span class="s1">method=Image.Resampling.BICUBIC</span><span class="s2">, </span><span class="s1">color=</span><span class="s2">None, </span><span class="s1">centering=(</span><span class="s3">0.5</span><span class="s2">, </span><span class="s3">0.5</span><span class="s1">)):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Returns a resized and padded version of the image, expanded to fill the 
+    requested aspect ratio and size. 
+ 
+    :param image: The image to resize and crop. 
+    :param size: The requested output size in pixels, given as a 
+                 (width, height) tuple. 
+    :param method: Resampling method to use. Default is 
+                   :py:attr:`PIL.Image.BICUBIC`. See :ref:`concept-filters`. 
+    :param color: The background color of the padded image. 
+    :param centering: Control the position of the original image within the 
+                      padded version. 
+ 
+                          (0.5, 0.5) will keep the image centered 
+                          (0, 0) will keep the image aligned to the top left 
+                          (1, 1) will keep the image aligned to the bottom 
+                          right 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">resized = contain(image</span><span class="s2">, </span><span class="s1">size</span><span class="s2">, </span><span class="s1">method)</span>
+    <span class="s2">if </span><span class="s1">resized.size == size:</span>
+        <span class="s1">out = resized</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">out = Image.new(image.mode</span><span class="s2">, </span><span class="s1">size</span><span class="s2">, </span><span class="s1">color)</span>
+        <span class="s2">if </span><span class="s1">resized.palette:</span>
+            <span class="s1">out.putpalette(resized.getpalette())</span>
+        <span class="s2">if </span><span class="s1">resized.width != size[</span><span class="s3">0</span><span class="s1">]:</span>
+            <span class="s1">x = round((size[</span><span class="s3">0</span><span class="s1">] - resized.width) * max(</span><span class="s3">0</span><span class="s2">, </span><span class="s1">min(centering[</span><span class="s3">0</span><span class="s1">]</span><span class="s2">, </span><span class="s3">1</span><span class="s1">)))</span>
+            <span class="s1">out.paste(resized</span><span class="s2">, </span><span class="s1">(x</span><span class="s2">, </span><span class="s3">0</span><span class="s1">))</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">y = round((size[</span><span class="s3">1</span><span class="s1">] - resized.height) * max(</span><span class="s3">0</span><span class="s2">, </span><span class="s1">min(centering[</span><span class="s3">1</span><span class="s1">]</span><span class="s2">, </span><span class="s3">1</span><span class="s1">)))</span>
+            <span class="s1">out.paste(resized</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s1">y))</span>
+    <span class="s2">return </span><span class="s1">out</span>
+
+
+<span class="s2">def </span><span class="s1">crop(image</span><span class="s2">, </span><span class="s1">border=</span><span class="s3">0</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Remove border from image.  The same amount of pixels are removed 
+    from all four sides.  This function works on all image modes. 
+ 
+    .. seealso:: :py:meth:`~PIL.Image.Image.crop` 
+ 
+    :param image: The image to crop. 
+    :param border: The number of pixels to remove. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">left</span><span class="s2">, </span><span class="s1">top</span><span class="s2">, </span><span class="s1">right</span><span class="s2">, </span><span class="s1">bottom = _border(border)</span>
+    <span class="s2">return </span><span class="s1">image.crop((left</span><span class="s2">, </span><span class="s1">top</span><span class="s2">, </span><span class="s1">image.size[</span><span class="s3">0</span><span class="s1">] - right</span><span class="s2">, </span><span class="s1">image.size[</span><span class="s3">1</span><span class="s1">] - bottom))</span>
+
+
+<span class="s2">def </span><span class="s1">scale(image</span><span class="s2">, </span><span class="s1">factor</span><span class="s2">, </span><span class="s1">resample=Image.Resampling.BICUBIC):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Returns a rescaled image by a specific factor given in parameter. 
+    A factor greater than 1 expands the image, between 0 and 1 contracts the 
+    image. 
+ 
+    :param image: The image to rescale. 
+    :param factor: The expansion factor, as a float. 
+    :param resample: Resampling method to use. Default is 
+                     :py:attr:`PIL.Image.BICUBIC`. See :ref:`concept-filters`. 
+    :returns: An :py:class:`~PIL.Image.Image` object. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">factor == </span><span class="s3">1</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">image.copy()</span>
+    <span class="s2">elif </span><span class="s1">factor &lt;= </span><span class="s3">0</span><span class="s1">:</span>
+        <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;the factor must be greater than 0&quot;</span><span class="s1">)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">size = (round(factor * image.width)</span><span class="s2">, </span><span class="s1">round(factor * image.height))</span>
+        <span class="s2">return </span><span class="s1">image.resize(size</span><span class="s2">, </span><span class="s1">resample)</span>
+
+
+<span class="s2">def </span><span class="s1">deform(image</span><span class="s2">, </span><span class="s1">deformer</span><span class="s2">, </span><span class="s1">resample=Image.Resampling.BILINEAR):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Deform the image. 
+ 
+    :param image: The image to deform. 
+    :param deformer: A deformer object.  Any object that implements a 
+                    ``getmesh`` method can be used. 
+    :param resample: An optional resampling filter. Same values possible as 
+       in the PIL.Image.transform function. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">image.transform(</span>
+        <span class="s1">image.size</span><span class="s2">, </span><span class="s1">Image.Transform.MESH</span><span class="s2">, </span><span class="s1">deformer.getmesh(image)</span><span class="s2">, </span><span class="s1">resample</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">equalize(image</span><span class="s2">, </span><span class="s1">mask=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Equalize the image histogram. This function applies a non-linear 
+    mapping to the input image, in order to create a uniform 
+    distribution of grayscale values in the output image. 
+ 
+    :param image: The image to equalize. 
+    :param mask: An optional mask.  If given, only the pixels selected by 
+                 the mask are included in the analysis. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">image.mode == </span><span class="s4">&quot;P&quot;</span><span class="s1">:</span>
+        <span class="s1">image = image.convert(</span><span class="s4">&quot;RGB&quot;</span><span class="s1">)</span>
+    <span class="s1">h = image.histogram(mask)</span>
+    <span class="s1">lut = []</span>
+    <span class="s2">for </span><span class="s1">b </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">0</span><span class="s2">, </span><span class="s1">len(h)</span><span class="s2">, </span><span class="s3">256</span><span class="s1">):</span>
+        <span class="s1">histo = [_f </span><span class="s2">for </span><span class="s1">_f </span><span class="s2">in </span><span class="s1">h[b : b + </span><span class="s3">256</span><span class="s1">] </span><span class="s2">if </span><span class="s1">_f]</span>
+        <span class="s2">if </span><span class="s1">len(histo) &lt;= </span><span class="s3">1</span><span class="s1">:</span>
+            <span class="s1">lut.extend(list(range(</span><span class="s3">256</span><span class="s1">)))</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">step = (functools.reduce(operator.add</span><span class="s2">, </span><span class="s1">histo) - histo[-</span><span class="s3">1</span><span class="s1">]) // </span><span class="s3">255</span>
+            <span class="s2">if not </span><span class="s1">step:</span>
+                <span class="s1">lut.extend(list(range(</span><span class="s3">256</span><span class="s1">)))</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">n = step // </span><span class="s3">2</span>
+                <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">256</span><span class="s1">):</span>
+                    <span class="s1">lut.append(n // step)</span>
+                    <span class="s1">n = n + h[i + b]</span>
+    <span class="s2">return </span><span class="s1">_lut(image</span><span class="s2">, </span><span class="s1">lut)</span>
+
+
+<span class="s2">def </span><span class="s1">expand(image</span><span class="s2">, </span><span class="s1">border=</span><span class="s3">0</span><span class="s2">, </span><span class="s1">fill=</span><span class="s3">0</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Add border to the image 
+ 
+    :param image: The image to expand. 
+    :param border: Border width, in pixels. 
+    :param fill: Pixel fill value (a color value).  Default is 0 (black). 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">left</span><span class="s2">, </span><span class="s1">top</span><span class="s2">, </span><span class="s1">right</span><span class="s2">, </span><span class="s1">bottom = _border(border)</span>
+    <span class="s1">width = left + image.size[</span><span class="s3">0</span><span class="s1">] + right</span>
+    <span class="s1">height = top + image.size[</span><span class="s3">1</span><span class="s1">] + bottom</span>
+    <span class="s1">color = _color(fill</span><span class="s2">, </span><span class="s1">image.mode)</span>
+    <span class="s2">if </span><span class="s1">image.palette:</span>
+        <span class="s1">palette = ImagePalette.ImagePalette(palette=image.getpalette())</span>
+        <span class="s2">if </span><span class="s1">isinstance(color</span><span class="s2">, </span><span class="s1">tuple):</span>
+            <span class="s1">color = palette.getcolor(color)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">palette = </span><span class="s2">None</span>
+    <span class="s1">out = Image.new(image.mode</span><span class="s2">, </span><span class="s1">(width</span><span class="s2">, </span><span class="s1">height)</span><span class="s2">, </span><span class="s1">color)</span>
+    <span class="s2">if </span><span class="s1">palette:</span>
+        <span class="s1">out.putpalette(palette.palette)</span>
+    <span class="s1">out.paste(image</span><span class="s2">, </span><span class="s1">(left</span><span class="s2">, </span><span class="s1">top))</span>
+    <span class="s2">return </span><span class="s1">out</span>
+
+
+<span class="s2">def </span><span class="s1">fit(image</span><span class="s2">, </span><span class="s1">size</span><span class="s2">, </span><span class="s1">method=Image.Resampling.BICUBIC</span><span class="s2">, </span><span class="s1">bleed=</span><span class="s3">0.0</span><span class="s2">, </span><span class="s1">centering=(</span><span class="s3">0.5</span><span class="s2">, </span><span class="s3">0.5</span><span class="s1">)):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Returns a resized and cropped version of the image, cropped to the 
+    requested aspect ratio and size. 
+ 
+    This function was contributed by Kevin Cazabon. 
+ 
+    :param image: The image to resize and crop. 
+    :param size: The requested output size in pixels, given as a 
+                 (width, height) tuple. 
+    :param method: Resampling method to use. Default is 
+                   :py:attr:`PIL.Image.BICUBIC`. See :ref:`concept-filters`. 
+    :param bleed: Remove a border around the outside of the image from all 
+                  four edges. The value is a decimal percentage (use 0.01 for 
+                  one percent). The default value is 0 (no border). 
+                  Cannot be greater than or equal to 0.5. 
+    :param centering: Control the cropping position.  Use (0.5, 0.5) for 
+                      center cropping (e.g. if cropping the width, take 50% off 
+                      of the left side, and therefore 50% off the right side). 
+                      (0.0, 0.0) will crop from the top left corner (i.e. if 
+                      cropping the width, take all of the crop off of the right 
+                      side, and if cropping the height, take all of it off the 
+                      bottom).  (1.0, 0.0) will crop from the bottom left 
+                      corner, etc. (i.e. if cropping the width, take all of the 
+                      crop off the left side, and if cropping the height take 
+                      none from the top, and therefore all off the bottom). 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0"># by Kevin Cazabon, Feb 17/2000</span>
+    <span class="s0"># kevin@cazabon.com</span>
+    <span class="s0"># https://www.cazabon.com</span>
+
+    <span class="s0"># ensure centering is mutable</span>
+    <span class="s1">centering = list(centering)</span>
+
+    <span class="s2">if not </span><span class="s3">0.0 </span><span class="s1">&lt;= centering[</span><span class="s3">0</span><span class="s1">] &lt;= </span><span class="s3">1.0</span><span class="s1">:</span>
+        <span class="s1">centering[</span><span class="s3">0</span><span class="s1">] = </span><span class="s3">0.5</span>
+    <span class="s2">if not </span><span class="s3">0.0 </span><span class="s1">&lt;= centering[</span><span class="s3">1</span><span class="s1">] &lt;= </span><span class="s3">1.0</span><span class="s1">:</span>
+        <span class="s1">centering[</span><span class="s3">1</span><span class="s1">] = </span><span class="s3">0.5</span>
+
+    <span class="s2">if not </span><span class="s3">0.0 </span><span class="s1">&lt;= bleed &lt; </span><span class="s3">0.5</span><span class="s1">:</span>
+        <span class="s1">bleed = </span><span class="s3">0.0</span>
+
+    <span class="s0"># calculate the area to use for resizing and cropping, subtracting</span>
+    <span class="s0"># the 'bleed' around the edges</span>
+
+    <span class="s0"># number of pixels to trim off on Top and Bottom, Left and Right</span>
+    <span class="s1">bleed_pixels = (bleed * image.size[</span><span class="s3">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">bleed * image.size[</span><span class="s3">1</span><span class="s1">])</span>
+
+    <span class="s1">live_size = (</span>
+        <span class="s1">image.size[</span><span class="s3">0</span><span class="s1">] - bleed_pixels[</span><span class="s3">0</span><span class="s1">] * </span><span class="s3">2</span><span class="s2">,</span>
+        <span class="s1">image.size[</span><span class="s3">1</span><span class="s1">] - bleed_pixels[</span><span class="s3">1</span><span class="s1">] * </span><span class="s3">2</span><span class="s2">,</span>
+    <span class="s1">)</span>
+
+    <span class="s0"># calculate the aspect ratio of the live_size</span>
+    <span class="s1">live_size_ratio = live_size[</span><span class="s3">0</span><span class="s1">] / live_size[</span><span class="s3">1</span><span class="s1">]</span>
+
+    <span class="s0"># calculate the aspect ratio of the output image</span>
+    <span class="s1">output_ratio = size[</span><span class="s3">0</span><span class="s1">] / size[</span><span class="s3">1</span><span class="s1">]</span>
+
+    <span class="s0"># figure out if the sides or top/bottom will be cropped off</span>
+    <span class="s2">if </span><span class="s1">live_size_ratio == output_ratio:</span>
+        <span class="s0"># live_size is already the needed ratio</span>
+        <span class="s1">crop_width = live_size[</span><span class="s3">0</span><span class="s1">]</span>
+        <span class="s1">crop_height = live_size[</span><span class="s3">1</span><span class="s1">]</span>
+    <span class="s2">elif </span><span class="s1">live_size_ratio &gt;= output_ratio:</span>
+        <span class="s0"># live_size is wider than what's needed, crop the sides</span>
+        <span class="s1">crop_width = output_ratio * live_size[</span><span class="s3">1</span><span class="s1">]</span>
+        <span class="s1">crop_height = live_size[</span><span class="s3">1</span><span class="s1">]</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s0"># live_size is taller than what's needed, crop the top and bottom</span>
+        <span class="s1">crop_width = live_size[</span><span class="s3">0</span><span class="s1">]</span>
+        <span class="s1">crop_height = live_size[</span><span class="s3">0</span><span class="s1">] / output_ratio</span>
+
+    <span class="s0"># make the crop</span>
+    <span class="s1">crop_left = bleed_pixels[</span><span class="s3">0</span><span class="s1">] + (live_size[</span><span class="s3">0</span><span class="s1">] - crop_width) * centering[</span><span class="s3">0</span><span class="s1">]</span>
+    <span class="s1">crop_top = bleed_pixels[</span><span class="s3">1</span><span class="s1">] + (live_size[</span><span class="s3">1</span><span class="s1">] - crop_height) * centering[</span><span class="s3">1</span><span class="s1">]</span>
+
+    <span class="s1">crop = (crop_left</span><span class="s2">, </span><span class="s1">crop_top</span><span class="s2">, </span><span class="s1">crop_left + crop_width</span><span class="s2">, </span><span class="s1">crop_top + crop_height)</span>
+
+    <span class="s0"># resize the image and return it</span>
+    <span class="s2">return </span><span class="s1">image.resize(size</span><span class="s2">, </span><span class="s1">method</span><span class="s2">, </span><span class="s1">box=crop)</span>
+
+
+<span class="s2">def </span><span class="s1">flip(image):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Flip the image vertically (top to bottom). 
+ 
+    :param image: The image to flip. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)</span>
+
+
+<span class="s2">def </span><span class="s1">grayscale(image):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Convert the image to grayscale. 
+ 
+    :param image: The image to convert. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">image.convert(</span><span class="s4">&quot;L&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">invert(image):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Invert (negate) the image. 
+ 
+    :param image: The image to invert. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">lut = []</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">256</span><span class="s1">):</span>
+        <span class="s1">lut.append(</span><span class="s3">255 </span><span class="s1">- i)</span>
+    <span class="s2">return </span><span class="s1">image.point(lut) </span><span class="s2">if </span><span class="s1">image.mode == </span><span class="s4">&quot;1&quot; </span><span class="s2">else </span><span class="s1">_lut(image</span><span class="s2">, </span><span class="s1">lut)</span>
+
+
+<span class="s2">def </span><span class="s1">mirror(image):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Flip image horizontally (left to right). 
+ 
+    :param image: The image to mirror. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)</span>
+
+
+<span class="s2">def </span><span class="s1">posterize(image</span><span class="s2">, </span><span class="s1">bits):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Reduce the number of bits for each color channel. 
+ 
+    :param image: The image to posterize. 
+    :param bits: The number of bits to keep for each channel (1-8). 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">lut = []</span>
+    <span class="s1">mask = ~(</span><span class="s3">2 </span><span class="s1">** (</span><span class="s3">8 </span><span class="s1">- bits) - </span><span class="s3">1</span><span class="s1">)</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">256</span><span class="s1">):</span>
+        <span class="s1">lut.append(i &amp; mask)</span>
+    <span class="s2">return </span><span class="s1">_lut(image</span><span class="s2">, </span><span class="s1">lut)</span>
+
+
+<span class="s2">def </span><span class="s1">solarize(image</span><span class="s2">, </span><span class="s1">threshold=</span><span class="s3">128</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Invert all pixel values above a threshold. 
+ 
+    :param image: The image to solarize. 
+    :param threshold: All pixels above this greyscale level are inverted. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">lut = []</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">256</span><span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">i &lt; threshold:</span>
+            <span class="s1">lut.append(i)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">lut.append(</span><span class="s3">255 </span><span class="s1">- i)</span>
+    <span class="s2">return </span><span class="s1">_lut(image</span><span class="s2">, </span><span class="s1">lut)</span>
+
+
+<span class="s2">def </span><span class="s1">exif_transpose(image):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    If an image has an EXIF Orientation tag, other than 1, return a new image 
+    that is transposed accordingly. The new image will have the orientation 
+    data removed. 
+ 
+    Otherwise, return a copy of the image. 
+ 
+    :param image: The image to transpose. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">exif = image.getexif()</span>
+    <span class="s1">orientation = exif.get(</span><span class="s3">0x0112</span><span class="s1">)</span>
+    <span class="s1">method = {</span>
+        <span class="s3">2</span><span class="s1">: Image.Transpose.FLIP_LEFT_RIGHT</span><span class="s2">,</span>
+        <span class="s3">3</span><span class="s1">: Image.Transpose.ROTATE_180</span><span class="s2">,</span>
+        <span class="s3">4</span><span class="s1">: Image.Transpose.FLIP_TOP_BOTTOM</span><span class="s2">,</span>
+        <span class="s3">5</span><span class="s1">: Image.Transpose.TRANSPOSE</span><span class="s2">,</span>
+        <span class="s3">6</span><span class="s1">: Image.Transpose.ROTATE_270</span><span class="s2">,</span>
+        <span class="s3">7</span><span class="s1">: Image.Transpose.TRANSVERSE</span><span class="s2">,</span>
+        <span class="s3">8</span><span class="s1">: Image.Transpose.ROTATE_90</span><span class="s2">,</span>
+    <span class="s1">}.get(orientation)</span>
+    <span class="s2">if </span><span class="s1">method </span><span class="s2">is not None</span><span class="s1">:</span>
+        <span class="s1">transposed_image = image.transpose(method)</span>
+        <span class="s1">transposed_exif = transposed_image.getexif()</span>
+        <span class="s2">if </span><span class="s3">0x0112 </span><span class="s2">in </span><span class="s1">transposed_exif:</span>
+            <span class="s2">del </span><span class="s1">transposed_exif[</span><span class="s3">0x0112</span><span class="s1">]</span>
+            <span class="s2">if </span><span class="s4">&quot;exif&quot; </span><span class="s2">in </span><span class="s1">transposed_image.info:</span>
+                <span class="s1">transposed_image.info[</span><span class="s4">&quot;exif&quot;</span><span class="s1">] = transposed_exif.tobytes()</span>
+            <span class="s2">elif </span><span class="s4">&quot;Raw profile type exif&quot; </span><span class="s2">in </span><span class="s1">transposed_image.info:</span>
+                <span class="s1">transposed_image.info[</span>
+                    <span class="s4">&quot;Raw profile type exif&quot;</span>
+                <span class="s1">] = transposed_exif.tobytes().hex()</span>
+            <span class="s2">elif </span><span class="s4">&quot;XML:com.adobe.xmp&quot; </span><span class="s2">in </span><span class="s1">transposed_image.info:</span>
+                <span class="s2">for </span><span class="s1">pattern </span><span class="s2">in </span><span class="s1">(</span>
+                    <span class="s4">r'tiff:Orientation=&quot;([0-9])&quot;'</span><span class="s2">,</span>
+                    <span class="s4">r&quot;&lt;tiff:Orientation&gt;([0-9])&lt;/tiff:Orientation&gt;&quot;</span><span class="s2">,</span>
+                <span class="s1">):</span>
+                    <span class="s1">transposed_image.info[</span><span class="s4">&quot;XML:com.adobe.xmp&quot;</span><span class="s1">] = re.sub(</span>
+                        <span class="s1">pattern</span><span class="s2">, </span><span class="s4">&quot;&quot;</span><span class="s2">, </span><span class="s1">transposed_image.info[</span><span class="s4">&quot;XML:com.adobe.xmp&quot;</span><span class="s1">]</span>
+                    <span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">transposed_image</span>
+    <span class="s2">return </span><span class="s1">image.copy()</span>
+</pre>
+</body>
+</html>

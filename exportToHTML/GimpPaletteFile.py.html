@@ -1,0 +1,79 @@
+<html>
+<head>
+<title>GimpPaletteFile.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #629755; font-style: italic;}
+.s4 { color: #6a8759;}
+.s5 { color: #6897bb;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+GimpPaletteFile.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># Python Imaging Library</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># stuff to read GIMP palette files</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1997-08-23 fl     Created</span>
+<span class="s0"># 2004-09-07 fl     Support GIMP 2.0 palette files.</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 1997-2004.  All rights reserved.</span>
+<span class="s0"># Copyright (c) Fredrik Lundh 1997-2004.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">import </span><span class="s1">re</span>
+
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">o8</span>
+
+
+<span class="s2">class </span><span class="s1">GimpPaletteFile:</span>
+    <span class="s3">&quot;&quot;&quot;File handler for GIMP's palette format.&quot;&quot;&quot;</span>
+
+    <span class="s1">rawmode = </span><span class="s4">&quot;RGB&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">fp):</span>
+
+        <span class="s1">self.palette = [o8(i) * </span><span class="s5">3 </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">256</span><span class="s1">)]</span>
+
+        <span class="s2">if </span><span class="s1">fp.readline()[:</span><span class="s5">12</span><span class="s1">] != </span><span class="s6">b&quot;GIMP Palette&quot;</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;not a GIMP palette file&quot;</span><span class="s1">)</span>
+
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">256</span><span class="s1">):</span>
+
+            <span class="s1">s = fp.readline()</span>
+            <span class="s2">if not </span><span class="s1">s:</span>
+                <span class="s2">break</span>
+
+            <span class="s0"># skip fields and comment lines</span>
+            <span class="s2">if </span><span class="s1">re.match(</span><span class="s6">rb&quot;\w+:|#&quot;</span><span class="s2">, </span><span class="s1">s):</span>
+                <span class="s2">continue</span>
+            <span class="s2">if </span><span class="s1">len(s) &gt; </span><span class="s5">100</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;bad palette file&quot;</span><span class="s1">)</span>
+
+            <span class="s1">v = tuple(map(int</span><span class="s2">, </span><span class="s1">s.split()[:</span><span class="s5">3</span><span class="s1">]))</span>
+            <span class="s2">if </span><span class="s1">len(v) != </span><span class="s5">3</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;bad palette entry&quot;</span><span class="s1">)</span>
+
+            <span class="s1">self.palette[i] = o8(v[</span><span class="s5">0</span><span class="s1">]) + o8(v[</span><span class="s5">1</span><span class="s1">]) + o8(v[</span><span class="s5">2</span><span class="s1">])</span>
+
+        <span class="s1">self.palette = </span><span class="s6">b&quot;&quot;</span><span class="s1">.join(self.palette)</span>
+
+    <span class="s2">def </span><span class="s1">getpalette(self):</span>
+
+        <span class="s2">return </span><span class="s1">self.palette</span><span class="s2">, </span><span class="s1">self.rawmode</span>
+</pre>
+</body>
+</html>

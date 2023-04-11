@@ -1,0 +1,100 @@
+<html>
+<head>
+<title>XVThumbImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #a5c261;}
+.s4 { color: #6897bb;}
+.s5 { color: #6a8759;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+XVThumbImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># XV Thumbnail file handler by Charles E. &quot;Gene&quot; Cash</span>
+<span class="s0"># (gcash@magicnet.net)</span>
+<span class="s0">#</span>
+<span class="s0"># see xvcolor.c and xvbrowse.c in the sources to John Bradley's XV,</span>
+<span class="s0"># available from ftp://ftp.cis.upenn.edu/pub/xv/</span>
+<span class="s0">#</span>
+<span class="s0"># history:</span>
+<span class="s0"># 98-08-15 cec  created (b/w only)</span>
+<span class="s0"># 98-12-09 cec  added color palette</span>
+<span class="s0"># 98-12-28 fl   added to PIL (with only a few very minor modifications)</span>
+<span class="s0">#</span>
+<span class="s0"># To do:</span>
+<span class="s0"># FIXME: make save work (this requires quantization support)</span>
+<span class="s0">#</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span><span class="s2">, </span><span class="s1">ImagePalette</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">o8</span>
+
+<span class="s1">_MAGIC = </span><span class="s3">b&quot;P7 332&quot;</span>
+
+<span class="s0"># standard color palette for thumbnails (RGB332)</span>
+<span class="s1">PALETTE = </span><span class="s3">b&quot;&quot;</span>
+<span class="s2">for </span><span class="s1">r </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">8</span><span class="s1">):</span>
+    <span class="s2">for </span><span class="s1">g </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">8</span><span class="s1">):</span>
+        <span class="s2">for </span><span class="s1">b </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">4</span><span class="s1">):</span>
+            <span class="s1">PALETTE = PALETTE + (</span>
+                <span class="s1">o8((r * </span><span class="s4">255</span><span class="s1">) // </span><span class="s4">7</span><span class="s1">) + o8((g * </span><span class="s4">255</span><span class="s1">) // </span><span class="s4">7</span><span class="s1">) + o8((b * </span><span class="s4">255</span><span class="s1">) // </span><span class="s4">3</span><span class="s1">)</span>
+            <span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">_accept(prefix):</span>
+    <span class="s2">return </span><span class="s1">prefix[:</span><span class="s4">6</span><span class="s1">] == _MAGIC</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for XV thumbnail images.</span>
+
+
+<span class="s2">class </span><span class="s1">XVThumbImageFile(ImageFile.ImageFile):</span>
+
+    <span class="s1">format = </span><span class="s5">&quot;XVThumb&quot;</span>
+    <span class="s1">format_description = </span><span class="s5">&quot;XV thumbnail image&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+
+        <span class="s0"># check magic</span>
+        <span class="s2">if not </span><span class="s1">_accept(self.fp.read(</span><span class="s4">6</span><span class="s1">)):</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s5">&quot;not an XV thumbnail file&quot;</span><span class="s1">)</span>
+
+        <span class="s0"># Skip to beginning of next line</span>
+        <span class="s1">self.fp.readline()</span>
+
+        <span class="s0"># skip info comments</span>
+        <span class="s2">while True</span><span class="s1">:</span>
+            <span class="s1">s = self.fp.readline()</span>
+            <span class="s2">if not </span><span class="s1">s:</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s5">&quot;Unexpected EOF reading XV thumbnail file&quot;</span><span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">s[</span><span class="s4">0</span><span class="s1">] != </span><span class="s4">35</span><span class="s1">:  </span><span class="s0"># ie. when not a comment: '#'</span>
+                <span class="s2">break</span>
+
+        <span class="s0"># parse header line (already read)</span>
+        <span class="s1">s = s.strip().split()</span>
+
+        <span class="s1">self.mode = </span><span class="s5">&quot;P&quot;</span>
+        <span class="s1">self._size = int(s[</span><span class="s4">0</span><span class="s1">])</span><span class="s2">, </span><span class="s1">int(s[</span><span class="s4">1</span><span class="s1">])</span>
+
+        <span class="s1">self.palette = ImagePalette.raw(</span><span class="s5">&quot;RGB&quot;</span><span class="s2">, </span><span class="s1">PALETTE)</span>
+
+        <span class="s1">self.tile = [(</span><span class="s5">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s1">self.fp.tell()</span><span class="s2">, </span><span class="s1">(self.mode</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s4">1</span><span class="s1">))]</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+
+<span class="s1">Image.register_open(XVThumbImageFile.format</span><span class="s2">, </span><span class="s1">XVThumbImageFile</span><span class="s2">, </span><span class="s1">_accept)</span>
+</pre>
+</body>
+</html>

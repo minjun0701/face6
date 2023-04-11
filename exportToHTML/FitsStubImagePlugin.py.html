@@ -1,0 +1,98 @@
+<html>
+<head>
+<title>FitsStubImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #629755; font-style: italic;}
+.s4 { color: #6a8759;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+FitsStubImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># FITS stub adapter</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1998-2003 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">FitsImagePlugin</span><span class="s2">, </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span>
+<span class="s2">from </span><span class="s1">._deprecate </span><span class="s2">import </span><span class="s1">deprecate</span>
+
+<span class="s1">_handler = </span><span class="s2">None</span>
+
+
+<span class="s2">def </span><span class="s1">register_handler(handler):</span>
+    <span class="s3">&quot;&quot;&quot; 
+    Install application-specific FITS image handler. 
+ 
+    :param handler: Handler object. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">global </span><span class="s1">_handler</span>
+    <span class="s1">_handler = handler</span>
+
+    <span class="s1">deprecate(</span>
+        <span class="s4">&quot;FitsStubImagePlugin&quot;</span><span class="s2">,</span>
+        <span class="s5">10</span><span class="s2">,</span>
+        <span class="s1">action=</span><span class="s4">&quot;FITS images can now be read without &quot;</span>
+        <span class="s4">&quot;a handler through FitsImagePlugin instead&quot;</span><span class="s2">,</span>
+    <span class="s1">)</span>
+
+    <span class="s0"># Override FitsImagePlugin with this handler</span>
+    <span class="s0"># for backwards compatibility</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">Image.ID.remove(FITSStubImageFile.format)</span>
+    <span class="s2">except </span><span class="s1">ValueError:</span>
+        <span class="s2">pass</span>
+
+    <span class="s1">Image.register_open(</span>
+        <span class="s1">FITSStubImageFile.format</span><span class="s2">, </span><span class="s1">FITSStubImageFile</span><span class="s2">, </span><span class="s1">FitsImagePlugin._accept</span>
+    <span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">FITSStubImageFile(ImageFile.StubImageFile):</span>
+
+    <span class="s1">format = FitsImagePlugin.FitsImageFile.format</span>
+    <span class="s1">format_description = FitsImagePlugin.FitsImageFile.format_description</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+        <span class="s1">offset = self.fp.tell()</span>
+
+        <span class="s1">im = FitsImagePlugin.FitsImageFile(self.fp)</span>
+        <span class="s1">self._size = im.size</span>
+        <span class="s1">self.mode = im.mode</span>
+        <span class="s1">self.tile = []</span>
+
+        <span class="s1">self.fp.seek(offset)</span>
+
+        <span class="s1">loader = self._load()</span>
+        <span class="s2">if </span><span class="s1">loader:</span>
+            <span class="s1">loader.open(self)</span>
+
+    <span class="s2">def </span><span class="s1">_load(self):</span>
+        <span class="s2">return </span><span class="s1">_handler</span>
+
+
+<span class="s2">def </span><span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename):</span>
+    <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">&quot;FITS save handler not installed&quot;</span><span class="s1">)</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Registry</span>
+
+<span class="s1">Image.register_save(FITSStubImageFile.format</span><span class="s2">, </span><span class="s1">_save)</span>
+</pre>
+</body>
+</html>

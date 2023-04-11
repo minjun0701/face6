@@ -1,0 +1,380 @@
+<html>
+<head>
+<title>PyAccess.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6a8759;}
+.s4 { color: #629755; font-style: italic;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+PyAccess.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library</span>
+<span class="s0"># Pillow fork</span>
+<span class="s0">#</span>
+<span class="s0"># Python implementation of the PixelAccess Object</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2009 by Secret Labs AB.  All rights reserved.</span>
+<span class="s0"># Copyright (c) 1995-2009 by Fredrik Lundh.</span>
+<span class="s0"># Copyright (c) 2013 Eric Soroos</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution</span>
+<span class="s0">#</span>
+
+<span class="s0"># Notes:</span>
+<span class="s0">#</span>
+<span class="s0">#  * Implements the pixel access object following Access.</span>
+<span class="s0">#  * Does not implement the line functions, as they don't appear to be used</span>
+<span class="s0">#  * Taking only the tuple form, which is used from python.</span>
+<span class="s0">#    * Fill.c uses the integer form, but it's still going to use the old</span>
+<span class="s0">#      Access.c implementation.</span>
+<span class="s0">#</span>
+
+<span class="s2">import </span><span class="s1">logging</span>
+<span class="s2">import </span><span class="s1">sys</span>
+
+<span class="s2">try</span><span class="s1">:</span>
+    <span class="s2">from </span><span class="s1">cffi </span><span class="s2">import </span><span class="s1">FFI</span>
+
+    <span class="s1">defs = </span><span class="s3">&quot;&quot;&quot; 
+    struct Pixel_RGBA { 
+        unsigned char r,g,b,a; 
+    }; 
+    struct Pixel_I16 { 
+        unsigned char l,r; 
+    }; 
+    &quot;&quot;&quot;</span>
+    <span class="s1">ffi = FFI()</span>
+    <span class="s1">ffi.cdef(defs)</span>
+<span class="s2">except </span><span class="s1">ImportError </span><span class="s2">as </span><span class="s1">ex:</span>
+    <span class="s0"># Allow error import for doc purposes, but error out when accessing</span>
+    <span class="s0"># anything in core.</span>
+    <span class="s2">from </span><span class="s1">._util </span><span class="s2">import </span><span class="s1">DeferredError</span>
+
+    <span class="s1">FFI = ffi = DeferredError(ex)</span>
+
+<span class="s1">logger = logging.getLogger(__name__)</span>
+
+
+<span class="s2">class </span><span class="s1">PyAccess:</span>
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">img</span><span class="s2">, </span><span class="s1">readonly=</span><span class="s2">False</span><span class="s1">):</span>
+        <span class="s1">vals = dict(img.im.unsafe_ptrs)</span>
+        <span class="s1">self.readonly = readonly</span>
+        <span class="s1">self.image8 = ffi.cast(</span><span class="s3">&quot;unsigned char **&quot;</span><span class="s2">, </span><span class="s1">vals[</span><span class="s3">&quot;image8&quot;</span><span class="s1">])</span>
+        <span class="s1">self.image32 = ffi.cast(</span><span class="s3">&quot;int **&quot;</span><span class="s2">, </span><span class="s1">vals[</span><span class="s3">&quot;image32&quot;</span><span class="s1">])</span>
+        <span class="s1">self.image = ffi.cast(</span><span class="s3">&quot;unsigned char **&quot;</span><span class="s2">, </span><span class="s1">vals[</span><span class="s3">&quot;image&quot;</span><span class="s1">])</span>
+        <span class="s1">self.xsize</span><span class="s2">, </span><span class="s1">self.ysize = img.im.size</span>
+        <span class="s1">self._img = img</span>
+
+        <span class="s0"># Keep pointer to im object to prevent dereferencing.</span>
+        <span class="s1">self._im = img.im</span>
+        <span class="s2">if </span><span class="s1">self._im.mode </span><span class="s2">in </span><span class="s1">(</span><span class="s3">&quot;P&quot;</span><span class="s2">, </span><span class="s3">&quot;PA&quot;</span><span class="s1">):</span>
+            <span class="s1">self._palette = img.palette</span>
+
+        <span class="s0"># Debugging is polluting test traces, only useful here</span>
+        <span class="s0"># when hacking on PyAccess</span>
+        <span class="s0"># logger.debug(&quot;%s&quot;, vals)</span>
+        <span class="s1">self._post_init()</span>
+
+    <span class="s2">def </span><span class="s1">_post_init(self):</span>
+        <span class="s2">pass</span>
+
+    <span class="s2">def </span><span class="s1">__setitem__(self</span><span class="s2">, </span><span class="s1">xy</span><span class="s2">, </span><span class="s1">color):</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Modifies the pixel at x,y. The color is given as a single 
+        numerical value for single band images, and a tuple for 
+        multi-band images 
+ 
+        :param xy: The pixel coordinate, given as (x, y). See 
+           :ref:`coordinate-system`. 
+        :param color: The pixel value. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">self.readonly:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Attempt to putpixel a read only image&quot;</span><span class="s1">)</span>
+        <span class="s1">(x</span><span class="s2">, </span><span class="s1">y) = xy</span>
+        <span class="s2">if </span><span class="s1">x &lt; </span><span class="s5">0</span><span class="s1">:</span>
+            <span class="s1">x = self.xsize + x</span>
+        <span class="s2">if </span><span class="s1">y &lt; </span><span class="s5">0</span><span class="s1">:</span>
+            <span class="s1">y = self.ysize + y</span>
+        <span class="s1">(x</span><span class="s2">, </span><span class="s1">y) = self.check_xy((x</span><span class="s2">, </span><span class="s1">y))</span>
+
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s1">self._im.mode </span><span class="s2">in </span><span class="s1">(</span><span class="s3">&quot;P&quot;</span><span class="s2">, </span><span class="s3">&quot;PA&quot;</span><span class="s1">)</span>
+            <span class="s2">and </span><span class="s1">isinstance(color</span><span class="s2">, </span><span class="s1">(list</span><span class="s2">, </span><span class="s1">tuple))</span>
+            <span class="s2">and </span><span class="s1">len(color) </span><span class="s2">in </span><span class="s1">[</span><span class="s5">3</span><span class="s2">, </span><span class="s5">4</span><span class="s1">]</span>
+        <span class="s1">):</span>
+            <span class="s0"># RGB or RGBA value for a P or PA image</span>
+            <span class="s2">if </span><span class="s1">self._im.mode == </span><span class="s3">&quot;PA&quot;</span><span class="s1">:</span>
+                <span class="s1">alpha = color[</span><span class="s5">3</span><span class="s1">] </span><span class="s2">if </span><span class="s1">len(color) == </span><span class="s5">4 </span><span class="s2">else </span><span class="s5">255</span>
+                <span class="s1">color = color[:</span><span class="s5">3</span><span class="s1">]</span>
+            <span class="s1">color = self._palette.getcolor(color</span><span class="s2">, </span><span class="s1">self._img)</span>
+            <span class="s2">if </span><span class="s1">self._im.mode == </span><span class="s3">&quot;PA&quot;</span><span class="s1">:</span>
+                <span class="s1">color = (color</span><span class="s2">, </span><span class="s1">alpha)</span>
+
+        <span class="s2">return </span><span class="s1">self.set_pixel(x</span><span class="s2">, </span><span class="s1">y</span><span class="s2">, </span><span class="s1">color)</span>
+
+    <span class="s2">def </span><span class="s1">__getitem__(self</span><span class="s2">, </span><span class="s1">xy):</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Returns the pixel at x,y. The pixel is returned as a single 
+        value for single band images or a tuple for multiple band 
+        images 
+ 
+        :param xy: The pixel coordinate, given as (x, y). See 
+          :ref:`coordinate-system`. 
+        :returns: a pixel value for single band images, a tuple of 
+          pixel values for multiband images. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">(x</span><span class="s2">, </span><span class="s1">y) = xy</span>
+        <span class="s2">if </span><span class="s1">x &lt; </span><span class="s5">0</span><span class="s1">:</span>
+            <span class="s1">x = self.xsize + x</span>
+        <span class="s2">if </span><span class="s1">y &lt; </span><span class="s5">0</span><span class="s1">:</span>
+            <span class="s1">y = self.ysize + y</span>
+        <span class="s1">(x</span><span class="s2">, </span><span class="s1">y) = self.check_xy((x</span><span class="s2">, </span><span class="s1">y))</span>
+        <span class="s2">return </span><span class="s1">self.get_pixel(x</span><span class="s2">, </span><span class="s1">y)</span>
+
+    <span class="s1">putpixel = __setitem__</span>
+    <span class="s1">getpixel = __getitem__</span>
+
+    <span class="s2">def </span><span class="s1">check_xy(self</span><span class="s2">, </span><span class="s1">xy):</span>
+        <span class="s1">(x</span><span class="s2">, </span><span class="s1">y) = xy</span>
+        <span class="s2">if not </span><span class="s1">(</span><span class="s5">0 </span><span class="s1">&lt;= x &lt; self.xsize </span><span class="s2">and </span><span class="s5">0 </span><span class="s1">&lt;= y &lt; self.ysize):</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;pixel location out of range&quot;</span><span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">xy</span>
+
+
+<span class="s2">class </span><span class="s1">_PyAccess32_2(PyAccess):</span>
+    <span class="s4">&quot;&quot;&quot;PA, LA, stored in first and last bytes of a 32 bit word&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_post_init(self</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">self.pixels = ffi.cast(</span><span class="s3">&quot;struct Pixel_RGBA **&quot;</span><span class="s2">, </span><span class="s1">self.image32)</span>
+
+    <span class="s2">def </span><span class="s1">get_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y):</span>
+        <span class="s1">pixel = self.pixels[y][x]</span>
+        <span class="s2">return </span><span class="s1">pixel.r</span><span class="s2">, </span><span class="s1">pixel.a</span>
+
+    <span class="s2">def </span><span class="s1">set_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y</span><span class="s2">, </span><span class="s1">color):</span>
+        <span class="s1">pixel = self.pixels[y][x]</span>
+        <span class="s0"># tuple</span>
+        <span class="s1">pixel.r = min(color[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s5">255</span><span class="s1">)</span>
+        <span class="s1">pixel.a = min(color[</span><span class="s5">1</span><span class="s1">]</span><span class="s2">, </span><span class="s5">255</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">_PyAccess32_3(PyAccess):</span>
+    <span class="s4">&quot;&quot;&quot;RGB and friends, stored in the first three bytes of a 32 bit word&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_post_init(self</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">self.pixels = ffi.cast(</span><span class="s3">&quot;struct Pixel_RGBA **&quot;</span><span class="s2">, </span><span class="s1">self.image32)</span>
+
+    <span class="s2">def </span><span class="s1">get_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y):</span>
+        <span class="s1">pixel = self.pixels[y][x]</span>
+        <span class="s2">return </span><span class="s1">pixel.r</span><span class="s2">, </span><span class="s1">pixel.g</span><span class="s2">, </span><span class="s1">pixel.b</span>
+
+    <span class="s2">def </span><span class="s1">set_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y</span><span class="s2">, </span><span class="s1">color):</span>
+        <span class="s1">pixel = self.pixels[y][x]</span>
+        <span class="s0"># tuple</span>
+        <span class="s1">pixel.r = min(color[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s5">255</span><span class="s1">)</span>
+        <span class="s1">pixel.g = min(color[</span><span class="s5">1</span><span class="s1">]</span><span class="s2">, </span><span class="s5">255</span><span class="s1">)</span>
+        <span class="s1">pixel.b = min(color[</span><span class="s5">2</span><span class="s1">]</span><span class="s2">, </span><span class="s5">255</span><span class="s1">)</span>
+        <span class="s1">pixel.a = </span><span class="s5">255</span>
+
+
+<span class="s2">class </span><span class="s1">_PyAccess32_4(PyAccess):</span>
+    <span class="s4">&quot;&quot;&quot;RGBA etc, all 4 bytes of a 32 bit word&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_post_init(self</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">self.pixels = ffi.cast(</span><span class="s3">&quot;struct Pixel_RGBA **&quot;</span><span class="s2">, </span><span class="s1">self.image32)</span>
+
+    <span class="s2">def </span><span class="s1">get_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y):</span>
+        <span class="s1">pixel = self.pixels[y][x]</span>
+        <span class="s2">return </span><span class="s1">pixel.r</span><span class="s2">, </span><span class="s1">pixel.g</span><span class="s2">, </span><span class="s1">pixel.b</span><span class="s2">, </span><span class="s1">pixel.a</span>
+
+    <span class="s2">def </span><span class="s1">set_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y</span><span class="s2">, </span><span class="s1">color):</span>
+        <span class="s1">pixel = self.pixels[y][x]</span>
+        <span class="s0"># tuple</span>
+        <span class="s1">pixel.r = min(color[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s5">255</span><span class="s1">)</span>
+        <span class="s1">pixel.g = min(color[</span><span class="s5">1</span><span class="s1">]</span><span class="s2">, </span><span class="s5">255</span><span class="s1">)</span>
+        <span class="s1">pixel.b = min(color[</span><span class="s5">2</span><span class="s1">]</span><span class="s2">, </span><span class="s5">255</span><span class="s1">)</span>
+        <span class="s1">pixel.a = min(color[</span><span class="s5">3</span><span class="s1">]</span><span class="s2">, </span><span class="s5">255</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">_PyAccess8(PyAccess):</span>
+    <span class="s4">&quot;&quot;&quot;1, L, P, 8 bit images stored as uint8&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_post_init(self</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">self.pixels = self.image8</span>
+
+    <span class="s2">def </span><span class="s1">get_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y):</span>
+        <span class="s2">return </span><span class="s1">self.pixels[y][x]</span>
+
+    <span class="s2">def </span><span class="s1">set_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y</span><span class="s2">, </span><span class="s1">color):</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s0"># integer</span>
+            <span class="s1">self.pixels[y][x] = min(color</span><span class="s2">, </span><span class="s5">255</span><span class="s1">)</span>
+        <span class="s2">except </span><span class="s1">TypeError:</span>
+            <span class="s0"># tuple</span>
+            <span class="s1">self.pixels[y][x] = min(color[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s5">255</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">_PyAccessI16_N(PyAccess):</span>
+    <span class="s4">&quot;&quot;&quot;I;16 access, native bitendian without conversion&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_post_init(self</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">self.pixels = ffi.cast(</span><span class="s3">&quot;unsigned short **&quot;</span><span class="s2">, </span><span class="s1">self.image)</span>
+
+    <span class="s2">def </span><span class="s1">get_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y):</span>
+        <span class="s2">return </span><span class="s1">self.pixels[y][x]</span>
+
+    <span class="s2">def </span><span class="s1">set_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y</span><span class="s2">, </span><span class="s1">color):</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s0"># integer</span>
+            <span class="s1">self.pixels[y][x] = min(color</span><span class="s2">, </span><span class="s5">65535</span><span class="s1">)</span>
+        <span class="s2">except </span><span class="s1">TypeError:</span>
+            <span class="s0"># tuple</span>
+            <span class="s1">self.pixels[y][x] = min(color[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s5">65535</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">_PyAccessI16_L(PyAccess):</span>
+    <span class="s4">&quot;&quot;&quot;I;16L access, with conversion&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_post_init(self</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">self.pixels = ffi.cast(</span><span class="s3">&quot;struct Pixel_I16 **&quot;</span><span class="s2">, </span><span class="s1">self.image)</span>
+
+    <span class="s2">def </span><span class="s1">get_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y):</span>
+        <span class="s1">pixel = self.pixels[y][x]</span>
+        <span class="s2">return </span><span class="s1">pixel.l + pixel.r * </span><span class="s5">256</span>
+
+    <span class="s2">def </span><span class="s1">set_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y</span><span class="s2">, </span><span class="s1">color):</span>
+        <span class="s1">pixel = self.pixels[y][x]</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">color = min(color</span><span class="s2">, </span><span class="s5">65535</span><span class="s1">)</span>
+        <span class="s2">except </span><span class="s1">TypeError:</span>
+            <span class="s1">color = min(color[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s5">65535</span><span class="s1">)</span>
+
+        <span class="s1">pixel.l = color &amp; </span><span class="s5">0xFF  </span><span class="s0"># noqa: E741</span>
+        <span class="s1">pixel.r = color &gt;&gt; </span><span class="s5">8</span>
+
+
+<span class="s2">class </span><span class="s1">_PyAccessI16_B(PyAccess):</span>
+    <span class="s4">&quot;&quot;&quot;I;16B access, with conversion&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_post_init(self</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">self.pixels = ffi.cast(</span><span class="s3">&quot;struct Pixel_I16 **&quot;</span><span class="s2">, </span><span class="s1">self.image)</span>
+
+    <span class="s2">def </span><span class="s1">get_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y):</span>
+        <span class="s1">pixel = self.pixels[y][x]</span>
+        <span class="s2">return </span><span class="s1">pixel.l * </span><span class="s5">256 </span><span class="s1">+ pixel.r</span>
+
+    <span class="s2">def </span><span class="s1">set_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y</span><span class="s2">, </span><span class="s1">color):</span>
+        <span class="s1">pixel = self.pixels[y][x]</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">color = min(color</span><span class="s2">, </span><span class="s5">65535</span><span class="s1">)</span>
+        <span class="s2">except </span><span class="s1">Exception:</span>
+            <span class="s1">color = min(color[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s5">65535</span><span class="s1">)</span>
+
+        <span class="s1">pixel.l = color &gt;&gt; </span><span class="s5">8  </span><span class="s0"># noqa: E741</span>
+        <span class="s1">pixel.r = color &amp; </span><span class="s5">0xFF</span>
+
+
+<span class="s2">class </span><span class="s1">_PyAccessI32_N(PyAccess):</span>
+    <span class="s4">&quot;&quot;&quot;Signed Int32 access, native endian&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_post_init(self</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">self.pixels = self.image32</span>
+
+    <span class="s2">def </span><span class="s1">get_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y):</span>
+        <span class="s2">return </span><span class="s1">self.pixels[y][x]</span>
+
+    <span class="s2">def </span><span class="s1">set_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y</span><span class="s2">, </span><span class="s1">color):</span>
+        <span class="s1">self.pixels[y][x] = color</span>
+
+
+<span class="s2">class </span><span class="s1">_PyAccessI32_Swap(PyAccess):</span>
+    <span class="s4">&quot;&quot;&quot;I;32L/B access, with byteswapping conversion&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_post_init(self</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">self.pixels = self.image32</span>
+
+    <span class="s2">def </span><span class="s1">reverse(self</span><span class="s2">, </span><span class="s1">i):</span>
+        <span class="s1">orig = ffi.new(</span><span class="s3">&quot;int *&quot;</span><span class="s2">, </span><span class="s1">i)</span>
+        <span class="s1">chars = ffi.cast(</span><span class="s3">&quot;unsigned char *&quot;</span><span class="s2">, </span><span class="s1">orig)</span>
+        <span class="s1">chars[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">chars[</span><span class="s5">1</span><span class="s1">]</span><span class="s2">, </span><span class="s1">chars[</span><span class="s5">2</span><span class="s1">]</span><span class="s2">, </span><span class="s1">chars[</span><span class="s5">3</span><span class="s1">] = chars[</span><span class="s5">3</span><span class="s1">]</span><span class="s2">, </span><span class="s1">chars[</span><span class="s5">2</span><span class="s1">]</span><span class="s2">, </span><span class="s1">chars[</span><span class="s5">1</span><span class="s1">]</span><span class="s2">, </span><span class="s1">chars[</span><span class="s5">0</span><span class="s1">]</span>
+        <span class="s2">return </span><span class="s1">ffi.cast(</span><span class="s3">&quot;int *&quot;</span><span class="s2">, </span><span class="s1">chars)[</span><span class="s5">0</span><span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">get_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y):</span>
+        <span class="s2">return </span><span class="s1">self.reverse(self.pixels[y][x])</span>
+
+    <span class="s2">def </span><span class="s1">set_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y</span><span class="s2">, </span><span class="s1">color):</span>
+        <span class="s1">self.pixels[y][x] = self.reverse(color)</span>
+
+
+<span class="s2">class </span><span class="s1">_PyAccessF(PyAccess):</span>
+    <span class="s4">&quot;&quot;&quot;32 bit float access&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_post_init(self</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">self.pixels = ffi.cast(</span><span class="s3">&quot;float **&quot;</span><span class="s2">, </span><span class="s1">self.image32)</span>
+
+    <span class="s2">def </span><span class="s1">get_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y):</span>
+        <span class="s2">return </span><span class="s1">self.pixels[y][x]</span>
+
+    <span class="s2">def </span><span class="s1">set_pixel(self</span><span class="s2">, </span><span class="s1">x</span><span class="s2">, </span><span class="s1">y</span><span class="s2">, </span><span class="s1">color):</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s0"># not a tuple</span>
+            <span class="s1">self.pixels[y][x] = color</span>
+        <span class="s2">except </span><span class="s1">TypeError:</span>
+            <span class="s0"># tuple</span>
+            <span class="s1">self.pixels[y][x] = color[</span><span class="s5">0</span><span class="s1">]</span>
+
+
+<span class="s1">mode_map = {</span>
+    <span class="s3">&quot;1&quot;</span><span class="s1">: _PyAccess8</span><span class="s2">,</span>
+    <span class="s3">&quot;L&quot;</span><span class="s1">: _PyAccess8</span><span class="s2">,</span>
+    <span class="s3">&quot;P&quot;</span><span class="s1">: _PyAccess8</span><span class="s2">,</span>
+    <span class="s3">&quot;LA&quot;</span><span class="s1">: _PyAccess32_2</span><span class="s2">,</span>
+    <span class="s3">&quot;La&quot;</span><span class="s1">: _PyAccess32_2</span><span class="s2">,</span>
+    <span class="s3">&quot;PA&quot;</span><span class="s1">: _PyAccess32_2</span><span class="s2">,</span>
+    <span class="s3">&quot;RGB&quot;</span><span class="s1">: _PyAccess32_3</span><span class="s2">,</span>
+    <span class="s3">&quot;LAB&quot;</span><span class="s1">: _PyAccess32_3</span><span class="s2">,</span>
+    <span class="s3">&quot;HSV&quot;</span><span class="s1">: _PyAccess32_3</span><span class="s2">,</span>
+    <span class="s3">&quot;YCbCr&quot;</span><span class="s1">: _PyAccess32_3</span><span class="s2">,</span>
+    <span class="s3">&quot;RGBA&quot;</span><span class="s1">: _PyAccess32_4</span><span class="s2">,</span>
+    <span class="s3">&quot;RGBa&quot;</span><span class="s1">: _PyAccess32_4</span><span class="s2">,</span>
+    <span class="s3">&quot;RGBX&quot;</span><span class="s1">: _PyAccess32_4</span><span class="s2">,</span>
+    <span class="s3">&quot;CMYK&quot;</span><span class="s1">: _PyAccess32_4</span><span class="s2">,</span>
+    <span class="s3">&quot;F&quot;</span><span class="s1">: _PyAccessF</span><span class="s2">,</span>
+    <span class="s3">&quot;I&quot;</span><span class="s1">: _PyAccessI32_N</span><span class="s2">,</span>
+<span class="s1">}</span>
+
+<span class="s2">if </span><span class="s1">sys.byteorder == </span><span class="s3">&quot;little&quot;</span><span class="s1">:</span>
+    <span class="s1">mode_map[</span><span class="s3">&quot;I;16&quot;</span><span class="s1">] = _PyAccessI16_N</span>
+    <span class="s1">mode_map[</span><span class="s3">&quot;I;16L&quot;</span><span class="s1">] = _PyAccessI16_N</span>
+    <span class="s1">mode_map[</span><span class="s3">&quot;I;16B&quot;</span><span class="s1">] = _PyAccessI16_B</span>
+
+    <span class="s1">mode_map[</span><span class="s3">&quot;I;32L&quot;</span><span class="s1">] = _PyAccessI32_N</span>
+    <span class="s1">mode_map[</span><span class="s3">&quot;I;32B&quot;</span><span class="s1">] = _PyAccessI32_Swap</span>
+<span class="s2">else</span><span class="s1">:</span>
+    <span class="s1">mode_map[</span><span class="s3">&quot;I;16&quot;</span><span class="s1">] = _PyAccessI16_L</span>
+    <span class="s1">mode_map[</span><span class="s3">&quot;I;16L&quot;</span><span class="s1">] = _PyAccessI16_L</span>
+    <span class="s1">mode_map[</span><span class="s3">&quot;I;16B&quot;</span><span class="s1">] = _PyAccessI16_N</span>
+
+    <span class="s1">mode_map[</span><span class="s3">&quot;I;32L&quot;</span><span class="s1">] = _PyAccessI32_Swap</span>
+    <span class="s1">mode_map[</span><span class="s3">&quot;I;32B&quot;</span><span class="s1">] = _PyAccessI32_N</span>
+
+
+<span class="s2">def </span><span class="s1">new(img</span><span class="s2">, </span><span class="s1">readonly=</span><span class="s2">False</span><span class="s1">):</span>
+    <span class="s1">access_type = mode_map.get(img.mode</span><span class="s2">, None</span><span class="s1">)</span>
+    <span class="s2">if not </span><span class="s1">access_type:</span>
+        <span class="s1">logger.debug(</span><span class="s3">&quot;PyAccess Not Implemented: %s&quot;</span><span class="s2">, </span><span class="s1">img.mode)</span>
+        <span class="s2">return None</span>
+    <span class="s2">return </span><span class="s1">access_type(img</span><span class="s2">, </span><span class="s1">readonly)</span>
+</pre>
+</body>
+</html>

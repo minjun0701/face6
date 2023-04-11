@@ -1,0 +1,385 @@
+<html>
+<head>
+<title>Jpeg2KImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #629755; font-style: italic;}
+.s4 { color: #6897bb;}
+.s5 { color: #6a8759;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+Jpeg2KImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># JPEG2000 file handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 2014-03-12 ajh  Created</span>
+<span class="s0"># 2021-06-30 rogermb  Extract dpi information from the 'resc' header box</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 2014 Coriolis Systems Limited</span>
+<span class="s0"># Copyright (c) 2014 Alastair Houghton</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">import </span><span class="s1">io</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">struct</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span>
+
+
+<span class="s2">class </span><span class="s1">BoxReader:</span>
+    <span class="s3">&quot;&quot;&quot; 
+    A small helper class to read fields stored in JPEG2000 header boxes 
+    and to easily step into and read sub-boxes. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">length=-</span><span class="s4">1</span><span class="s1">):</span>
+        <span class="s1">self.fp = fp</span>
+        <span class="s1">self.has_length = length &gt;= </span><span class="s4">0</span>
+        <span class="s1">self.length = length</span>
+        <span class="s1">self.remaining_in_box = -</span><span class="s4">1</span>
+
+    <span class="s2">def </span><span class="s1">_can_read(self</span><span class="s2">, </span><span class="s1">num_bytes):</span>
+        <span class="s2">if </span><span class="s1">self.has_length </span><span class="s2">and </span><span class="s1">self.fp.tell() + num_bytes &gt; self.length:</span>
+            <span class="s0"># Outside box: ensure we don't read past the known file length</span>
+            <span class="s2">return False</span>
+        <span class="s2">if </span><span class="s1">self.remaining_in_box &gt;= </span><span class="s4">0</span><span class="s1">:</span>
+            <span class="s0"># Inside box contents: ensure read does not go past box boundaries</span>
+            <span class="s2">return </span><span class="s1">num_bytes &lt;= self.remaining_in_box</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return True  </span><span class="s0"># No length known, just read</span>
+
+    <span class="s2">def </span><span class="s1">_read_bytes(self</span><span class="s2">, </span><span class="s1">num_bytes):</span>
+        <span class="s2">if not </span><span class="s1">self._can_read(num_bytes):</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s5">&quot;Not enough data in header&quot;</span><span class="s1">)</span>
+
+        <span class="s1">data = self.fp.read(num_bytes)</span>
+        <span class="s2">if </span><span class="s1">len(data) &lt; num_bytes:</span>
+            <span class="s2">raise </span><span class="s1">OSError(</span>
+                <span class="s5">f&quot;Expected to read </span><span class="s2">{</span><span class="s1">num_bytes</span><span class="s2">} </span><span class="s5">bytes but only got </span><span class="s2">{</span><span class="s1">len(data)</span><span class="s2">}</span><span class="s5">.&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">self.remaining_in_box &gt; </span><span class="s4">0</span><span class="s1">:</span>
+            <span class="s1">self.remaining_in_box -= num_bytes</span>
+        <span class="s2">return </span><span class="s1">data</span>
+
+    <span class="s2">def </span><span class="s1">read_fields(self</span><span class="s2">, </span><span class="s1">field_format):</span>
+        <span class="s1">size = struct.calcsize(field_format)</span>
+        <span class="s1">data = self._read_bytes(size)</span>
+        <span class="s2">return </span><span class="s1">struct.unpack(field_format</span><span class="s2">, </span><span class="s1">data)</span>
+
+    <span class="s2">def </span><span class="s1">read_boxes(self):</span>
+        <span class="s1">size = self.remaining_in_box</span>
+        <span class="s1">data = self._read_bytes(size)</span>
+        <span class="s2">return </span><span class="s1">BoxReader(io.BytesIO(data)</span><span class="s2">, </span><span class="s1">size)</span>
+
+    <span class="s2">def </span><span class="s1">has_next_box(self):</span>
+        <span class="s2">if </span><span class="s1">self.has_length:</span>
+            <span class="s2">return </span><span class="s1">self.fp.tell() + self.remaining_in_box &lt; self.length</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return True</span>
+
+    <span class="s2">def </span><span class="s1">next_box_type(self):</span>
+        <span class="s0"># Skip the rest of the box if it has not been read</span>
+        <span class="s2">if </span><span class="s1">self.remaining_in_box &gt; </span><span class="s4">0</span><span class="s1">:</span>
+            <span class="s1">self.fp.seek(self.remaining_in_box</span><span class="s2">, </span><span class="s1">os.SEEK_CUR)</span>
+        <span class="s1">self.remaining_in_box = -</span><span class="s4">1</span>
+
+        <span class="s0"># Read the length and type of the next box</span>
+        <span class="s1">lbox</span><span class="s2">, </span><span class="s1">tbox = self.read_fields(</span><span class="s5">&quot;&gt;I4s&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">lbox == </span><span class="s4">1</span><span class="s1">:</span>
+            <span class="s1">lbox = self.read_fields(</span><span class="s5">&quot;&gt;Q&quot;</span><span class="s1">)[</span><span class="s4">0</span><span class="s1">]</span>
+            <span class="s1">hlen = </span><span class="s4">16</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">hlen = </span><span class="s4">8</span>
+
+        <span class="s2">if </span><span class="s1">lbox &lt; hlen </span><span class="s2">or not </span><span class="s1">self._can_read(lbox - hlen):</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s5">&quot;Invalid header length&quot;</span><span class="s1">)</span>
+
+        <span class="s1">self.remaining_in_box = lbox - hlen</span>
+        <span class="s2">return </span><span class="s1">tbox</span>
+
+
+<span class="s2">def </span><span class="s1">_parse_codestream(fp):</span>
+    <span class="s3">&quot;&quot;&quot;Parse the JPEG 2000 codestream to extract the size and component 
+    count from the SIZ marker segment, returning a PIL (size, mode) tuple.&quot;&quot;&quot;</span>
+
+    <span class="s1">hdr = fp.read(</span><span class="s4">2</span><span class="s1">)</span>
+    <span class="s1">lsiz = struct.unpack(</span><span class="s5">&quot;&gt;H&quot;</span><span class="s2">, </span><span class="s1">hdr)[</span><span class="s4">0</span><span class="s1">]</span>
+    <span class="s1">siz = hdr + fp.read(lsiz - </span><span class="s4">2</span><span class="s1">)</span>
+    <span class="s1">lsiz</span><span class="s2">, </span><span class="s1">rsiz</span><span class="s2">, </span><span class="s1">xsiz</span><span class="s2">, </span><span class="s1">ysiz</span><span class="s2">, </span><span class="s1">xosiz</span><span class="s2">, </span><span class="s1">yosiz</span><span class="s2">, </span><span class="s1">_</span><span class="s2">, </span><span class="s1">_</span><span class="s2">, </span><span class="s1">_</span><span class="s2">, </span><span class="s1">_</span><span class="s2">, </span><span class="s1">csiz = struct.unpack_from(</span>
+        <span class="s5">&quot;&gt;HHIIIIIIIIH&quot;</span><span class="s2">, </span><span class="s1">siz</span>
+    <span class="s1">)</span>
+    <span class="s1">ssiz = [</span><span class="s2">None</span><span class="s1">] * csiz</span>
+    <span class="s1">xrsiz = [</span><span class="s2">None</span><span class="s1">] * csiz</span>
+    <span class="s1">yrsiz = [</span><span class="s2">None</span><span class="s1">] * csiz</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(csiz):</span>
+        <span class="s1">ssiz[i]</span><span class="s2">, </span><span class="s1">xrsiz[i]</span><span class="s2">, </span><span class="s1">yrsiz[i] = struct.unpack_from(</span><span class="s5">&quot;&gt;BBB&quot;</span><span class="s2">, </span><span class="s1">siz</span><span class="s2">, </span><span class="s4">36 </span><span class="s1">+ </span><span class="s4">3 </span><span class="s1">* i)</span>
+
+    <span class="s1">size = (xsiz - xosiz</span><span class="s2">, </span><span class="s1">ysiz - yosiz)</span>
+    <span class="s2">if </span><span class="s1">csiz == </span><span class="s4">1</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">(yrsiz[</span><span class="s4">0</span><span class="s1">] &amp; </span><span class="s4">0x7F</span><span class="s1">) &gt; </span><span class="s4">8</span><span class="s1">:</span>
+            <span class="s1">mode = </span><span class="s5">&quot;I;16&quot;</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">mode = </span><span class="s5">&quot;L&quot;</span>
+    <span class="s2">elif </span><span class="s1">csiz == </span><span class="s4">2</span><span class="s1">:</span>
+        <span class="s1">mode = </span><span class="s5">&quot;LA&quot;</span>
+    <span class="s2">elif </span><span class="s1">csiz == </span><span class="s4">3</span><span class="s1">:</span>
+        <span class="s1">mode = </span><span class="s5">&quot;RGB&quot;</span>
+    <span class="s2">elif </span><span class="s1">csiz == </span><span class="s4">4</span><span class="s1">:</span>
+        <span class="s1">mode = </span><span class="s5">&quot;RGBA&quot;</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">mode = </span><span class="s2">None</span>
+
+    <span class="s2">return </span><span class="s1">size</span><span class="s2">, </span><span class="s1">mode</span>
+
+
+<span class="s2">def </span><span class="s1">_res_to_dpi(num</span><span class="s2">, </span><span class="s1">denom</span><span class="s2">, </span><span class="s1">exp):</span>
+    <span class="s3">&quot;&quot;&quot;Convert JPEG2000's (numerator, denominator, exponent-base-10) resolution, 
+    calculated as (num / denom) * 10^exp and stored in dots per meter, 
+    to floating-point dots per inch.&quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">denom != </span><span class="s4">0</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">(</span><span class="s4">254 </span><span class="s1">* num * (</span><span class="s4">10</span><span class="s1">**exp)) / (</span><span class="s4">10000 </span><span class="s1">* denom)</span>
+
+
+<span class="s2">def </span><span class="s1">_parse_jp2_header(fp):</span>
+    <span class="s3">&quot;&quot;&quot;Parse the JP2 header box to extract size, component count, 
+    color space information, and optionally DPI information, 
+    returning a (size, mode, mimetype, dpi) tuple.&quot;&quot;&quot;</span>
+
+    <span class="s0"># Find the JP2 header box</span>
+    <span class="s1">reader = BoxReader(fp)</span>
+    <span class="s1">header = </span><span class="s2">None</span>
+    <span class="s1">mimetype = </span><span class="s2">None</span>
+    <span class="s2">while </span><span class="s1">reader.has_next_box():</span>
+        <span class="s1">tbox = reader.next_box_type()</span>
+
+        <span class="s2">if </span><span class="s1">tbox == </span><span class="s6">b&quot;jp2h&quot;</span><span class="s1">:</span>
+            <span class="s1">header = reader.read_boxes()</span>
+            <span class="s2">break</span>
+        <span class="s2">elif </span><span class="s1">tbox == </span><span class="s6">b&quot;ftyp&quot;</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">reader.read_fields(</span><span class="s5">&quot;&gt;4s&quot;</span><span class="s1">)[</span><span class="s4">0</span><span class="s1">] == </span><span class="s6">b&quot;jpx &quot;</span><span class="s1">:</span>
+                <span class="s1">mimetype = </span><span class="s5">&quot;image/jpx&quot;</span>
+
+    <span class="s1">size = </span><span class="s2">None</span>
+    <span class="s1">mode = </span><span class="s2">None</span>
+    <span class="s1">bpc = </span><span class="s2">None</span>
+    <span class="s1">nc = </span><span class="s2">None</span>
+    <span class="s1">dpi = </span><span class="s2">None  </span><span class="s0"># 2-tuple of DPI info, or None</span>
+
+    <span class="s2">while </span><span class="s1">header.has_next_box():</span>
+        <span class="s1">tbox = header.next_box_type()</span>
+
+        <span class="s2">if </span><span class="s1">tbox == </span><span class="s6">b&quot;ihdr&quot;</span><span class="s1">:</span>
+            <span class="s1">height</span><span class="s2">, </span><span class="s1">width</span><span class="s2">, </span><span class="s1">nc</span><span class="s2">, </span><span class="s1">bpc = header.read_fields(</span><span class="s5">&quot;&gt;IIHB&quot;</span><span class="s1">)</span>
+            <span class="s1">size = (width</span><span class="s2">, </span><span class="s1">height)</span>
+            <span class="s2">if </span><span class="s1">nc == </span><span class="s4">1 </span><span class="s2">and </span><span class="s1">(bpc &amp; </span><span class="s4">0x7F</span><span class="s1">) &gt; </span><span class="s4">8</span><span class="s1">:</span>
+                <span class="s1">mode = </span><span class="s5">&quot;I;16&quot;</span>
+            <span class="s2">elif </span><span class="s1">nc == </span><span class="s4">1</span><span class="s1">:</span>
+                <span class="s1">mode = </span><span class="s5">&quot;L&quot;</span>
+            <span class="s2">elif </span><span class="s1">nc == </span><span class="s4">2</span><span class="s1">:</span>
+                <span class="s1">mode = </span><span class="s5">&quot;LA&quot;</span>
+            <span class="s2">elif </span><span class="s1">nc == </span><span class="s4">3</span><span class="s1">:</span>
+                <span class="s1">mode = </span><span class="s5">&quot;RGB&quot;</span>
+            <span class="s2">elif </span><span class="s1">nc == </span><span class="s4">4</span><span class="s1">:</span>
+                <span class="s1">mode = </span><span class="s5">&quot;RGBA&quot;</span>
+        <span class="s2">elif </span><span class="s1">tbox == </span><span class="s6">b&quot;res &quot;</span><span class="s1">:</span>
+            <span class="s1">res = header.read_boxes()</span>
+            <span class="s2">while </span><span class="s1">res.has_next_box():</span>
+                <span class="s1">tres = res.next_box_type()</span>
+                <span class="s2">if </span><span class="s1">tres == </span><span class="s6">b&quot;resc&quot;</span><span class="s1">:</span>
+                    <span class="s1">vrcn</span><span class="s2">, </span><span class="s1">vrcd</span><span class="s2">, </span><span class="s1">hrcn</span><span class="s2">, </span><span class="s1">hrcd</span><span class="s2">, </span><span class="s1">vrce</span><span class="s2">, </span><span class="s1">hrce = res.read_fields(</span><span class="s5">&quot;&gt;HHHHBB&quot;</span><span class="s1">)</span>
+                    <span class="s1">hres = _res_to_dpi(hrcn</span><span class="s2">, </span><span class="s1">hrcd</span><span class="s2">, </span><span class="s1">hrce)</span>
+                    <span class="s1">vres = _res_to_dpi(vrcn</span><span class="s2">, </span><span class="s1">vrcd</span><span class="s2">, </span><span class="s1">vrce)</span>
+                    <span class="s2">if </span><span class="s1">hres </span><span class="s2">is not None and </span><span class="s1">vres </span><span class="s2">is not None</span><span class="s1">:</span>
+                        <span class="s1">dpi = (hres</span><span class="s2">, </span><span class="s1">vres)</span>
+                    <span class="s2">break</span>
+
+    <span class="s2">if </span><span class="s1">size </span><span class="s2">is None or </span><span class="s1">mode </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s5">&quot;Malformed JP2 header&quot;</span><span class="s1">)</span>
+
+    <span class="s2">return </span><span class="s1">size</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">mimetype</span><span class="s2">, </span><span class="s1">dpi</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for JPEG2000 images.</span>
+
+
+<span class="s2">class </span><span class="s1">Jpeg2KImageFile(ImageFile.ImageFile):</span>
+    <span class="s1">format = </span><span class="s5">&quot;JPEG2000&quot;</span>
+    <span class="s1">format_description = </span><span class="s5">&quot;JPEG 2000 (ISO 15444)&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+        <span class="s1">sig = self.fp.read(</span><span class="s4">4</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">sig == </span><span class="s6">b&quot;</span><span class="s2">\xff\x4f\xff\x51</span><span class="s6">&quot;</span><span class="s1">:</span>
+            <span class="s1">self.codec = </span><span class="s5">&quot;j2k&quot;</span>
+            <span class="s1">self._size</span><span class="s2">, </span><span class="s1">self.mode = _parse_codestream(self.fp)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">sig = sig + self.fp.read(</span><span class="s4">8</span><span class="s1">)</span>
+
+            <span class="s2">if </span><span class="s1">sig == </span><span class="s6">b&quot;</span><span class="s2">\x00\x00\x00\x0c</span><span class="s6">jP  </span><span class="s2">\x0d\x0a\x87\x0a</span><span class="s6">&quot;</span><span class="s1">:</span>
+                <span class="s1">self.codec = </span><span class="s5">&quot;jp2&quot;</span>
+                <span class="s1">header = _parse_jp2_header(self.fp)</span>
+                <span class="s1">self._size</span><span class="s2">, </span><span class="s1">self.mode</span><span class="s2">, </span><span class="s1">self.custom_mimetype</span><span class="s2">, </span><span class="s1">dpi = header</span>
+                <span class="s2">if </span><span class="s1">dpi </span><span class="s2">is not None</span><span class="s1">:</span>
+                    <span class="s1">self.info[</span><span class="s5">&quot;dpi&quot;</span><span class="s1">] = dpi</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s5">&quot;not a JPEG 2000 file&quot;</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">self.size </span><span class="s2">is None or </span><span class="s1">self.mode </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s5">&quot;unable to determine size/mode&quot;</span><span class="s1">)</span>
+
+        <span class="s1">self._reduce = </span><span class="s4">0</span>
+        <span class="s1">self.layers = </span><span class="s4">0</span>
+
+        <span class="s1">fd = -</span><span class="s4">1</span>
+        <span class="s1">length = -</span><span class="s4">1</span>
+
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">fd = self.fp.fileno()</span>
+            <span class="s1">length = os.fstat(fd).st_size</span>
+        <span class="s2">except </span><span class="s1">Exception:</span>
+            <span class="s1">fd = -</span><span class="s4">1</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">pos = self.fp.tell()</span>
+                <span class="s1">self.fp.seek(</span><span class="s4">0</span><span class="s2">, </span><span class="s1">io.SEEK_END)</span>
+                <span class="s1">length = self.fp.tell()</span>
+                <span class="s1">self.fp.seek(pos)</span>
+            <span class="s2">except </span><span class="s1">Exception:</span>
+                <span class="s1">length = -</span><span class="s4">1</span>
+
+        <span class="s1">self.tile = [</span>
+            <span class="s1">(</span>
+                <span class="s5">&quot;jpeg2k&quot;</span><span class="s2">,</span>
+                <span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + self.size</span><span class="s2">,</span>
+                <span class="s4">0</span><span class="s2">,</span>
+                <span class="s1">(self.codec</span><span class="s2">, </span><span class="s1">self._reduce</span><span class="s2">, </span><span class="s1">self.layers</span><span class="s2">, </span><span class="s1">fd</span><span class="s2">, </span><span class="s1">length)</span><span class="s2">,</span>
+            <span class="s1">)</span>
+        <span class="s1">]</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">reduce(self):</span>
+        <span class="s0"># https://github.com/python-pillow/Pillow/issues/4343 found that the</span>
+        <span class="s0"># new Image 'reduce' method was shadowed by this plugin's 'reduce'</span>
+        <span class="s0"># property. This attempts to allow for both scenarios</span>
+        <span class="s2">return </span><span class="s1">self._reduce </span><span class="s2">or </span><span class="s1">super().reduce</span>
+
+    <span class="s1">@reduce.setter</span>
+    <span class="s2">def </span><span class="s1">reduce(self</span><span class="s2">, </span><span class="s1">value):</span>
+        <span class="s1">self._reduce = value</span>
+
+    <span class="s2">def </span><span class="s1">load(self):</span>
+        <span class="s2">if </span><span class="s1">self.tile </span><span class="s2">and </span><span class="s1">self._reduce:</span>
+            <span class="s1">power = </span><span class="s4">1 </span><span class="s1">&lt;&lt; self._reduce</span>
+            <span class="s1">adjust = power &gt;&gt; </span><span class="s4">1</span>
+            <span class="s1">self._size = (</span>
+                <span class="s1">int((self.size[</span><span class="s4">0</span><span class="s1">] + adjust) / power)</span><span class="s2">,</span>
+                <span class="s1">int((self.size[</span><span class="s4">1</span><span class="s1">] + adjust) / power)</span><span class="s2">,</span>
+            <span class="s1">)</span>
+
+            <span class="s0"># Update the reduce and layers settings</span>
+            <span class="s1">t = self.tile[</span><span class="s4">0</span><span class="s1">]</span>
+            <span class="s1">t3 = (t[</span><span class="s4">3</span><span class="s1">][</span><span class="s4">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">self._reduce</span><span class="s2">, </span><span class="s1">self.layers</span><span class="s2">, </span><span class="s1">t[</span><span class="s4">3</span><span class="s1">][</span><span class="s4">3</span><span class="s1">]</span><span class="s2">, </span><span class="s1">t[</span><span class="s4">3</span><span class="s1">][</span><span class="s4">4</span><span class="s1">])</span>
+            <span class="s1">self.tile = [(t[</span><span class="s4">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s1">t[</span><span class="s4">2</span><span class="s1">]</span><span class="s2">, </span><span class="s1">t3)]</span>
+
+        <span class="s2">return </span><span class="s1">ImageFile.ImageFile.load(self)</span>
+
+
+<span class="s2">def </span><span class="s1">_accept(prefix):</span>
+    <span class="s2">return </span><span class="s1">(</span>
+        <span class="s1">prefix[:</span><span class="s4">4</span><span class="s1">] == </span><span class="s6">b&quot;</span><span class="s2">\xff\x4f\xff\x51</span><span class="s6">&quot;</span>
+        <span class="s2">or </span><span class="s1">prefix[:</span><span class="s4">12</span><span class="s1">] == </span><span class="s6">b&quot;</span><span class="s2">\x00\x00\x00\x0c</span><span class="s6">jP  </span><span class="s2">\x0d\x0a\x87\x0a</span><span class="s6">&quot;</span>
+    <span class="s1">)</span>
+
+
+<span class="s0"># ------------------------------------------------------------</span>
+<span class="s0"># Save support</span>
+
+
+<span class="s2">def </span><span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename):</span>
+    <span class="s0"># Get the keyword arguments</span>
+    <span class="s1">info = im.encoderinfo</span>
+
+    <span class="s2">if </span><span class="s1">filename.endswith(</span><span class="s5">&quot;.j2k&quot;</span><span class="s1">) </span><span class="s2">or </span><span class="s1">info.get(</span><span class="s5">&quot;no_jp2&quot;</span><span class="s2">, False</span><span class="s1">):</span>
+        <span class="s1">kind = </span><span class="s5">&quot;j2k&quot;</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">kind = </span><span class="s5">&quot;jp2&quot;</span>
+
+    <span class="s1">offset = info.get(</span><span class="s5">&quot;offset&quot;</span><span class="s2">, None</span><span class="s1">)</span>
+    <span class="s1">tile_offset = info.get(</span><span class="s5">&quot;tile_offset&quot;</span><span class="s2">, None</span><span class="s1">)</span>
+    <span class="s1">tile_size = info.get(</span><span class="s5">&quot;tile_size&quot;</span><span class="s2">, None</span><span class="s1">)</span>
+    <span class="s1">quality_mode = info.get(</span><span class="s5">&quot;quality_mode&quot;</span><span class="s2">, </span><span class="s5">&quot;rates&quot;</span><span class="s1">)</span>
+    <span class="s1">quality_layers = info.get(</span><span class="s5">&quot;quality_layers&quot;</span><span class="s2">, None</span><span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">quality_layers </span><span class="s2">is not None and not </span><span class="s1">(</span>
+        <span class="s1">isinstance(quality_layers</span><span class="s2">, </span><span class="s1">(list</span><span class="s2">, </span><span class="s1">tuple))</span>
+        <span class="s2">and </span><span class="s1">all(</span>
+            <span class="s1">[</span>
+                <span class="s1">isinstance(quality_layer</span><span class="s2">, </span><span class="s1">(int</span><span class="s2">, </span><span class="s1">float))</span>
+                <span class="s2">for </span><span class="s1">quality_layer </span><span class="s2">in </span><span class="s1">quality_layers</span>
+            <span class="s1">]</span>
+        <span class="s1">)</span>
+    <span class="s1">):</span>
+        <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s5">&quot;quality_layers must be a sequence of numbers&quot;</span><span class="s1">)</span>
+
+    <span class="s1">num_resolutions = info.get(</span><span class="s5">&quot;num_resolutions&quot;</span><span class="s2">, </span><span class="s4">0</span><span class="s1">)</span>
+    <span class="s1">cblk_size = info.get(</span><span class="s5">&quot;codeblock_size&quot;</span><span class="s2">, None</span><span class="s1">)</span>
+    <span class="s1">precinct_size = info.get(</span><span class="s5">&quot;precinct_size&quot;</span><span class="s2">, None</span><span class="s1">)</span>
+    <span class="s1">irreversible = info.get(</span><span class="s5">&quot;irreversible&quot;</span><span class="s2">, False</span><span class="s1">)</span>
+    <span class="s1">progression = info.get(</span><span class="s5">&quot;progression&quot;</span><span class="s2">, </span><span class="s5">&quot;LRCP&quot;</span><span class="s1">)</span>
+    <span class="s1">cinema_mode = info.get(</span><span class="s5">&quot;cinema_mode&quot;</span><span class="s2">, </span><span class="s5">&quot;no&quot;</span><span class="s1">)</span>
+    <span class="s1">mct = info.get(</span><span class="s5">&quot;mct&quot;</span><span class="s2">, </span><span class="s4">0</span><span class="s1">)</span>
+    <span class="s1">fd = -</span><span class="s4">1</span>
+
+    <span class="s2">if </span><span class="s1">hasattr(fp</span><span class="s2">, </span><span class="s5">&quot;fileno&quot;</span><span class="s1">):</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">fd = fp.fileno()</span>
+        <span class="s2">except </span><span class="s1">Exception:</span>
+            <span class="s1">fd = -</span><span class="s4">1</span>
+
+    <span class="s1">im.encoderconfig = (</span>
+        <span class="s1">offset</span><span class="s2">,</span>
+        <span class="s1">tile_offset</span><span class="s2">,</span>
+        <span class="s1">tile_size</span><span class="s2">,</span>
+        <span class="s1">quality_mode</span><span class="s2">,</span>
+        <span class="s1">quality_layers</span><span class="s2">,</span>
+        <span class="s1">num_resolutions</span><span class="s2">,</span>
+        <span class="s1">cblk_size</span><span class="s2">,</span>
+        <span class="s1">precinct_size</span><span class="s2">,</span>
+        <span class="s1">irreversible</span><span class="s2">,</span>
+        <span class="s1">progression</span><span class="s2">,</span>
+        <span class="s1">cinema_mode</span><span class="s2">,</span>
+        <span class="s1">mct</span><span class="s2">,</span>
+        <span class="s1">fd</span><span class="s2">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">ImageFile._save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">[(</span><span class="s5">&quot;jpeg2k&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + im.size</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">kind)])</span>
+
+
+<span class="s0"># ------------------------------------------------------------</span>
+<span class="s0"># Registry stuff</span>
+
+
+<span class="s1">Image.register_open(Jpeg2KImageFile.format</span><span class="s2">, </span><span class="s1">Jpeg2KImageFile</span><span class="s2">, </span><span class="s1">_accept)</span>
+<span class="s1">Image.register_save(Jpeg2KImageFile.format</span><span class="s2">, </span><span class="s1">_save)</span>
+
+<span class="s1">Image.register_extensions(</span>
+    <span class="s1">Jpeg2KImageFile.format</span><span class="s2">, </span><span class="s1">[</span><span class="s5">&quot;.jp2&quot;</span><span class="s2">, </span><span class="s5">&quot;.j2k&quot;</span><span class="s2">, </span><span class="s5">&quot;.jpc&quot;</span><span class="s2">, </span><span class="s5">&quot;.jpf&quot;</span><span class="s2">, </span><span class="s5">&quot;.jpx&quot;</span><span class="s2">, </span><span class="s5">&quot;.j2c&quot;</span><span class="s1">]</span>
+<span class="s1">)</span>
+
+<span class="s1">Image.register_mime(Jpeg2KImageFile.format</span><span class="s2">, </span><span class="s5">&quot;image/jp2&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

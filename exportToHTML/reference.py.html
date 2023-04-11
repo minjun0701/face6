@@ -1,0 +1,176 @@
+<html>
+<head>
+<title>reference.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #808080;}
+.s3 { color: #6a8759;}
+.s4 { color: #629755; font-style: italic;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+reference.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">git.util </span><span class="s0">import </span><span class="s1">(</span>
+    <span class="s1">LazyMixin</span><span class="s0">,</span>
+    <span class="s1">IterableObj</span><span class="s0">,</span>
+<span class="s1">)</span>
+<span class="s0">from </span><span class="s1">.symbolic </span><span class="s0">import </span><span class="s1">SymbolicReference</span><span class="s0">, </span><span class="s1">T_References</span>
+
+
+<span class="s2"># typing ------------------------------------------------------------------</span>
+
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span><span class="s0">, </span><span class="s1">Callable</span><span class="s0">, </span><span class="s1">Iterator</span><span class="s0">, </span><span class="s1">Type</span><span class="s0">, </span><span class="s1">Union</span><span class="s0">, </span><span class="s1">TYPE_CHECKING  </span><span class="s2"># NOQA</span>
+<span class="s0">from </span><span class="s1">git.types </span><span class="s0">import </span><span class="s1">Commit_ish</span><span class="s0">, </span><span class="s1">PathLike</span><span class="s0">, </span><span class="s1">_T  </span><span class="s2"># NOQA</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s0">from </span><span class="s1">git.repo </span><span class="s0">import </span><span class="s1">Repo</span>
+
+<span class="s2"># ------------------------------------------------------------------------------</span>
+
+
+<span class="s1">__all__ = [</span><span class="s3">&quot;Reference&quot;</span><span class="s1">]</span>
+
+<span class="s2"># { Utilities</span>
+
+
+<span class="s0">def </span><span class="s1">require_remote_ref_path(func: Callable[...</span><span class="s0">, </span><span class="s1">_T]) -&gt; Callable[...</span><span class="s0">, </span><span class="s1">_T]:</span>
+    <span class="s4">&quot;&quot;&quot;A decorator raising a TypeError if we are not a valid remote, based on the path&quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">wrapper(self: T_References</span><span class="s0">, </span><span class="s1">*args: Any) -&gt; _T:</span>
+        <span class="s0">if not </span><span class="s1">self.is_remote():</span>
+            <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;ref path does not point to a remote reference: %s&quot; </span><span class="s1">% self.path)</span>
+        <span class="s0">return </span><span class="s1">func(self</span><span class="s0">, </span><span class="s1">*args)</span>
+
+    <span class="s2"># END wrapper</span>
+    <span class="s1">wrapper.__name__ = func.__name__</span>
+    <span class="s0">return </span><span class="s1">wrapper</span>
+
+
+<span class="s2"># }END utilities</span>
+
+
+<span class="s0">class </span><span class="s1">Reference(SymbolicReference</span><span class="s0">, </span><span class="s1">LazyMixin</span><span class="s0">, </span><span class="s1">IterableObj):</span>
+
+    <span class="s4">&quot;&quot;&quot;Represents a named reference to any object. Subclasses may apply restrictions though, 
+    i.e. Heads can only point to commits.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = ()</span>
+    <span class="s1">_points_to_commits_only = </span><span class="s0">False</span>
+    <span class="s1">_resolve_ref_on_create = </span><span class="s0">True</span>
+    <span class="s1">_common_path_default = </span><span class="s3">&quot;refs&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s0">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s0">, </span><span class="s1">path: PathLike</span><span class="s0">, </span><span class="s1">check_path: bool = </span><span class="s0">True</span><span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Initialize this instance 
+ 
+        :param repo: Our parent repository 
+        :param path: 
+            Path relative to the .git/ directory pointing to the ref in question, i.e. 
+            refs/heads/master 
+        :param check_path: if False, you can provide any path. Otherwise the path must start with the 
+            default path prefix of this type.&quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">check_path </span><span class="s0">and not </span><span class="s1">str(path).startswith(self._common_path_default + </span><span class="s3">&quot;/&quot;</span><span class="s1">):</span>
+            <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">f&quot;Cannot instantiate </span><span class="s0">{</span><span class="s1">self.__class__.__name__</span><span class="s0">!r} </span><span class="s3">from path </span><span class="s0">{</span><span class="s1">path</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+        <span class="s1">self.path: str  </span><span class="s2"># SymbolicReference converts to string atm</span>
+        <span class="s1">super(Reference</span><span class="s0">, </span><span class="s1">self).__init__(repo</span><span class="s0">, </span><span class="s1">path)</span>
+
+    <span class="s0">def </span><span class="s1">__str__(self) -&gt; str:</span>
+        <span class="s0">return </span><span class="s1">self.name</span>
+
+    <span class="s2"># { Interface</span>
+
+    <span class="s2"># @ReservedAssignment</span>
+    <span class="s0">def </span><span class="s1">set_object(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">object: Union[Commit_ish</span><span class="s0">, </span><span class="s3">&quot;SymbolicReference&quot;</span><span class="s0">, </span><span class="s1">str]</span><span class="s0">,</span>
+        <span class="s1">logmsg: Union[str</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None,</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;Reference&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Special version which checks if the head-log needs an update as well 
+ 
+        :return: self&quot;&quot;&quot;</span>
+        <span class="s1">oldbinsha = </span><span class="s0">None</span>
+        <span class="s0">if </span><span class="s1">logmsg </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">head = self.repo.head</span>
+            <span class="s0">if not </span><span class="s1">head.is_detached </span><span class="s0">and </span><span class="s1">head.ref == self:</span>
+                <span class="s1">oldbinsha = self.commit.binsha</span>
+            <span class="s2"># END handle commit retrieval</span>
+        <span class="s2"># END handle message is set</span>
+
+        <span class="s1">super(Reference</span><span class="s0">, </span><span class="s1">self).set_object(object</span><span class="s0">, </span><span class="s1">logmsg)</span>
+
+        <span class="s0">if </span><span class="s1">oldbinsha </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s2"># /* from refs.c in git-source</span>
+            <span class="s2"># * Special hack: If a branch is updated directly and HEAD</span>
+            <span class="s2"># * points to it (may happen on the remote side of a push</span>
+            <span class="s2"># * for example) then logically the HEAD reflog should be</span>
+            <span class="s2"># * updated too.</span>
+            <span class="s2"># * A generic solution implies reverse symref information,</span>
+            <span class="s2"># * but finding all symrefs pointing to the given branch</span>
+            <span class="s2"># * would be rather costly for this rare event (the direct</span>
+            <span class="s2"># * update of a branch) to be worth it.  So let's cheat and</span>
+            <span class="s2"># * check with HEAD only which should cover 99% of all usage</span>
+            <span class="s2"># * scenarios (even 100% of the default ones).</span>
+            <span class="s2"># */</span>
+            <span class="s1">self.repo.head.log_append(oldbinsha</span><span class="s0">, </span><span class="s1">logmsg)</span>
+        <span class="s2"># END check if the head</span>
+
+        <span class="s0">return </span><span class="s1">self</span>
+
+    <span class="s2"># NOTE: Don't have to overwrite properties as the will only work without a the log</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">name(self) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot;:return: (shortest) Name of this reference - it may contain path components&quot;&quot;&quot;</span>
+        <span class="s2"># first two path tokens are can be removed as they are</span>
+        <span class="s2"># refs/heads or refs/tags or refs/remotes</span>
+        <span class="s1">tokens = self.path.split(</span><span class="s3">&quot;/&quot;</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">len(tokens) &lt; </span><span class="s5">3</span><span class="s1">:</span>
+            <span class="s0">return </span><span class="s1">self.path  </span><span class="s2"># could be refs/HEAD</span>
+        <span class="s0">return </span><span class="s3">&quot;/&quot;</span><span class="s1">.join(tokens[</span><span class="s5">2</span><span class="s1">:])</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">iter_items(</span>
+        <span class="s1">cls: Type[T_References]</span><span class="s0">,</span>
+        <span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s0">,</span>
+        <span class="s1">common_path: Union[PathLike</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None,</span>
+        <span class="s1">*args: Any</span><span class="s0">,</span>
+        <span class="s1">**kwargs: Any</span><span class="s0">,</span>
+    <span class="s1">) -&gt; Iterator[T_References]:</span>
+        <span class="s4">&quot;&quot;&quot;Equivalent to SymbolicReference.iter_items, but will return non-detached 
+        references as well.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">cls._iter_items(repo</span><span class="s0">, </span><span class="s1">common_path)</span>
+
+    <span class="s2"># }END interface</span>
+
+    <span class="s2"># { Remote Interface</span>
+
+    <span class="s1">@property  </span><span class="s2"># type: ignore ## mypy cannot deal with properties with an extra decorator (2021-04-21)</span>
+    <span class="s1">@require_remote_ref_path</span>
+    <span class="s0">def </span><span class="s1">remote_name(self) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: 
+            Name of the remote we are a reference of, such as 'origin' for a reference 
+            named 'origin/master'&quot;&quot;&quot;</span>
+        <span class="s1">tokens = self.path.split(</span><span class="s3">&quot;/&quot;</span><span class="s1">)</span>
+        <span class="s2"># /refs/remotes/&lt;remote name&gt;/&lt;branch_name&gt;</span>
+        <span class="s0">return </span><span class="s1">tokens[</span><span class="s5">2</span><span class="s1">]</span>
+
+    <span class="s1">@property  </span><span class="s2"># type: ignore ## mypy cannot deal with properties with an extra decorator (2021-04-21)</span>
+    <span class="s1">@require_remote_ref_path</span>
+    <span class="s0">def </span><span class="s1">remote_head(self) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot;:return: Name of the remote head itself, i.e. master. 
+        :note: The returned name is usually not qualified enough to uniquely identify 
+            a branch&quot;&quot;&quot;</span>
+        <span class="s1">tokens = self.path.split(</span><span class="s3">&quot;/&quot;</span><span class="s1">)</span>
+        <span class="s0">return </span><span class="s3">&quot;/&quot;</span><span class="s1">.join(tokens[</span><span class="s5">3</span><span class="s1">:])</span>
+
+    <span class="s2"># } END remote interface</span>
+</pre>
+</body>
+</html>

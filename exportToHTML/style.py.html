@@ -1,0 +1,795 @@
+<html>
+<head>
+<title>style.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #808080;}
+.s3 { color: #6a8759;}
+.s4 { color: #629755; font-style: italic;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+style.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">from </span><span class="s1">functools </span><span class="s0">import </span><span class="s1">lru_cache</span>
+<span class="s0">from </span><span class="s1">marshal </span><span class="s0">import </span><span class="s1">dumps</span><span class="s0">, </span><span class="s1">loads</span>
+<span class="s0">from </span><span class="s1">random </span><span class="s0">import </span><span class="s1">randint</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span><span class="s0">, </span><span class="s1">Dict</span><span class="s0">, </span><span class="s1">Iterable</span><span class="s0">, </span><span class="s1">List</span><span class="s0">, </span><span class="s1">Optional</span><span class="s0">, </span><span class="s1">Type</span><span class="s0">, </span><span class="s1">Union</span><span class="s0">, </span><span class="s1">cast</span>
+
+<span class="s0">from </span><span class="s1">. </span><span class="s0">import </span><span class="s1">errors</span>
+<span class="s0">from </span><span class="s1">.color </span><span class="s0">import </span><span class="s1">Color</span><span class="s0">, </span><span class="s1">ColorParseError</span><span class="s0">, </span><span class="s1">ColorSystem</span><span class="s0">, </span><span class="s1">blend_rgb</span>
+<span class="s0">from </span><span class="s1">.repr </span><span class="s0">import </span><span class="s1">Result</span><span class="s0">, </span><span class="s1">rich_repr</span>
+<span class="s0">from </span><span class="s1">.terminal_theme </span><span class="s0">import </span><span class="s1">DEFAULT_TERMINAL_THEME</span><span class="s0">, </span><span class="s1">TerminalTheme</span>
+
+<span class="s2"># Style instances and style definitions are often interchangeable</span>
+<span class="s1">StyleType = Union[str</span><span class="s0">, </span><span class="s3">&quot;Style&quot;</span><span class="s1">]</span>
+
+
+<span class="s0">class </span><span class="s1">_Bit:</span>
+    <span class="s4">&quot;&quot;&quot;A descriptor to get/set a style attribute bit.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = [</span><span class="s3">&quot;bit&quot;</span><span class="s1">]</span>
+
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s0">, </span><span class="s1">bit_no: int) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">self.bit = </span><span class="s5">1 </span><span class="s1">&lt;&lt; bit_no</span>
+
+    <span class="s0">def </span><span class="s1">__get__(self</span><span class="s0">, </span><span class="s1">obj: </span><span class="s3">&quot;Style&quot;</span><span class="s0">, </span><span class="s1">objtype: Type[</span><span class="s3">&quot;Style&quot;</span><span class="s1">]) -&gt; Optional[bool]:</span>
+        <span class="s0">if </span><span class="s1">obj._set_attributes &amp; self.bit:</span>
+            <span class="s0">return </span><span class="s1">obj._attributes &amp; self.bit != </span><span class="s5">0</span>
+        <span class="s0">return None</span>
+
+
+<span class="s1">@rich_repr</span>
+<span class="s0">class </span><span class="s1">Style:</span>
+    <span class="s4">&quot;&quot;&quot;A terminal style. 
+ 
+    A terminal style consists of a color (`color`), a background color (`bgcolor`), and a number of attributes, such 
+    as bold, italic etc. The attributes have 3 states: they can either be on 
+    (``True``), off (``False``), or not set (``None``). 
+ 
+    Args: 
+        color (Union[Color, str], optional): Color of terminal text. Defaults to None. 
+        bgcolor (Union[Color, str], optional): Color of terminal background. Defaults to None. 
+        bold (bool, optional): Enable bold text. Defaults to None. 
+        dim (bool, optional): Enable dim text. Defaults to None. 
+        italic (bool, optional): Enable italic text. Defaults to None. 
+        underline (bool, optional): Enable underlined text. Defaults to None. 
+        blink (bool, optional): Enabled blinking text. Defaults to None. 
+        blink2 (bool, optional): Enable fast blinking text. Defaults to None. 
+        reverse (bool, optional): Enabled reverse text. Defaults to None. 
+        conceal (bool, optional): Enable concealed text. Defaults to None. 
+        strike (bool, optional): Enable strikethrough text. Defaults to None. 
+        underline2 (bool, optional): Enable doubly underlined text. Defaults to None. 
+        frame (bool, optional): Enable framed text. Defaults to None. 
+        encircle (bool, optional): Enable encircled text. Defaults to None. 
+        overline (bool, optional): Enable overlined text. Defaults to None. 
+        link (str, link): Link URL. Defaults to None. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">_color: Optional[Color]</span>
+    <span class="s1">_bgcolor: Optional[Color]</span>
+    <span class="s1">_attributes: int</span>
+    <span class="s1">_set_attributes: int</span>
+    <span class="s1">_hash: Optional[int]</span>
+    <span class="s1">_null: bool</span>
+    <span class="s1">_meta: Optional[bytes]</span>
+
+    <span class="s1">__slots__ = [</span>
+        <span class="s3">&quot;_color&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;_bgcolor&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;_attributes&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;_set_attributes&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;_link&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;_link_id&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;_ansi&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;_style_definition&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;_hash&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;_null&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;_meta&quot;</span><span class="s0">,</span>
+    <span class="s1">]</span>
+
+    <span class="s2"># maps bits on to SGR parameter</span>
+    <span class="s1">_style_map = {</span>
+        <span class="s5">0</span><span class="s1">: </span><span class="s3">&quot;1&quot;</span><span class="s0">,</span>
+        <span class="s5">1</span><span class="s1">: </span><span class="s3">&quot;2&quot;</span><span class="s0">,</span>
+        <span class="s5">2</span><span class="s1">: </span><span class="s3">&quot;3&quot;</span><span class="s0">,</span>
+        <span class="s5">3</span><span class="s1">: </span><span class="s3">&quot;4&quot;</span><span class="s0">,</span>
+        <span class="s5">4</span><span class="s1">: </span><span class="s3">&quot;5&quot;</span><span class="s0">,</span>
+        <span class="s5">5</span><span class="s1">: </span><span class="s3">&quot;6&quot;</span><span class="s0">,</span>
+        <span class="s5">6</span><span class="s1">: </span><span class="s3">&quot;7&quot;</span><span class="s0">,</span>
+        <span class="s5">7</span><span class="s1">: </span><span class="s3">&quot;8&quot;</span><span class="s0">,</span>
+        <span class="s5">8</span><span class="s1">: </span><span class="s3">&quot;9&quot;</span><span class="s0">,</span>
+        <span class="s5">9</span><span class="s1">: </span><span class="s3">&quot;21&quot;</span><span class="s0">,</span>
+        <span class="s5">10</span><span class="s1">: </span><span class="s3">&quot;51&quot;</span><span class="s0">,</span>
+        <span class="s5">11</span><span class="s1">: </span><span class="s3">&quot;52&quot;</span><span class="s0">,</span>
+        <span class="s5">12</span><span class="s1">: </span><span class="s3">&quot;53&quot;</span><span class="s0">,</span>
+    <span class="s1">}</span>
+
+    <span class="s1">STYLE_ATTRIBUTES = {</span>
+        <span class="s3">&quot;dim&quot;</span><span class="s1">: </span><span class="s3">&quot;dim&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;d&quot;</span><span class="s1">: </span><span class="s3">&quot;dim&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;bold&quot;</span><span class="s1">: </span><span class="s3">&quot;bold&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;b&quot;</span><span class="s1">: </span><span class="s3">&quot;bold&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;italic&quot;</span><span class="s1">: </span><span class="s3">&quot;italic&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;i&quot;</span><span class="s1">: </span><span class="s3">&quot;italic&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;underline&quot;</span><span class="s1">: </span><span class="s3">&quot;underline&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;u&quot;</span><span class="s1">: </span><span class="s3">&quot;underline&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;blink&quot;</span><span class="s1">: </span><span class="s3">&quot;blink&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;blink2&quot;</span><span class="s1">: </span><span class="s3">&quot;blink2&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;reverse&quot;</span><span class="s1">: </span><span class="s3">&quot;reverse&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;r&quot;</span><span class="s1">: </span><span class="s3">&quot;reverse&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;conceal&quot;</span><span class="s1">: </span><span class="s3">&quot;conceal&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;c&quot;</span><span class="s1">: </span><span class="s3">&quot;conceal&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;strike&quot;</span><span class="s1">: </span><span class="s3">&quot;strike&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;s&quot;</span><span class="s1">: </span><span class="s3">&quot;strike&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;underline2&quot;</span><span class="s1">: </span><span class="s3">&quot;underline2&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;uu&quot;</span><span class="s1">: </span><span class="s3">&quot;underline2&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;frame&quot;</span><span class="s1">: </span><span class="s3">&quot;frame&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;encircle&quot;</span><span class="s1">: </span><span class="s3">&quot;encircle&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;overline&quot;</span><span class="s1">: </span><span class="s3">&quot;overline&quot;</span><span class="s0">,</span>
+        <span class="s3">&quot;o&quot;</span><span class="s1">: </span><span class="s3">&quot;overline&quot;</span><span class="s0">,</span>
+    <span class="s1">}</span>
+
+    <span class="s0">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">*</span><span class="s0">,</span>
+        <span class="s1">color: Optional[Union[Color</span><span class="s0">, </span><span class="s1">str]] = </span><span class="s0">None,</span>
+        <span class="s1">bgcolor: Optional[Union[Color</span><span class="s0">, </span><span class="s1">str]] = </span><span class="s0">None,</span>
+        <span class="s1">bold: Optional[bool] = </span><span class="s0">None,</span>
+        <span class="s1">dim: Optional[bool] = </span><span class="s0">None,</span>
+        <span class="s1">italic: Optional[bool] = </span><span class="s0">None,</span>
+        <span class="s1">underline: Optional[bool] = </span><span class="s0">None,</span>
+        <span class="s1">blink: Optional[bool] = </span><span class="s0">None,</span>
+        <span class="s1">blink2: Optional[bool] = </span><span class="s0">None,</span>
+        <span class="s1">reverse: Optional[bool] = </span><span class="s0">None,</span>
+        <span class="s1">conceal: Optional[bool] = </span><span class="s0">None,</span>
+        <span class="s1">strike: Optional[bool] = </span><span class="s0">None,</span>
+        <span class="s1">underline2: Optional[bool] = </span><span class="s0">None,</span>
+        <span class="s1">frame: Optional[bool] = </span><span class="s0">None,</span>
+        <span class="s1">encircle: Optional[bool] = </span><span class="s0">None,</span>
+        <span class="s1">overline: Optional[bool] = </span><span class="s0">None,</span>
+        <span class="s1">link: Optional[str] = </span><span class="s0">None,</span>
+        <span class="s1">meta: Optional[Dict[str</span><span class="s0">, </span><span class="s1">Any]] = </span><span class="s0">None,</span>
+    <span class="s1">):</span>
+        <span class="s1">self._ansi: Optional[str] = </span><span class="s0">None</span>
+        <span class="s1">self._style_definition: Optional[str] = </span><span class="s0">None</span>
+
+        <span class="s0">def </span><span class="s1">_make_color(color: Union[Color</span><span class="s0">, </span><span class="s1">str]) -&gt; Color:</span>
+            <span class="s0">return </span><span class="s1">color </span><span class="s0">if </span><span class="s1">isinstance(color</span><span class="s0">, </span><span class="s1">Color) </span><span class="s0">else </span><span class="s1">Color.parse(color)</span>
+
+        <span class="s1">self._color = </span><span class="s0">None if </span><span class="s1">color </span><span class="s0">is None else </span><span class="s1">_make_color(color)</span>
+        <span class="s1">self._bgcolor = </span><span class="s0">None if </span><span class="s1">bgcolor </span><span class="s0">is None else </span><span class="s1">_make_color(bgcolor)</span>
+        <span class="s1">self._set_attributes = sum(</span>
+            <span class="s1">(</span>
+                <span class="s1">bold </span><span class="s0">is not None,</span>
+                <span class="s1">dim </span><span class="s0">is not None and </span><span class="s5">2</span><span class="s0">,</span>
+                <span class="s1">italic </span><span class="s0">is not None and </span><span class="s5">4</span><span class="s0">,</span>
+                <span class="s1">underline </span><span class="s0">is not None and </span><span class="s5">8</span><span class="s0">,</span>
+                <span class="s1">blink </span><span class="s0">is not None and </span><span class="s5">16</span><span class="s0">,</span>
+                <span class="s1">blink2 </span><span class="s0">is not None and </span><span class="s5">32</span><span class="s0">,</span>
+                <span class="s1">reverse </span><span class="s0">is not None and </span><span class="s5">64</span><span class="s0">,</span>
+                <span class="s1">conceal </span><span class="s0">is not None and </span><span class="s5">128</span><span class="s0">,</span>
+                <span class="s1">strike </span><span class="s0">is not None and </span><span class="s5">256</span><span class="s0">,</span>
+                <span class="s1">underline2 </span><span class="s0">is not None and </span><span class="s5">512</span><span class="s0">,</span>
+                <span class="s1">frame </span><span class="s0">is not None and </span><span class="s5">1024</span><span class="s0">,</span>
+                <span class="s1">encircle </span><span class="s0">is not None and </span><span class="s5">2048</span><span class="s0">,</span>
+                <span class="s1">overline </span><span class="s0">is not None and </span><span class="s5">4096</span><span class="s0">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s1">self._attributes = (</span>
+            <span class="s1">sum(</span>
+                <span class="s1">(</span>
+                    <span class="s1">bold </span><span class="s0">and </span><span class="s5">1 </span><span class="s0">or </span><span class="s5">0</span><span class="s0">,</span>
+                    <span class="s1">dim </span><span class="s0">and </span><span class="s5">2 </span><span class="s0">or </span><span class="s5">0</span><span class="s0">,</span>
+                    <span class="s1">italic </span><span class="s0">and </span><span class="s5">4 </span><span class="s0">or </span><span class="s5">0</span><span class="s0">,</span>
+                    <span class="s1">underline </span><span class="s0">and </span><span class="s5">8 </span><span class="s0">or </span><span class="s5">0</span><span class="s0">,</span>
+                    <span class="s1">blink </span><span class="s0">and </span><span class="s5">16 </span><span class="s0">or </span><span class="s5">0</span><span class="s0">,</span>
+                    <span class="s1">blink2 </span><span class="s0">and </span><span class="s5">32 </span><span class="s0">or </span><span class="s5">0</span><span class="s0">,</span>
+                    <span class="s1">reverse </span><span class="s0">and </span><span class="s5">64 </span><span class="s0">or </span><span class="s5">0</span><span class="s0">,</span>
+                    <span class="s1">conceal </span><span class="s0">and </span><span class="s5">128 </span><span class="s0">or </span><span class="s5">0</span><span class="s0">,</span>
+                    <span class="s1">strike </span><span class="s0">and </span><span class="s5">256 </span><span class="s0">or </span><span class="s5">0</span><span class="s0">,</span>
+                    <span class="s1">underline2 </span><span class="s0">and </span><span class="s5">512 </span><span class="s0">or </span><span class="s5">0</span><span class="s0">,</span>
+                    <span class="s1">frame </span><span class="s0">and </span><span class="s5">1024 </span><span class="s0">or </span><span class="s5">0</span><span class="s0">,</span>
+                    <span class="s1">encircle </span><span class="s0">and </span><span class="s5">2048 </span><span class="s0">or </span><span class="s5">0</span><span class="s0">,</span>
+                    <span class="s1">overline </span><span class="s0">and </span><span class="s5">4096 </span><span class="s0">or </span><span class="s5">0</span><span class="s0">,</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s0">if </span><span class="s1">self._set_attributes</span>
+            <span class="s0">else </span><span class="s5">0</span>
+        <span class="s1">)</span>
+
+        <span class="s1">self._link = link</span>
+        <span class="s1">self._meta = </span><span class="s0">None if </span><span class="s1">meta </span><span class="s0">is None else </span><span class="s1">dumps(meta)</span>
+        <span class="s1">self._link_id = (</span>
+            <span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">randint(</span><span class="s5">0</span><span class="s0">, </span><span class="s5">999999</span><span class="s1">)</span><span class="s0">}{</span><span class="s1">hash(self._meta)</span><span class="s0">}</span><span class="s3">&quot; </span><span class="s0">if </span><span class="s1">(link </span><span class="s0">or </span><span class="s1">meta) </span><span class="s0">else </span><span class="s3">&quot;&quot;</span>
+        <span class="s1">)</span>
+        <span class="s1">self._hash: Optional[int] = </span><span class="s0">None</span>
+        <span class="s1">self._null = </span><span class="s0">not </span><span class="s1">(self._set_attributes </span><span class="s0">or </span><span class="s1">color </span><span class="s0">or </span><span class="s1">bgcolor </span><span class="s0">or </span><span class="s1">link </span><span class="s0">or </span><span class="s1">meta)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">null(cls) -&gt; </span><span class="s3">&quot;Style&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Create an 'null' style, equivalent to Style(), but more performant.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">NULL_STYLE</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">from_color(</span>
+        <span class="s1">cls</span><span class="s0">, </span><span class="s1">color: Optional[Color] = </span><span class="s0">None, </span><span class="s1">bgcolor: Optional[Color] = </span><span class="s0">None</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;Style&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Create a new style with colors and no attributes. 
+ 
+        Returns: 
+            color (Optional[Color]): A (foreground) color, or None for no color. Defaults to None. 
+            bgcolor (Optional[Color]): A (background) color, or None for no color. Defaults to None. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">style: Style = cls.__new__(Style)</span>
+        <span class="s1">style._ansi = </span><span class="s0">None</span>
+        <span class="s1">style._style_definition = </span><span class="s0">None</span>
+        <span class="s1">style._color = color</span>
+        <span class="s1">style._bgcolor = bgcolor</span>
+        <span class="s1">style._set_attributes = </span><span class="s5">0</span>
+        <span class="s1">style._attributes = </span><span class="s5">0</span>
+        <span class="s1">style._link = </span><span class="s0">None</span>
+        <span class="s1">style._link_id = </span><span class="s3">&quot;&quot;</span>
+        <span class="s1">style._meta = </span><span class="s0">None</span>
+        <span class="s1">style._null = </span><span class="s0">not </span><span class="s1">(color </span><span class="s0">or </span><span class="s1">bgcolor)</span>
+        <span class="s1">style._hash = </span><span class="s0">None</span>
+        <span class="s0">return </span><span class="s1">style</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">from_meta(cls</span><span class="s0">, </span><span class="s1">meta: Optional[Dict[str</span><span class="s0">, </span><span class="s1">Any]]) -&gt; </span><span class="s3">&quot;Style&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Create a new style with meta data. 
+ 
+        Returns: 
+            meta (Optional[Dict[str, Any]]): A dictionary of meta data. Defaults to None. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">style: Style = cls.__new__(Style)</span>
+        <span class="s1">style._ansi = </span><span class="s0">None</span>
+        <span class="s1">style._style_definition = </span><span class="s0">None</span>
+        <span class="s1">style._color = </span><span class="s0">None</span>
+        <span class="s1">style._bgcolor = </span><span class="s0">None</span>
+        <span class="s1">style._set_attributes = </span><span class="s5">0</span>
+        <span class="s1">style._attributes = </span><span class="s5">0</span>
+        <span class="s1">style._link = </span><span class="s0">None</span>
+        <span class="s1">style._meta = dumps(meta)</span>
+        <span class="s1">style._link_id = </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">randint(</span><span class="s5">0</span><span class="s0">, </span><span class="s5">999999</span><span class="s1">)</span><span class="s0">}{</span><span class="s1">hash(style._meta)</span><span class="s0">}</span><span class="s3">&quot;</span>
+        <span class="s1">style._hash = </span><span class="s0">None</span>
+        <span class="s1">style._null = </span><span class="s0">not </span><span class="s1">(meta)</span>
+        <span class="s0">return </span><span class="s1">style</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">on(cls</span><span class="s0">, </span><span class="s1">meta: Optional[Dict[str</span><span class="s0">, </span><span class="s1">Any]] = </span><span class="s0">None, </span><span class="s1">**handlers: Any) -&gt; </span><span class="s3">&quot;Style&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Create a blank style with meta information. 
+ 
+        Example: 
+            style = Style.on(click=self.on_click) 
+ 
+        Args: 
+            meta (Optional[Dict[str, Any]], optional): An optional dict of meta information. 
+            **handlers (Any): Keyword arguments are translated in to handlers. 
+ 
+        Returns: 
+            Style: A Style with meta information attached. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">meta = {} </span><span class="s0">if </span><span class="s1">meta </span><span class="s0">is None else </span><span class="s1">meta</span>
+        <span class="s1">meta.update({</span><span class="s3">f&quot;@</span><span class="s0">{</span><span class="s1">key</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s1">: value </span><span class="s0">for </span><span class="s1">key</span><span class="s0">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">handlers.items()})</span>
+        <span class="s0">return </span><span class="s1">cls.from_meta(meta)</span>
+
+    <span class="s1">bold = _Bit(</span><span class="s5">0</span><span class="s1">)</span>
+    <span class="s1">dim = _Bit(</span><span class="s5">1</span><span class="s1">)</span>
+    <span class="s1">italic = _Bit(</span><span class="s5">2</span><span class="s1">)</span>
+    <span class="s1">underline = _Bit(</span><span class="s5">3</span><span class="s1">)</span>
+    <span class="s1">blink = _Bit(</span><span class="s5">4</span><span class="s1">)</span>
+    <span class="s1">blink2 = _Bit(</span><span class="s5">5</span><span class="s1">)</span>
+    <span class="s1">reverse = _Bit(</span><span class="s5">6</span><span class="s1">)</span>
+    <span class="s1">conceal = _Bit(</span><span class="s5">7</span><span class="s1">)</span>
+    <span class="s1">strike = _Bit(</span><span class="s5">8</span><span class="s1">)</span>
+    <span class="s1">underline2 = _Bit(</span><span class="s5">9</span><span class="s1">)</span>
+    <span class="s1">frame = _Bit(</span><span class="s5">10</span><span class="s1">)</span>
+    <span class="s1">encircle = _Bit(</span><span class="s5">11</span><span class="s1">)</span>
+    <span class="s1">overline = _Bit(</span><span class="s5">12</span><span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">link_id(self) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot;Get a link id, used in ansi code for links.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self._link_id</span>
+
+    <span class="s0">def </span><span class="s1">__str__(self) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot;Re-generate style definition from attributes.&quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self._style_definition </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">attributes: List[str] = []</span>
+            <span class="s1">append = attributes.append</span>
+            <span class="s1">bits = self._set_attributes</span>
+            <span class="s0">if </span><span class="s1">bits &amp; </span><span class="s5">0b0000000001111</span><span class="s1">:</span>
+                <span class="s0">if </span><span class="s1">bits &amp; </span><span class="s5">1</span><span class="s1">:</span>
+                    <span class="s1">append(</span><span class="s3">&quot;bold&quot; </span><span class="s0">if </span><span class="s1">self.bold </span><span class="s0">else </span><span class="s3">&quot;not bold&quot;</span><span class="s1">)</span>
+                <span class="s0">if </span><span class="s1">bits &amp; (</span><span class="s5">1 </span><span class="s1">&lt;&lt; </span><span class="s5">1</span><span class="s1">):</span>
+                    <span class="s1">append(</span><span class="s3">&quot;dim&quot; </span><span class="s0">if </span><span class="s1">self.dim </span><span class="s0">else </span><span class="s3">&quot;not dim&quot;</span><span class="s1">)</span>
+                <span class="s0">if </span><span class="s1">bits &amp; (</span><span class="s5">1 </span><span class="s1">&lt;&lt; </span><span class="s5">2</span><span class="s1">):</span>
+                    <span class="s1">append(</span><span class="s3">&quot;italic&quot; </span><span class="s0">if </span><span class="s1">self.italic </span><span class="s0">else </span><span class="s3">&quot;not italic&quot;</span><span class="s1">)</span>
+                <span class="s0">if </span><span class="s1">bits &amp; (</span><span class="s5">1 </span><span class="s1">&lt;&lt; </span><span class="s5">3</span><span class="s1">):</span>
+                    <span class="s1">append(</span><span class="s3">&quot;underline&quot; </span><span class="s0">if </span><span class="s1">self.underline </span><span class="s0">else </span><span class="s3">&quot;not underline&quot;</span><span class="s1">)</span>
+            <span class="s0">if </span><span class="s1">bits &amp; </span><span class="s5">0b0000111110000</span><span class="s1">:</span>
+                <span class="s0">if </span><span class="s1">bits &amp; (</span><span class="s5">1 </span><span class="s1">&lt;&lt; </span><span class="s5">4</span><span class="s1">):</span>
+                    <span class="s1">append(</span><span class="s3">&quot;blink&quot; </span><span class="s0">if </span><span class="s1">self.blink </span><span class="s0">else </span><span class="s3">&quot;not blink&quot;</span><span class="s1">)</span>
+                <span class="s0">if </span><span class="s1">bits &amp; (</span><span class="s5">1 </span><span class="s1">&lt;&lt; </span><span class="s5">5</span><span class="s1">):</span>
+                    <span class="s1">append(</span><span class="s3">&quot;blink2&quot; </span><span class="s0">if </span><span class="s1">self.blink2 </span><span class="s0">else </span><span class="s3">&quot;not blink2&quot;</span><span class="s1">)</span>
+                <span class="s0">if </span><span class="s1">bits &amp; (</span><span class="s5">1 </span><span class="s1">&lt;&lt; </span><span class="s5">6</span><span class="s1">):</span>
+                    <span class="s1">append(</span><span class="s3">&quot;reverse&quot; </span><span class="s0">if </span><span class="s1">self.reverse </span><span class="s0">else </span><span class="s3">&quot;not reverse&quot;</span><span class="s1">)</span>
+                <span class="s0">if </span><span class="s1">bits &amp; (</span><span class="s5">1 </span><span class="s1">&lt;&lt; </span><span class="s5">7</span><span class="s1">):</span>
+                    <span class="s1">append(</span><span class="s3">&quot;conceal&quot; </span><span class="s0">if </span><span class="s1">self.conceal </span><span class="s0">else </span><span class="s3">&quot;not conceal&quot;</span><span class="s1">)</span>
+                <span class="s0">if </span><span class="s1">bits &amp; (</span><span class="s5">1 </span><span class="s1">&lt;&lt; </span><span class="s5">8</span><span class="s1">):</span>
+                    <span class="s1">append(</span><span class="s3">&quot;strike&quot; </span><span class="s0">if </span><span class="s1">self.strike </span><span class="s0">else </span><span class="s3">&quot;not strike&quot;</span><span class="s1">)</span>
+            <span class="s0">if </span><span class="s1">bits &amp; </span><span class="s5">0b1111000000000</span><span class="s1">:</span>
+                <span class="s0">if </span><span class="s1">bits &amp; (</span><span class="s5">1 </span><span class="s1">&lt;&lt; </span><span class="s5">9</span><span class="s1">):</span>
+                    <span class="s1">append(</span><span class="s3">&quot;underline2&quot; </span><span class="s0">if </span><span class="s1">self.underline2 </span><span class="s0">else </span><span class="s3">&quot;not underline2&quot;</span><span class="s1">)</span>
+                <span class="s0">if </span><span class="s1">bits &amp; (</span><span class="s5">1 </span><span class="s1">&lt;&lt; </span><span class="s5">10</span><span class="s1">):</span>
+                    <span class="s1">append(</span><span class="s3">&quot;frame&quot; </span><span class="s0">if </span><span class="s1">self.frame </span><span class="s0">else </span><span class="s3">&quot;not frame&quot;</span><span class="s1">)</span>
+                <span class="s0">if </span><span class="s1">bits &amp; (</span><span class="s5">1 </span><span class="s1">&lt;&lt; </span><span class="s5">11</span><span class="s1">):</span>
+                    <span class="s1">append(</span><span class="s3">&quot;encircle&quot; </span><span class="s0">if </span><span class="s1">self.encircle </span><span class="s0">else </span><span class="s3">&quot;not encircle&quot;</span><span class="s1">)</span>
+                <span class="s0">if </span><span class="s1">bits &amp; (</span><span class="s5">1 </span><span class="s1">&lt;&lt; </span><span class="s5">12</span><span class="s1">):</span>
+                    <span class="s1">append(</span><span class="s3">&quot;overline&quot; </span><span class="s0">if </span><span class="s1">self.overline </span><span class="s0">else </span><span class="s3">&quot;not overline&quot;</span><span class="s1">)</span>
+            <span class="s0">if </span><span class="s1">self._color </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s1">append(self._color.name)</span>
+            <span class="s0">if </span><span class="s1">self._bgcolor </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s1">append(</span><span class="s3">&quot;on&quot;</span><span class="s1">)</span>
+                <span class="s1">append(self._bgcolor.name)</span>
+            <span class="s0">if </span><span class="s1">self._link:</span>
+                <span class="s1">append(</span><span class="s3">&quot;link&quot;</span><span class="s1">)</span>
+                <span class="s1">append(self._link)</span>
+            <span class="s1">self._style_definition = </span><span class="s3">&quot; &quot;</span><span class="s1">.join(attributes) </span><span class="s0">or </span><span class="s3">&quot;none&quot;</span>
+        <span class="s0">return </span><span class="s1">self._style_definition</span>
+
+    <span class="s0">def </span><span class="s1">__bool__(self) -&gt; bool:</span>
+        <span class="s4">&quot;&quot;&quot;A Style is false if it has no attributes, colors, or links.&quot;&quot;&quot;</span>
+        <span class="s0">return not </span><span class="s1">self._null</span>
+
+    <span class="s0">def </span><span class="s1">_make_ansi_codes(self</span><span class="s0">, </span><span class="s1">color_system: ColorSystem) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot;Generate ANSI codes for this style. 
+ 
+        Args: 
+            color_system (ColorSystem): Color system. 
+ 
+        Returns: 
+            str: String containing codes. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0">if </span><span class="s1">self._ansi </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">sgr: List[str] = []</span>
+            <span class="s1">append = sgr.append</span>
+            <span class="s1">_style_map = self._style_map</span>
+            <span class="s1">attributes = self._attributes &amp; self._set_attributes</span>
+            <span class="s0">if </span><span class="s1">attributes:</span>
+                <span class="s0">if </span><span class="s1">attributes &amp; </span><span class="s5">1</span><span class="s1">:</span>
+                    <span class="s1">append(_style_map[</span><span class="s5">0</span><span class="s1">])</span>
+                <span class="s0">if </span><span class="s1">attributes &amp; </span><span class="s5">2</span><span class="s1">:</span>
+                    <span class="s1">append(_style_map[</span><span class="s5">1</span><span class="s1">])</span>
+                <span class="s0">if </span><span class="s1">attributes &amp; </span><span class="s5">4</span><span class="s1">:</span>
+                    <span class="s1">append(_style_map[</span><span class="s5">2</span><span class="s1">])</span>
+                <span class="s0">if </span><span class="s1">attributes &amp; </span><span class="s5">8</span><span class="s1">:</span>
+                    <span class="s1">append(_style_map[</span><span class="s5">3</span><span class="s1">])</span>
+                <span class="s0">if </span><span class="s1">attributes &amp; </span><span class="s5">0b0000111110000</span><span class="s1">:</span>
+                    <span class="s0">for </span><span class="s1">bit </span><span class="s0">in </span><span class="s1">range(</span><span class="s5">4</span><span class="s0">, </span><span class="s5">9</span><span class="s1">):</span>
+                        <span class="s0">if </span><span class="s1">attributes &amp; (</span><span class="s5">1 </span><span class="s1">&lt;&lt; bit):</span>
+                            <span class="s1">append(_style_map[bit])</span>
+                <span class="s0">if </span><span class="s1">attributes &amp; </span><span class="s5">0b1111000000000</span><span class="s1">:</span>
+                    <span class="s0">for </span><span class="s1">bit </span><span class="s0">in </span><span class="s1">range(</span><span class="s5">9</span><span class="s0">, </span><span class="s5">13</span><span class="s1">):</span>
+                        <span class="s0">if </span><span class="s1">attributes &amp; (</span><span class="s5">1 </span><span class="s1">&lt;&lt; bit):</span>
+                            <span class="s1">append(_style_map[bit])</span>
+            <span class="s0">if </span><span class="s1">self._color </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s1">sgr.extend(self._color.downgrade(color_system).get_ansi_codes())</span>
+            <span class="s0">if </span><span class="s1">self._bgcolor </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s1">sgr.extend(</span>
+                    <span class="s1">self._bgcolor.downgrade(color_system).get_ansi_codes(</span>
+                        <span class="s1">foreground=</span><span class="s0">False</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+            <span class="s1">self._ansi = </span><span class="s3">&quot;;&quot;</span><span class="s1">.join(sgr)</span>
+        <span class="s0">return </span><span class="s1">self._ansi</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s1">@lru_cache(maxsize=</span><span class="s5">1024</span><span class="s1">)</span>
+    <span class="s0">def </span><span class="s1">normalize(cls</span><span class="s0">, </span><span class="s1">style: str) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot;Normalize a style definition so that styles with the same effect have the same string 
+        representation. 
+ 
+        Args: 
+            style (str): A style definition. 
+ 
+        Returns: 
+            str: Normal form of style definition. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s0">return </span><span class="s1">str(cls.parse(style))</span>
+        <span class="s0">except </span><span class="s1">errors.StyleSyntaxError:</span>
+            <span class="s0">return </span><span class="s1">style.strip().lower()</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">pick_first(cls</span><span class="s0">, </span><span class="s1">*values: Optional[StyleType]) -&gt; StyleType:</span>
+        <span class="s4">&quot;&quot;&quot;Pick first non-None style.&quot;&quot;&quot;</span>
+        <span class="s0">for </span><span class="s1">value </span><span class="s0">in </span><span class="s1">values:</span>
+            <span class="s0">if </span><span class="s1">value </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s0">return </span><span class="s1">value</span>
+        <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;expected at least one non-None style&quot;</span><span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">__rich_repr__(self) -&gt; Result:</span>
+        <span class="s0">yield </span><span class="s3">&quot;color&quot;</span><span class="s0">, </span><span class="s1">self.color</span><span class="s0">, None</span>
+        <span class="s0">yield </span><span class="s3">&quot;bgcolor&quot;</span><span class="s0">, </span><span class="s1">self.bgcolor</span><span class="s0">, None</span>
+        <span class="s0">yield </span><span class="s3">&quot;bold&quot;</span><span class="s0">, </span><span class="s1">self.bold</span><span class="s0">, None,</span>
+        <span class="s0">yield </span><span class="s3">&quot;dim&quot;</span><span class="s0">, </span><span class="s1">self.dim</span><span class="s0">, None,</span>
+        <span class="s0">yield </span><span class="s3">&quot;italic&quot;</span><span class="s0">, </span><span class="s1">self.italic</span><span class="s0">, None</span>
+        <span class="s0">yield </span><span class="s3">&quot;underline&quot;</span><span class="s0">, </span><span class="s1">self.underline</span><span class="s0">, None,</span>
+        <span class="s0">yield </span><span class="s3">&quot;blink&quot;</span><span class="s0">, </span><span class="s1">self.blink</span><span class="s0">, None</span>
+        <span class="s0">yield </span><span class="s3">&quot;blink2&quot;</span><span class="s0">, </span><span class="s1">self.blink2</span><span class="s0">, None</span>
+        <span class="s0">yield </span><span class="s3">&quot;reverse&quot;</span><span class="s0">, </span><span class="s1">self.reverse</span><span class="s0">, None</span>
+        <span class="s0">yield </span><span class="s3">&quot;conceal&quot;</span><span class="s0">, </span><span class="s1">self.conceal</span><span class="s0">, None</span>
+        <span class="s0">yield </span><span class="s3">&quot;strike&quot;</span><span class="s0">, </span><span class="s1">self.strike</span><span class="s0">, None</span>
+        <span class="s0">yield </span><span class="s3">&quot;underline2&quot;</span><span class="s0">, </span><span class="s1">self.underline2</span><span class="s0">, None</span>
+        <span class="s0">yield </span><span class="s3">&quot;frame&quot;</span><span class="s0">, </span><span class="s1">self.frame</span><span class="s0">, None</span>
+        <span class="s0">yield </span><span class="s3">&quot;encircle&quot;</span><span class="s0">, </span><span class="s1">self.encircle</span><span class="s0">, None</span>
+        <span class="s0">yield </span><span class="s3">&quot;link&quot;</span><span class="s0">, </span><span class="s1">self.link</span><span class="s0">, None</span>
+        <span class="s0">if </span><span class="s1">self._meta:</span>
+            <span class="s0">yield </span><span class="s3">&quot;meta&quot;</span><span class="s0">, </span><span class="s1">self.meta</span>
+
+    <span class="s0">def </span><span class="s1">__eq__(self</span><span class="s0">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s0">if not </span><span class="s1">isinstance(other</span><span class="s0">, </span><span class="s1">Style):</span>
+            <span class="s0">return </span><span class="s1">NotImplemented</span>
+        <span class="s0">return </span><span class="s1">self.__hash__() == other.__hash__()</span>
+
+    <span class="s0">def </span><span class="s1">__ne__(self</span><span class="s0">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s0">if not </span><span class="s1">isinstance(other</span><span class="s0">, </span><span class="s1">Style):</span>
+            <span class="s0">return </span><span class="s1">NotImplemented</span>
+        <span class="s0">return </span><span class="s1">self.__hash__() != other.__hash__()</span>
+
+    <span class="s0">def </span><span class="s1">__hash__(self) -&gt; int:</span>
+        <span class="s0">if </span><span class="s1">self._hash </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s0">return </span><span class="s1">self._hash</span>
+        <span class="s1">self._hash = hash(</span>
+            <span class="s1">(</span>
+                <span class="s1">self._color</span><span class="s0">,</span>
+                <span class="s1">self._bgcolor</span><span class="s0">,</span>
+                <span class="s1">self._attributes</span><span class="s0">,</span>
+                <span class="s1">self._set_attributes</span><span class="s0">,</span>
+                <span class="s1">self._link</span><span class="s0">,</span>
+                <span class="s1">self._meta</span><span class="s0">,</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s0">return </span><span class="s1">self._hash</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">color(self) -&gt; Optional[Color]:</span>
+        <span class="s4">&quot;&quot;&quot;The foreground color or None if it is not set.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self._color</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">bgcolor(self) -&gt; Optional[Color]:</span>
+        <span class="s4">&quot;&quot;&quot;The background color or None if it is not set.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self._bgcolor</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">link(self) -&gt; Optional[str]:</span>
+        <span class="s4">&quot;&quot;&quot;Link text, if set.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self._link</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">transparent_background(self) -&gt; bool:</span>
+        <span class="s4">&quot;&quot;&quot;Check if the style specified a transparent background.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self.bgcolor </span><span class="s0">is None or </span><span class="s1">self.bgcolor.is_default</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">background_style(self) -&gt; </span><span class="s3">&quot;Style&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;A Style with background only.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">Style(bgcolor=self.bgcolor)</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">meta(self) -&gt; Dict[str</span><span class="s0">, </span><span class="s1">Any]:</span>
+        <span class="s4">&quot;&quot;&quot;Get meta information (can not be changed after construction).&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">{} </span><span class="s0">if </span><span class="s1">self._meta </span><span class="s0">is None else </span><span class="s1">cast(Dict[str</span><span class="s0">, </span><span class="s1">Any]</span><span class="s0">, </span><span class="s1">loads(self._meta))</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">without_color(self) -&gt; </span><span class="s3">&quot;Style&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Get a copy of the style with color removed.&quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self._null:</span>
+            <span class="s0">return </span><span class="s1">NULL_STYLE</span>
+        <span class="s1">style: Style = self.__new__(Style)</span>
+        <span class="s1">style._ansi = </span><span class="s0">None</span>
+        <span class="s1">style._style_definition = </span><span class="s0">None</span>
+        <span class="s1">style._color = </span><span class="s0">None</span>
+        <span class="s1">style._bgcolor = </span><span class="s0">None</span>
+        <span class="s1">style._attributes = self._attributes</span>
+        <span class="s1">style._set_attributes = self._set_attributes</span>
+        <span class="s1">style._link = self._link</span>
+        <span class="s1">style._link_id = </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">randint(</span><span class="s5">0</span><span class="s0">, </span><span class="s5">999999</span><span class="s1">)</span><span class="s0">}</span><span class="s3">&quot; </span><span class="s0">if </span><span class="s1">self._link </span><span class="s0">else </span><span class="s3">&quot;&quot;</span>
+        <span class="s1">style._null = </span><span class="s0">False</span>
+        <span class="s1">style._meta = </span><span class="s0">None</span>
+        <span class="s1">style._hash = </span><span class="s0">None</span>
+        <span class="s0">return </span><span class="s1">style</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s1">@lru_cache(maxsize=</span><span class="s5">4096</span><span class="s1">)</span>
+    <span class="s0">def </span><span class="s1">parse(cls</span><span class="s0">, </span><span class="s1">style_definition: str) -&gt; </span><span class="s3">&quot;Style&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Parse a style definition. 
+ 
+        Args: 
+            style_definition (str): A string containing a style. 
+ 
+        Raises: 
+            errors.StyleSyntaxError: If the style definition syntax is invalid. 
+ 
+        Returns: 
+            `Style`: A Style instance. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">style_definition.strip() == </span><span class="s3">&quot;none&quot; </span><span class="s0">or not </span><span class="s1">style_definition:</span>
+            <span class="s0">return </span><span class="s1">cls.null()</span>
+
+        <span class="s1">STYLE_ATTRIBUTES = cls.STYLE_ATTRIBUTES</span>
+        <span class="s1">color: Optional[str] = </span><span class="s0">None</span>
+        <span class="s1">bgcolor: Optional[str] = </span><span class="s0">None</span>
+        <span class="s1">attributes: Dict[str</span><span class="s0">, </span><span class="s1">Optional[Any]] = {}</span>
+        <span class="s1">link: Optional[str] = </span><span class="s0">None</span>
+
+        <span class="s1">words = iter(style_definition.split())</span>
+        <span class="s0">for </span><span class="s1">original_word </span><span class="s0">in </span><span class="s1">words:</span>
+            <span class="s1">word = original_word.lower()</span>
+            <span class="s0">if </span><span class="s1">word == </span><span class="s3">&quot;on&quot;</span><span class="s1">:</span>
+                <span class="s1">word = next(words</span><span class="s0">, </span><span class="s3">&quot;&quot;</span><span class="s1">)</span>
+                <span class="s0">if not </span><span class="s1">word:</span>
+                    <span class="s0">raise </span><span class="s1">errors.StyleSyntaxError(</span><span class="s3">&quot;color expected after 'on'&quot;</span><span class="s1">)</span>
+                <span class="s0">try</span><span class="s1">:</span>
+                    <span class="s1">Color.parse(word) </span><span class="s0">is None</span>
+                <span class="s0">except </span><span class="s1">ColorParseError </span><span class="s0">as </span><span class="s1">error:</span>
+                    <span class="s0">raise </span><span class="s1">errors.StyleSyntaxError(</span>
+                        <span class="s3">f&quot;unable to parse </span><span class="s0">{</span><span class="s1">word</span><span class="s0">!r} </span><span class="s3">as background color; </span><span class="s0">{</span><span class="s1">error</span><span class="s0">}</span><span class="s3">&quot;</span>
+                    <span class="s1">) </span><span class="s0">from None</span>
+                <span class="s1">bgcolor = word</span>
+
+            <span class="s0">elif </span><span class="s1">word == </span><span class="s3">&quot;not&quot;</span><span class="s1">:</span>
+                <span class="s1">word = next(words</span><span class="s0">, </span><span class="s3">&quot;&quot;</span><span class="s1">)</span>
+                <span class="s1">attribute = STYLE_ATTRIBUTES.get(word)</span>
+                <span class="s0">if </span><span class="s1">attribute </span><span class="s0">is None</span><span class="s1">:</span>
+                    <span class="s0">raise </span><span class="s1">errors.StyleSyntaxError(</span>
+                        <span class="s3">f&quot;expected style attribute after 'not', found </span><span class="s0">{</span><span class="s1">word</span><span class="s0">!r}</span><span class="s3">&quot;</span>
+                    <span class="s1">)</span>
+                <span class="s1">attributes[attribute] = </span><span class="s0">False</span>
+
+            <span class="s0">elif </span><span class="s1">word == </span><span class="s3">&quot;link&quot;</span><span class="s1">:</span>
+                <span class="s1">word = next(words</span><span class="s0">, </span><span class="s3">&quot;&quot;</span><span class="s1">)</span>
+                <span class="s0">if not </span><span class="s1">word:</span>
+                    <span class="s0">raise </span><span class="s1">errors.StyleSyntaxError(</span><span class="s3">&quot;URL expected after 'link'&quot;</span><span class="s1">)</span>
+                <span class="s1">link = word</span>
+
+            <span class="s0">elif </span><span class="s1">word </span><span class="s0">in </span><span class="s1">STYLE_ATTRIBUTES:</span>
+                <span class="s1">attributes[STYLE_ATTRIBUTES[word]] = </span><span class="s0">True</span>
+
+            <span class="s0">else</span><span class="s1">:</span>
+                <span class="s0">try</span><span class="s1">:</span>
+                    <span class="s1">Color.parse(word)</span>
+                <span class="s0">except </span><span class="s1">ColorParseError </span><span class="s0">as </span><span class="s1">error:</span>
+                    <span class="s0">raise </span><span class="s1">errors.StyleSyntaxError(</span>
+                        <span class="s3">f&quot;unable to parse </span><span class="s0">{</span><span class="s1">word</span><span class="s0">!r} </span><span class="s3">as color; </span><span class="s0">{</span><span class="s1">error</span><span class="s0">}</span><span class="s3">&quot;</span>
+                    <span class="s1">) </span><span class="s0">from None</span>
+                <span class="s1">color = word</span>
+        <span class="s1">style = Style(color=color</span><span class="s0">, </span><span class="s1">bgcolor=bgcolor</span><span class="s0">, </span><span class="s1">link=link</span><span class="s0">, </span><span class="s1">**attributes)</span>
+        <span class="s0">return </span><span class="s1">style</span>
+
+    <span class="s1">@lru_cache(maxsize=</span><span class="s5">1024</span><span class="s1">)</span>
+    <span class="s0">def </span><span class="s1">get_html_style(self</span><span class="s0">, </span><span class="s1">theme: Optional[TerminalTheme] = </span><span class="s0">None</span><span class="s1">) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot;Get a CSS style rule.&quot;&quot;&quot;</span>
+        <span class="s1">theme = theme </span><span class="s0">or </span><span class="s1">DEFAULT_TERMINAL_THEME</span>
+        <span class="s1">css: List[str] = []</span>
+        <span class="s1">append = css.append</span>
+
+        <span class="s1">color = self.color</span>
+        <span class="s1">bgcolor = self.bgcolor</span>
+        <span class="s0">if </span><span class="s1">self.reverse:</span>
+            <span class="s1">color</span><span class="s0">, </span><span class="s1">bgcolor = bgcolor</span><span class="s0">, </span><span class="s1">color</span>
+        <span class="s0">if </span><span class="s1">self.dim:</span>
+            <span class="s1">foreground_color = (</span>
+                <span class="s1">theme.foreground_color </span><span class="s0">if </span><span class="s1">color </span><span class="s0">is None else </span><span class="s1">color.get_truecolor(theme)</span>
+            <span class="s1">)</span>
+            <span class="s1">color = Color.from_triplet(</span>
+                <span class="s1">blend_rgb(foreground_color</span><span class="s0">, </span><span class="s1">theme.background_color</span><span class="s0">, </span><span class="s5">0.5</span><span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">color </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">theme_color = color.get_truecolor(theme)</span>
+            <span class="s1">append(</span><span class="s3">f&quot;color: </span><span class="s0">{</span><span class="s1">theme_color.hex</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+            <span class="s1">append(</span><span class="s3">f&quot;text-decoration-color: </span><span class="s0">{</span><span class="s1">theme_color.hex</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">bgcolor </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">theme_color = bgcolor.get_truecolor(theme</span><span class="s0">, </span><span class="s1">foreground=</span><span class="s0">False</span><span class="s1">)</span>
+            <span class="s1">append(</span><span class="s3">f&quot;background-color: </span><span class="s0">{</span><span class="s1">theme_color.hex</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">self.bold:</span>
+            <span class="s1">append(</span><span class="s3">&quot;font-weight: bold&quot;</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">self.italic:</span>
+            <span class="s1">append(</span><span class="s3">&quot;font-style: italic&quot;</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">self.underline:</span>
+            <span class="s1">append(</span><span class="s3">&quot;text-decoration: underline&quot;</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">self.strike:</span>
+            <span class="s1">append(</span><span class="s3">&quot;text-decoration: line-through&quot;</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">self.overline:</span>
+            <span class="s1">append(</span><span class="s3">&quot;text-decoration: overline&quot;</span><span class="s1">)</span>
+        <span class="s0">return </span><span class="s3">&quot;; &quot;</span><span class="s1">.join(css)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">combine(cls</span><span class="s0">, </span><span class="s1">styles: Iterable[</span><span class="s3">&quot;Style&quot;</span><span class="s1">]) -&gt; </span><span class="s3">&quot;Style&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Combine styles and get result. 
+ 
+        Args: 
+            styles (Iterable[Style]): Styles to combine. 
+ 
+        Returns: 
+            Style: A new style instance. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">iter_styles = iter(styles)</span>
+        <span class="s0">return </span><span class="s1">sum(iter_styles</span><span class="s0">, </span><span class="s1">next(iter_styles))</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">chain(cls</span><span class="s0">, </span><span class="s1">*styles: </span><span class="s3">&quot;Style&quot;</span><span class="s1">) -&gt; </span><span class="s3">&quot;Style&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Combine styles from positional argument in to a single style. 
+ 
+        Args: 
+            *styles (Iterable[Style]): Styles to combine. 
+ 
+        Returns: 
+            Style: A new style instance. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">iter_styles = iter(styles)</span>
+        <span class="s0">return </span><span class="s1">sum(iter_styles</span><span class="s0">, </span><span class="s1">next(iter_styles))</span>
+
+    <span class="s0">def </span><span class="s1">copy(self) -&gt; </span><span class="s3">&quot;Style&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Get a copy of this style. 
+ 
+        Returns: 
+            Style: A new Style instance with identical attributes. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self._null:</span>
+            <span class="s0">return </span><span class="s1">NULL_STYLE</span>
+        <span class="s1">style: Style = self.__new__(Style)</span>
+        <span class="s1">style._ansi = self._ansi</span>
+        <span class="s1">style._style_definition = self._style_definition</span>
+        <span class="s1">style._color = self._color</span>
+        <span class="s1">style._bgcolor = self._bgcolor</span>
+        <span class="s1">style._attributes = self._attributes</span>
+        <span class="s1">style._set_attributes = self._set_attributes</span>
+        <span class="s1">style._link = self._link</span>
+        <span class="s1">style._link_id = </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">randint(</span><span class="s5">0</span><span class="s0">, </span><span class="s5">999999</span><span class="s1">)</span><span class="s0">}</span><span class="s3">&quot; </span><span class="s0">if </span><span class="s1">self._link </span><span class="s0">else </span><span class="s3">&quot;&quot;</span>
+        <span class="s1">style._hash = self._hash</span>
+        <span class="s1">style._null = </span><span class="s0">False</span>
+        <span class="s1">style._meta = self._meta</span>
+        <span class="s0">return </span><span class="s1">style</span>
+
+    <span class="s0">def </span><span class="s1">update_link(self</span><span class="s0">, </span><span class="s1">link: Optional[str] = </span><span class="s0">None</span><span class="s1">) -&gt; </span><span class="s3">&quot;Style&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Get a copy with a different value for link. 
+ 
+        Args: 
+            link (str, optional): New value for link. Defaults to None. 
+ 
+        Returns: 
+            Style: A new Style instance. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">style: Style = self.__new__(Style)</span>
+        <span class="s1">style._ansi = self._ansi</span>
+        <span class="s1">style._style_definition = self._style_definition</span>
+        <span class="s1">style._color = self._color</span>
+        <span class="s1">style._bgcolor = self._bgcolor</span>
+        <span class="s1">style._attributes = self._attributes</span>
+        <span class="s1">style._set_attributes = self._set_attributes</span>
+        <span class="s1">style._link = link</span>
+        <span class="s1">style._link_id = </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">randint(</span><span class="s5">0</span><span class="s0">, </span><span class="s5">999999</span><span class="s1">)</span><span class="s0">}</span><span class="s3">&quot; </span><span class="s0">if </span><span class="s1">link </span><span class="s0">else </span><span class="s3">&quot;&quot;</span>
+        <span class="s1">style._hash = </span><span class="s0">None</span>
+        <span class="s1">style._null = </span><span class="s0">False</span>
+        <span class="s1">style._meta = self._meta</span>
+        <span class="s0">return </span><span class="s1">style</span>
+
+    <span class="s0">def </span><span class="s1">render(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">text: str = </span><span class="s3">&quot;&quot;</span><span class="s0">,</span>
+        <span class="s1">*</span><span class="s0">,</span>
+        <span class="s1">color_system: Optional[ColorSystem] = ColorSystem.TRUECOLOR</span><span class="s0">,</span>
+        <span class="s1">legacy_windows: bool = </span><span class="s0">False,</span>
+    <span class="s1">) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot;Render the ANSI codes for the style. 
+ 
+        Args: 
+            text (str, optional): A string to style. Defaults to &quot;&quot;. 
+            color_system (Optional[ColorSystem], optional): Color system to render to. Defaults to ColorSystem.TRUECOLOR. 
+ 
+        Returns: 
+            str: A string containing ANSI style codes. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if not </span><span class="s1">text </span><span class="s0">or </span><span class="s1">color_system </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s0">return </span><span class="s1">text</span>
+        <span class="s1">attrs = self._ansi </span><span class="s0">or </span><span class="s1">self._make_ansi_codes(color_system)</span>
+        <span class="s1">rendered = </span><span class="s3">f&quot;</span><span class="s0">\x1b</span><span class="s3">[</span><span class="s0">{</span><span class="s1">attrs</span><span class="s0">}</span><span class="s3">m</span><span class="s0">{</span><span class="s1">text</span><span class="s0">}\x1b</span><span class="s3">[0m&quot; </span><span class="s0">if </span><span class="s1">attrs </span><span class="s0">else </span><span class="s1">text</span>
+        <span class="s0">if </span><span class="s1">self._link </span><span class="s0">and not </span><span class="s1">legacy_windows:</span>
+            <span class="s1">rendered = (</span>
+                <span class="s3">f&quot;</span><span class="s0">\x1b</span><span class="s3">]8;id=</span><span class="s0">{</span><span class="s1">self._link_id</span><span class="s0">}</span><span class="s3">;</span><span class="s0">{</span><span class="s1">self._link</span><span class="s0">}\x1b\\{</span><span class="s1">rendered</span><span class="s0">}\x1b</span><span class="s3">]8;;</span><span class="s0">\x1b\\</span><span class="s3">&quot;</span>
+            <span class="s1">)</span>
+        <span class="s0">return </span><span class="s1">rendered</span>
+
+    <span class="s0">def </span><span class="s1">test(self</span><span class="s0">, </span><span class="s1">text: Optional[str] = </span><span class="s0">None</span><span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Write text with style directly to terminal. 
+ 
+        This method is for testing purposes only. 
+ 
+        Args: 
+            text (Optional[str], optional): Text to style or None for style name. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">text = text </span><span class="s0">or </span><span class="s1">str(self)</span>
+        <span class="s1">sys.stdout.write(</span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">self.render(text)</span><span class="s0">}\n</span><span class="s3">&quot;</span><span class="s1">)</span>
+
+    <span class="s1">@lru_cache(maxsize=</span><span class="s5">1024</span><span class="s1">)</span>
+    <span class="s0">def </span><span class="s1">_add(self</span><span class="s0">, </span><span class="s1">style: Optional[</span><span class="s3">&quot;Style&quot;</span><span class="s1">]) -&gt; </span><span class="s3">&quot;Style&quot;</span><span class="s1">:</span>
+        <span class="s0">if </span><span class="s1">style </span><span class="s0">is None or </span><span class="s1">style._null:</span>
+            <span class="s0">return </span><span class="s1">self</span>
+        <span class="s0">if </span><span class="s1">self._null:</span>
+            <span class="s0">return </span><span class="s1">style</span>
+        <span class="s1">new_style: Style = self.__new__(Style)</span>
+        <span class="s1">new_style._ansi = </span><span class="s0">None</span>
+        <span class="s1">new_style._style_definition = </span><span class="s0">None</span>
+        <span class="s1">new_style._color = style._color </span><span class="s0">or </span><span class="s1">self._color</span>
+        <span class="s1">new_style._bgcolor = style._bgcolor </span><span class="s0">or </span><span class="s1">self._bgcolor</span>
+        <span class="s1">new_style._attributes = (self._attributes &amp; ~style._set_attributes) | (</span>
+            <span class="s1">style._attributes &amp; style._set_attributes</span>
+        <span class="s1">)</span>
+        <span class="s1">new_style._set_attributes = self._set_attributes | style._set_attributes</span>
+        <span class="s1">new_style._link = style._link </span><span class="s0">or </span><span class="s1">self._link</span>
+        <span class="s1">new_style._link_id = style._link_id </span><span class="s0">or </span><span class="s1">self._link_id</span>
+        <span class="s1">new_style._null = style._null</span>
+        <span class="s0">if </span><span class="s1">self._meta </span><span class="s0">and </span><span class="s1">style._meta:</span>
+            <span class="s1">new_style._meta = dumps({**self.meta</span><span class="s0">, </span><span class="s1">**style.meta})</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">new_style._meta = self._meta </span><span class="s0">or </span><span class="s1">style._meta</span>
+        <span class="s1">new_style._hash = </span><span class="s0">None</span>
+        <span class="s0">return </span><span class="s1">new_style</span>
+
+    <span class="s0">def </span><span class="s1">__add__(self</span><span class="s0">, </span><span class="s1">style: Optional[</span><span class="s3">&quot;Style&quot;</span><span class="s1">]) -&gt; </span><span class="s3">&quot;Style&quot;</span><span class="s1">:</span>
+        <span class="s1">combined_style = self._add(style)</span>
+        <span class="s0">return </span><span class="s1">combined_style.copy() </span><span class="s0">if </span><span class="s1">combined_style.link </span><span class="s0">else </span><span class="s1">combined_style</span>
+
+
+<span class="s1">NULL_STYLE = Style()</span>
+
+
+<span class="s0">class </span><span class="s1">StyleStack:</span>
+    <span class="s4">&quot;&quot;&quot;A stack of styles.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = [</span><span class="s3">&quot;_stack&quot;</span><span class="s1">]</span>
+
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s0">, </span><span class="s1">default_style: </span><span class="s3">&quot;Style&quot;</span><span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">self._stack: List[Style] = [default_style]</span>
+
+    <span class="s0">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s0">return </span><span class="s3">f&quot;&lt;stylestack </span><span class="s0">{</span><span class="s1">self._stack</span><span class="s0">!r}</span><span class="s3">&gt;&quot;</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">current(self) -&gt; Style:</span>
+        <span class="s4">&quot;&quot;&quot;Get the Style at the top of the stack.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self._stack[-</span><span class="s5">1</span><span class="s1">]</span>
+
+    <span class="s0">def </span><span class="s1">push(self</span><span class="s0">, </span><span class="s1">style: Style) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Push a new style on to the stack. 
+ 
+        Args: 
+            style (Style): New style to combine with current style. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._stack.append(self._stack[-</span><span class="s5">1</span><span class="s1">] + style)</span>
+
+    <span class="s0">def </span><span class="s1">pop(self) -&gt; Style:</span>
+        <span class="s4">&quot;&quot;&quot;Pop last style and discard. 
+ 
+        Returns: 
+            Style: New current style (also available as stack.current) 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self._stack.pop()</span>
+        <span class="s0">return </span><span class="s1">self._stack[-</span><span class="s5">1</span><span class="s1">]</span>
+</pre>
+</body>
+</html>

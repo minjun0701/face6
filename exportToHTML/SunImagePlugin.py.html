@@ -1,0 +1,157 @@
+<html>
+<head>
+<title>SunImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6897bb;}
+.s4 { color: #6a8759;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+SunImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># Sun image file handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1995-09-10 fl   Created</span>
+<span class="s0"># 1996-05-28 fl   Fixed 32-bit alignment</span>
+<span class="s0"># 1998-12-29 fl   Import ImagePalette module</span>
+<span class="s0"># 2001-12-18 fl   Fixed palette loading (from Jean-Claude Rimbault)</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2001 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 1995-1996 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span><span class="s2">, </span><span class="s1">ImagePalette</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">i32be </span><span class="s2">as </span><span class="s1">i32</span>
+
+
+<span class="s2">def </span><span class="s1">_accept(prefix):</span>
+    <span class="s2">return </span><span class="s1">len(prefix) &gt;= </span><span class="s3">4 </span><span class="s2">and </span><span class="s1">i32(prefix) == </span><span class="s3">0x59A66A95</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for Sun raster files.</span>
+
+
+<span class="s2">class </span><span class="s1">SunImageFile(ImageFile.ImageFile):</span>
+
+    <span class="s1">format = </span><span class="s4">&quot;SUN&quot;</span>
+    <span class="s1">format_description = </span><span class="s4">&quot;Sun Raster File&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+
+        <span class="s0"># The Sun Raster file header is 32 bytes in length</span>
+        <span class="s0"># and has the following format:</span>
+
+        <span class="s0">#     typedef struct _SunRaster</span>
+        <span class="s0">#     {</span>
+        <span class="s0">#         DWORD MagicNumber;      /* Magic (identification) number */</span>
+        <span class="s0">#         DWORD Width;            /* Width of image in pixels */</span>
+        <span class="s0">#         DWORD Height;           /* Height of image in pixels */</span>
+        <span class="s0">#         DWORD Depth;            /* Number of bits per pixel */</span>
+        <span class="s0">#         DWORD Length;           /* Size of image data in bytes */</span>
+        <span class="s0">#         DWORD Type;             /* Type of raster file */</span>
+        <span class="s0">#         DWORD ColorMapType;     /* Type of color map */</span>
+        <span class="s0">#         DWORD ColorMapLength;   /* Size of the color map in bytes */</span>
+        <span class="s0">#     } SUNRASTER;</span>
+
+        <span class="s0"># HEAD</span>
+        <span class="s1">s = self.fp.read(</span><span class="s3">32</span><span class="s1">)</span>
+        <span class="s2">if not </span><span class="s1">_accept(s):</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;not an SUN raster file&quot;</span><span class="s1">)</span>
+
+        <span class="s1">offset = </span><span class="s3">32</span>
+
+        <span class="s1">self._size = i32(s</span><span class="s2">, </span><span class="s3">4</span><span class="s1">)</span><span class="s2">, </span><span class="s1">i32(s</span><span class="s2">, </span><span class="s3">8</span><span class="s1">)</span>
+
+        <span class="s1">depth = i32(s</span><span class="s2">, </span><span class="s3">12</span><span class="s1">)</span>
+        <span class="s0"># data_length = i32(s, 16)   # unreliable, ignore.</span>
+        <span class="s1">file_type = i32(s</span><span class="s2">, </span><span class="s3">20</span><span class="s1">)</span>
+        <span class="s1">palette_type = i32(s</span><span class="s2">, </span><span class="s3">24</span><span class="s1">)  </span><span class="s0"># 0: None, 1: RGB, 2: Raw/arbitrary</span>
+        <span class="s1">palette_length = i32(s</span><span class="s2">, </span><span class="s3">28</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">depth == </span><span class="s3">1</span><span class="s1">:</span>
+            <span class="s1">self.mode</span><span class="s2">, </span><span class="s1">rawmode = </span><span class="s4">&quot;1&quot;</span><span class="s2">, </span><span class="s4">&quot;1;I&quot;</span>
+        <span class="s2">elif </span><span class="s1">depth == </span><span class="s3">4</span><span class="s1">:</span>
+            <span class="s1">self.mode</span><span class="s2">, </span><span class="s1">rawmode = </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s4">&quot;L;4&quot;</span>
+        <span class="s2">elif </span><span class="s1">depth == </span><span class="s3">8</span><span class="s1">:</span>
+            <span class="s1">self.mode = rawmode = </span><span class="s4">&quot;L&quot;</span>
+        <span class="s2">elif </span><span class="s1">depth == </span><span class="s3">24</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">file_type == </span><span class="s3">3</span><span class="s1">:</span>
+                <span class="s1">self.mode</span><span class="s2">, </span><span class="s1">rawmode = </span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;RGB&quot;</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self.mode</span><span class="s2">, </span><span class="s1">rawmode = </span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;BGR&quot;</span>
+        <span class="s2">elif </span><span class="s1">depth == </span><span class="s3">32</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">file_type == </span><span class="s3">3</span><span class="s1">:</span>
+                <span class="s1">self.mode</span><span class="s2">, </span><span class="s1">rawmode = </span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;RGBX&quot;</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self.mode</span><span class="s2">, </span><span class="s1">rawmode = </span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;BGRX&quot;</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;Unsupported Mode/Bit Depth&quot;</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">palette_length:</span>
+            <span class="s2">if </span><span class="s1">palette_length &gt; </span><span class="s3">1024</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;Unsupported Color Palette Length&quot;</span><span class="s1">)</span>
+
+            <span class="s2">if </span><span class="s1">palette_type != </span><span class="s3">1</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;Unsupported Palette Type&quot;</span><span class="s1">)</span>
+
+            <span class="s1">offset = offset + palette_length</span>
+            <span class="s1">self.palette = ImagePalette.raw(</span><span class="s4">&quot;RGB;L&quot;</span><span class="s2">, </span><span class="s1">self.fp.read(palette_length))</span>
+            <span class="s2">if </span><span class="s1">self.mode == </span><span class="s4">&quot;L&quot;</span><span class="s1">:</span>
+                <span class="s1">self.mode = </span><span class="s4">&quot;P&quot;</span>
+                <span class="s1">rawmode = rawmode.replace(</span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s4">&quot;P&quot;</span><span class="s1">)</span>
+
+        <span class="s0"># 16 bit boundaries on stride</span>
+        <span class="s1">stride = ((self.size[</span><span class="s3">0</span><span class="s1">] * depth + </span><span class="s3">15</span><span class="s1">) // </span><span class="s3">16</span><span class="s1">) * </span><span class="s3">2</span>
+
+        <span class="s0"># file type: Type is the version (or flavor) of the bitmap</span>
+        <span class="s0"># file. The following values are typically found in the Type</span>
+        <span class="s0"># field:</span>
+        <span class="s0"># 0000h Old</span>
+        <span class="s0"># 0001h Standard</span>
+        <span class="s0"># 0002h Byte-encoded</span>
+        <span class="s0"># 0003h RGB format</span>
+        <span class="s0"># 0004h TIFF format</span>
+        <span class="s0"># 0005h IFF format</span>
+        <span class="s0"># FFFFh Experimental</span>
+
+        <span class="s0"># Old and standard are the same, except for the length tag.</span>
+        <span class="s0"># byte-encoded is run-length-encoded</span>
+        <span class="s0"># RGB looks similar to standard, but RGB byte order</span>
+        <span class="s0"># TIFF and IFF mean that they were converted from T/IFF</span>
+        <span class="s0"># Experimental means that it's something else.</span>
+        <span class="s0"># (https://www.fileformat.info/format/sunraster/egff.htm)</span>
+
+        <span class="s2">if </span><span class="s1">file_type </span><span class="s2">in </span><span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">1</span><span class="s2">, </span><span class="s3">3</span><span class="s2">, </span><span class="s3">4</span><span class="s2">, </span><span class="s3">5</span><span class="s1">):</span>
+            <span class="s1">self.tile = [(</span><span class="s4">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s1">offset</span><span class="s2">, </span><span class="s1">(rawmode</span><span class="s2">, </span><span class="s1">stride))]</span>
+        <span class="s2">elif </span><span class="s1">file_type == </span><span class="s3">2</span><span class="s1">:</span>
+            <span class="s1">self.tile = [(</span><span class="s4">&quot;sun_rle&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s1">offset</span><span class="s2">, </span><span class="s1">rawmode)]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;Unsupported Sun Raster file type&quot;</span><span class="s1">)</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># registry</span>
+
+
+<span class="s1">Image.register_open(SunImageFile.format</span><span class="s2">, </span><span class="s1">SunImageFile</span><span class="s2">, </span><span class="s1">_accept)</span>
+
+<span class="s1">Image.register_extension(SunImageFile.format</span><span class="s2">, </span><span class="s4">&quot;.ras&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

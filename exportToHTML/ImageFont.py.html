@@ -1,0 +1,1204 @@
+<html>
+<head>
+<title>ImageFont.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6897bb;}
+.s4 { color: #6a8759;}
+.s5 { color: #629755; font-style: italic;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageFont.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># PIL raster font management</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1996-08-07 fl   created (experimental)</span>
+<span class="s0"># 1997-08-25 fl   minor adjustments to handle fonts from pilfont 0.3</span>
+<span class="s0"># 1999-02-06 fl   rewrote most font management stuff in C</span>
+<span class="s0"># 1999-03-17 fl   take pth files into account in load_path (from Richard Jones)</span>
+<span class="s0"># 2001-02-17 fl   added freetype support</span>
+<span class="s0"># 2001-05-09 fl   added TransposedFont wrapper class</span>
+<span class="s0"># 2002-03-04 fl   make sure we have a &quot;L&quot; or &quot;1&quot; font</span>
+<span class="s0"># 2002-12-04 fl   skip non-directory entries in the system path</span>
+<span class="s0"># 2003-04-29 fl   add embedded default font</span>
+<span class="s0"># 2003-09-27 fl   added support for truetype charmap encodings</span>
+<span class="s0">#</span>
+<span class="s0"># Todo:</span>
+<span class="s0"># Adapt to PILFONT2 format (16-bit fonts, compressed, single file)</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2003 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 1996-2003 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">import </span><span class="s1">base64</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">import </span><span class="s1">warnings</span>
+<span class="s2">from </span><span class="s1">enum </span><span class="s2">import </span><span class="s1">IntEnum</span>
+<span class="s2">from </span><span class="s1">io </span><span class="s2">import </span><span class="s1">BytesIO</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span>
+<span class="s2">from </span><span class="s1">._deprecate </span><span class="s2">import </span><span class="s1">deprecate</span>
+<span class="s2">from </span><span class="s1">._util </span><span class="s2">import </span><span class="s1">is_directory</span><span class="s2">, </span><span class="s1">is_path</span>
+
+
+<span class="s2">class </span><span class="s1">Layout(IntEnum):</span>
+    <span class="s1">BASIC = </span><span class="s3">0</span>
+    <span class="s1">RAQM = </span><span class="s3">1</span>
+
+
+<span class="s2">def </span><span class="s1">__getattr__(name):</span>
+    <span class="s2">for </span><span class="s1">enum</span><span class="s2">, </span><span class="s1">prefix </span><span class="s2">in </span><span class="s1">{Layout: </span><span class="s4">&quot;LAYOUT_&quot;</span><span class="s1">}.items():</span>
+        <span class="s2">if </span><span class="s1">name.startswith(prefix):</span>
+            <span class="s1">name = name[len(prefix) :]</span>
+            <span class="s2">if </span><span class="s1">name </span><span class="s2">in </span><span class="s1">enum.__members__:</span>
+                <span class="s1">deprecate(</span><span class="s4">f&quot;</span><span class="s2">{</span><span class="s1">prefix</span><span class="s2">}{</span><span class="s1">name</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s2">, </span><span class="s3">10</span><span class="s2">, </span><span class="s4">f&quot;</span><span class="s2">{</span><span class="s1">enum.__name__</span><span class="s2">}</span><span class="s4">.</span><span class="s2">{</span><span class="s1">name</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+                <span class="s2">return </span><span class="s1">enum[name]</span>
+    <span class="s2">raise </span><span class="s1">AttributeError(</span><span class="s4">f&quot;module '</span><span class="s2">{</span><span class="s1">__name__</span><span class="s2">}</span><span class="s4">' has no attribute '</span><span class="s2">{</span><span class="s1">name</span><span class="s2">}</span><span class="s4">'&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">_ImagingFtNotInstalled:</span>
+    <span class="s0"># module placeholder</span>
+    <span class="s2">def </span><span class="s1">__getattr__(self</span><span class="s2">, </span><span class="s1">id):</span>
+        <span class="s2">raise </span><span class="s1">ImportError(</span><span class="s4">&quot;The _imagingft C module is not installed&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">try</span><span class="s1">:</span>
+    <span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">_imagingft </span><span class="s2">as </span><span class="s1">core</span>
+<span class="s2">except </span><span class="s1">ImportError:</span>
+    <span class="s1">core = _ImagingFtNotInstalled()</span>
+
+
+<span class="s1">_UNSPECIFIED = object()</span>
+
+
+<span class="s0"># FIXME: add support for pilfont2 format (see FontFile.py)</span>
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Font metrics format:</span>
+<span class="s0">#       &quot;PILfont&quot; LF</span>
+<span class="s0">#       fontdescriptor LF</span>
+<span class="s0">#       (optional) key=value... LF</span>
+<span class="s0">#       &quot;DATA&quot; LF</span>
+<span class="s0">#       binary data: 256*10*2 bytes (dx, dy, dstbox, srcbox)</span>
+<span class="s0">#</span>
+<span class="s0"># To place a character, cut out srcbox and paste at dstbox,</span>
+<span class="s0"># relative to the character position.  Then move the character</span>
+<span class="s0"># position according to dx, dy.</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+
+
+<span class="s2">class </span><span class="s1">ImageFont:</span>
+    <span class="s5">&quot;&quot;&quot;PIL font wrapper&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_load_pilfont(self</span><span class="s2">, </span><span class="s1">filename):</span>
+
+        <span class="s2">with </span><span class="s1">open(filename</span><span class="s2">, </span><span class="s4">&quot;rb&quot;</span><span class="s1">) </span><span class="s2">as </span><span class="s1">fp:</span>
+            <span class="s1">image = </span><span class="s2">None</span>
+            <span class="s2">for </span><span class="s1">ext </span><span class="s2">in </span><span class="s1">(</span><span class="s4">&quot;.png&quot;</span><span class="s2">, </span><span class="s4">&quot;.gif&quot;</span><span class="s2">, </span><span class="s4">&quot;.pbm&quot;</span><span class="s1">):</span>
+                <span class="s2">if </span><span class="s1">image:</span>
+                    <span class="s1">image.close()</span>
+                <span class="s2">try</span><span class="s1">:</span>
+                    <span class="s1">fullname = os.path.splitext(filename)[</span><span class="s3">0</span><span class="s1">] + ext</span>
+                    <span class="s1">image = Image.open(fullname)</span>
+                <span class="s2">except </span><span class="s1">Exception:</span>
+                    <span class="s2">pass</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">if </span><span class="s1">image </span><span class="s2">and </span><span class="s1">image.mode </span><span class="s2">in </span><span class="s1">(</span><span class="s4">&quot;1&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s1">):</span>
+                        <span class="s2">break</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">image:</span>
+                    <span class="s1">image.close()</span>
+                <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">&quot;cannot find glyph data file&quot;</span><span class="s1">)</span>
+
+            <span class="s1">self.file = fullname</span>
+
+            <span class="s1">self._load_pilfont_data(fp</span><span class="s2">, </span><span class="s1">image)</span>
+            <span class="s1">image.close()</span>
+
+    <span class="s2">def </span><span class="s1">_load_pilfont_data(self</span><span class="s2">, </span><span class="s1">file</span><span class="s2">, </span><span class="s1">image):</span>
+
+        <span class="s0"># read PILfont header</span>
+        <span class="s2">if </span><span class="s1">file.readline() != </span><span class="s6">b&quot;PILfont</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;Not a PILfont file&quot;</span><span class="s1">)</span>
+        <span class="s1">file.readline().split(</span><span class="s6">b&quot;;&quot;</span><span class="s1">)</span>
+        <span class="s1">self.info = []  </span><span class="s0"># FIXME: should be a dictionary</span>
+        <span class="s2">while True</span><span class="s1">:</span>
+            <span class="s1">s = file.readline()</span>
+            <span class="s2">if not </span><span class="s1">s </span><span class="s2">or </span><span class="s1">s == </span><span class="s6">b&quot;DATA</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s1">:</span>
+                <span class="s2">break</span>
+            <span class="s1">self.info.append(s)</span>
+
+        <span class="s0"># read PILfont metrics</span>
+        <span class="s1">data = file.read(</span><span class="s3">256 </span><span class="s1">* </span><span class="s3">20</span><span class="s1">)</span>
+
+        <span class="s0"># check image</span>
+        <span class="s2">if </span><span class="s1">image.mode </span><span class="s2">not in </span><span class="s1">(</span><span class="s4">&quot;1&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s1">):</span>
+            <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s4">&quot;invalid font image mode&quot;</span><span class="s1">)</span>
+
+        <span class="s1">image.load()</span>
+
+        <span class="s1">self.font = Image.core.font(image.im</span><span class="s2">, </span><span class="s1">data)</span>
+
+    <span class="s2">def </span><span class="s1">getsize(self</span><span class="s2">, </span><span class="s1">text</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        .. deprecated:: 9.2.0 
+ 
+        Use :py:meth:`.getbbox` or :py:meth:`.getlength` instead. 
+ 
+        See :ref:`deprecations &lt;Font size and offset methods&gt;` for more information. 
+ 
+        Returns width and height (in pixels) of given text. 
+ 
+        :param text: Text to measure. 
+ 
+        :return: (width, height) 
+        &quot;&quot;&quot;</span>
+        <span class="s1">deprecate(</span><span class="s4">&quot;getsize&quot;</span><span class="s2">, </span><span class="s3">10</span><span class="s2">, </span><span class="s4">&quot;getbbox or getlength&quot;</span><span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">self.font.getsize(text)</span>
+
+    <span class="s2">def </span><span class="s1">getmask(self</span><span class="s2">, </span><span class="s1">text</span><span class="s2">, </span><span class="s1">mode=</span><span class="s4">&quot;&quot;</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Create a bitmap for the text. 
+ 
+        If the font uses antialiasing, the bitmap should have mode ``L`` and use a 
+        maximum value of 255. Otherwise, it should have mode ``1``. 
+ 
+        :param text: Text to render. 
+        :param mode: Used by some graphics drivers to indicate what mode the 
+                     driver prefers; if empty, the renderer may return either 
+                     mode. Note that the mode is always a string, to simplify 
+                     C-level implementations. 
+ 
+                     .. versionadded:: 1.1.5 
+ 
+        :return: An internal PIL storage memory instance as defined by the 
+                 :py:mod:`PIL.Image.core` interface module. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self.font.getmask(text</span><span class="s2">, </span><span class="s1">mode)</span>
+
+    <span class="s2">def </span><span class="s1">getbbox(self</span><span class="s2">, </span><span class="s1">text</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Returns bounding box (in pixels) of given text. 
+ 
+        .. versionadded:: 9.2.0 
+ 
+        :param text: Text to render. 
+        :param mode: Used by some graphics drivers to indicate what mode the 
+                     driver prefers; if empty, the renderer may return either 
+                     mode. Note that the mode is always a string, to simplify 
+                     C-level implementations. 
+ 
+        :return: ``(left, top, right, bottom)`` bounding box 
+        &quot;&quot;&quot;</span>
+        <span class="s1">width</span><span class="s2">, </span><span class="s1">height = self.font.getsize(text)</span>
+        <span class="s2">return </span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">width</span><span class="s2">, </span><span class="s1">height</span>
+
+    <span class="s2">def </span><span class="s1">getlength(self</span><span class="s2">, </span><span class="s1">text</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Returns length (in pixels) of given text. 
+        This is the amount by which following text should be offset. 
+ 
+        .. versionadded:: 9.2.0 
+        &quot;&quot;&quot;</span>
+        <span class="s1">width</span><span class="s2">, </span><span class="s1">height = self.font.getsize(text)</span>
+        <span class="s2">return </span><span class="s1">width</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Wrapper for FreeType fonts.  Application code should use the</span>
+<span class="s0"># &lt;b&gt;truetype&lt;/b&gt; factory function to create font objects.</span>
+
+
+<span class="s2">class </span><span class="s1">FreeTypeFont:</span>
+    <span class="s5">&quot;&quot;&quot;FreeType font wrapper (requires _imagingft service)&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">font=</span><span class="s2">None, </span><span class="s1">size=</span><span class="s3">10</span><span class="s2">, </span><span class="s1">index=</span><span class="s3">0</span><span class="s2">, </span><span class="s1">encoding=</span><span class="s4">&quot;&quot;</span><span class="s2">, </span><span class="s1">layout_engine=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s0"># FIXME: use service provider instead</span>
+
+        <span class="s1">self.path = font</span>
+        <span class="s1">self.size = size</span>
+        <span class="s1">self.index = index</span>
+        <span class="s1">self.encoding = encoding</span>
+
+        <span class="s2">if </span><span class="s1">layout_engine </span><span class="s2">not in </span><span class="s1">(Layout.BASIC</span><span class="s2">, </span><span class="s1">Layout.RAQM):</span>
+            <span class="s1">layout_engine = Layout.BASIC</span>
+            <span class="s2">if </span><span class="s1">core.HAVE_RAQM:</span>
+                <span class="s1">layout_engine = Layout.RAQM</span>
+        <span class="s2">elif </span><span class="s1">layout_engine == Layout.RAQM </span><span class="s2">and not </span><span class="s1">core.HAVE_RAQM:</span>
+            <span class="s1">warnings.warn(</span>
+                <span class="s4">&quot;Raqm layout was requested, but Raqm is not available. &quot;</span>
+                <span class="s4">&quot;Falling back to basic layout.&quot;</span>
+            <span class="s1">)</span>
+            <span class="s1">layout_engine = Layout.BASIC</span>
+
+        <span class="s1">self.layout_engine = layout_engine</span>
+
+        <span class="s2">def </span><span class="s1">load_from_bytes(f):</span>
+            <span class="s1">self.font_bytes = f.read()</span>
+            <span class="s1">self.font = core.getfont(</span>
+                <span class="s4">&quot;&quot;</span><span class="s2">, </span><span class="s1">size</span><span class="s2">, </span><span class="s1">index</span><span class="s2">, </span><span class="s1">encoding</span><span class="s2">, </span><span class="s1">self.font_bytes</span><span class="s2">, </span><span class="s1">layout_engine</span>
+            <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">is_path(font):</span>
+            <span class="s2">if </span><span class="s1">sys.platform == </span><span class="s4">&quot;win32&quot;</span><span class="s1">:</span>
+                <span class="s1">font_bytes_path = font </span><span class="s2">if </span><span class="s1">isinstance(font</span><span class="s2">, </span><span class="s1">bytes) </span><span class="s2">else </span><span class="s1">font.encode()</span>
+                <span class="s2">try</span><span class="s1">:</span>
+                    <span class="s1">font_bytes_path.decode(</span><span class="s4">&quot;ascii&quot;</span><span class="s1">)</span>
+                <span class="s2">except </span><span class="s1">UnicodeDecodeError:</span>
+                    <span class="s0"># FreeType cannot load fonts with non-ASCII characters on Windows</span>
+                    <span class="s0"># So load it into memory first</span>
+                    <span class="s2">with </span><span class="s1">open(font</span><span class="s2">, </span><span class="s4">&quot;rb&quot;</span><span class="s1">) </span><span class="s2">as </span><span class="s1">f:</span>
+                        <span class="s1">load_from_bytes(f)</span>
+                    <span class="s2">return</span>
+            <span class="s1">self.font = core.getfont(</span>
+                <span class="s1">font</span><span class="s2">, </span><span class="s1">size</span><span class="s2">, </span><span class="s1">index</span><span class="s2">, </span><span class="s1">encoding</span><span class="s2">, </span><span class="s1">layout_engine=layout_engine</span>
+            <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">load_from_bytes(font)</span>
+
+    <span class="s2">def </span><span class="s1">__getstate__(self):</span>
+        <span class="s2">return </span><span class="s1">[self.path</span><span class="s2">, </span><span class="s1">self.size</span><span class="s2">, </span><span class="s1">self.index</span><span class="s2">, </span><span class="s1">self.encoding</span><span class="s2">, </span><span class="s1">self.layout_engine]</span>
+
+    <span class="s2">def </span><span class="s1">__setstate__(self</span><span class="s2">, </span><span class="s1">state):</span>
+        <span class="s1">path</span><span class="s2">, </span><span class="s1">size</span><span class="s2">, </span><span class="s1">index</span><span class="s2">, </span><span class="s1">encoding</span><span class="s2">, </span><span class="s1">layout_engine = state</span>
+        <span class="s1">self.__init__(path</span><span class="s2">, </span><span class="s1">size</span><span class="s2">, </span><span class="s1">index</span><span class="s2">, </span><span class="s1">encoding</span><span class="s2">, </span><span class="s1">layout_engine)</span>
+
+    <span class="s2">def </span><span class="s1">_multiline_split(self</span><span class="s2">, </span><span class="s1">text):</span>
+        <span class="s1">split_character = </span><span class="s4">&quot;</span><span class="s2">\n</span><span class="s4">&quot; </span><span class="s2">if </span><span class="s1">isinstance(text</span><span class="s2">, </span><span class="s1">str) </span><span class="s2">else </span><span class="s6">b&quot;</span><span class="s2">\n</span><span class="s6">&quot;</span>
+        <span class="s2">return </span><span class="s1">text.split(split_character)</span>
+
+    <span class="s2">def </span><span class="s1">getname(self):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        :return: A tuple of the font family (e.g. Helvetica) and the font style 
+            (e.g. Bold) 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self.font.family</span><span class="s2">, </span><span class="s1">self.font.style</span>
+
+    <span class="s2">def </span><span class="s1">getmetrics(self):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        :return: A tuple of the font ascent (the distance from the baseline to 
+            the highest outline point) and descent (the distance from the 
+            baseline to the lowest outline point, a negative value) 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self.font.ascent</span><span class="s2">, </span><span class="s1">self.font.descent</span>
+
+    <span class="s2">def </span><span class="s1">getlength(self</span><span class="s2">, </span><span class="s1">text</span><span class="s2">, </span><span class="s1">mode=</span><span class="s4">&quot;&quot;</span><span class="s2">, </span><span class="s1">direction=</span><span class="s2">None, </span><span class="s1">features=</span><span class="s2">None, </span><span class="s1">language=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Returns length (in pixels with 1/64 precision) of given text when rendered 
+        in font with provided direction, features, and language. 
+ 
+        This is the amount by which following text should be offset. 
+        Text bounding box may extend past the length in some fonts, 
+        e.g. when using italics or accents. 
+ 
+        The result is returned as a float; it is a whole number if using basic layout. 
+ 
+        Note that the sum of two lengths may not equal the length of a concatenated 
+        string due to kerning. If you need to adjust for kerning, include the following 
+        character and subtract its length. 
+ 
+        For example, instead of 
+ 
+        .. code-block:: python 
+ 
+          hello = font.getlength(&quot;Hello&quot;) 
+          world = font.getlength(&quot;World&quot;) 
+          hello_world = hello + world  # not adjusted for kerning 
+          assert hello_world == font.getlength(&quot;HelloWorld&quot;)  # may fail 
+ 
+        use 
+ 
+        .. code-block:: python 
+ 
+          hello = font.getlength(&quot;HelloW&quot;) - font.getlength(&quot;W&quot;)  # adjusted for kerning 
+          world = font.getlength(&quot;World&quot;) 
+          hello_world = hello + world  # adjusted for kerning 
+          assert hello_world == font.getlength(&quot;HelloWorld&quot;)  # True 
+ 
+        or disable kerning with (requires libraqm) 
+ 
+        .. code-block:: python 
+ 
+          hello = draw.textlength(&quot;Hello&quot;, font, features=[&quot;-kern&quot;]) 
+          world = draw.textlength(&quot;World&quot;, font, features=[&quot;-kern&quot;]) 
+          hello_world = hello + world  # kerning is disabled, no need to adjust 
+          assert hello_world == draw.textlength(&quot;HelloWorld&quot;, font, features=[&quot;-kern&quot;]) 
+ 
+        .. versionadded:: 8.0.0 
+ 
+        :param text: Text to measure. 
+        :param mode: Used by some graphics drivers to indicate what mode the 
+                     driver prefers; if empty, the renderer may return either 
+                     mode. Note that the mode is always a string, to simplify 
+                     C-level implementations. 
+ 
+        :param direction: Direction of the text. It can be 'rtl' (right to 
+                          left), 'ltr' (left to right) or 'ttb' (top to bottom). 
+                          Requires libraqm. 
+ 
+        :param features: A list of OpenType font features to be used during text 
+                         layout. This is usually used to turn on optional 
+                         font features that are not enabled by default, 
+                         for example 'dlig' or 'ss01', but can be also 
+                         used to turn off default font features for 
+                         example '-liga' to disable ligatures or '-kern' 
+                         to disable kerning.  To get all supported 
+                         features, see 
+                         https://learn.microsoft.com/en-us/typography/opentype/spec/featurelist 
+                         Requires libraqm. 
+ 
+        :param language: Language of the text. Different languages may use 
+                         different glyph shapes or ligatures. This parameter tells 
+                         the font which language the text is in, and to apply the 
+                         correct substitutions as appropriate, if available. 
+                         It should be a `BCP 47 language code 
+                         &lt;https://www.w3.org/International/articles/language-tags/&gt;`_ 
+                         Requires libraqm. 
+ 
+        :return: Width for horizontal, height for vertical text. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self.font.getlength(text</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">direction</span><span class="s2">, </span><span class="s1">features</span><span class="s2">, </span><span class="s1">language) / </span><span class="s3">64</span>
+
+    <span class="s2">def </span><span class="s1">getbbox(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">text</span><span class="s2">,</span>
+        <span class="s1">mode=</span><span class="s4">&quot;&quot;</span><span class="s2">,</span>
+        <span class="s1">direction=</span><span class="s2">None,</span>
+        <span class="s1">features=</span><span class="s2">None,</span>
+        <span class="s1">language=</span><span class="s2">None,</span>
+        <span class="s1">stroke_width=</span><span class="s3">0</span><span class="s2">,</span>
+        <span class="s1">anchor=</span><span class="s2">None,</span>
+    <span class="s1">):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Returns bounding box (in pixels) of given text relative to given anchor 
+        when rendered in font with provided direction, features, and language. 
+ 
+        Use :py:meth:`getlength()` to get the offset of following text with 
+        1/64 pixel precision. The bounding box includes extra margins for 
+        some fonts, e.g. italics or accents. 
+ 
+        .. versionadded:: 8.0.0 
+ 
+        :param text: Text to render. 
+        :param mode: Used by some graphics drivers to indicate what mode the 
+                     driver prefers; if empty, the renderer may return either 
+                     mode. Note that the mode is always a string, to simplify 
+                     C-level implementations. 
+ 
+        :param direction: Direction of the text. It can be 'rtl' (right to 
+                          left), 'ltr' (left to right) or 'ttb' (top to bottom). 
+                          Requires libraqm. 
+ 
+        :param features: A list of OpenType font features to be used during text 
+                         layout. This is usually used to turn on optional 
+                         font features that are not enabled by default, 
+                         for example 'dlig' or 'ss01', but can be also 
+                         used to turn off default font features for 
+                         example '-liga' to disable ligatures or '-kern' 
+                         to disable kerning.  To get all supported 
+                         features, see 
+                         https://learn.microsoft.com/en-us/typography/opentype/spec/featurelist 
+                         Requires libraqm. 
+ 
+        :param language: Language of the text. Different languages may use 
+                         different glyph shapes or ligatures. This parameter tells 
+                         the font which language the text is in, and to apply the 
+                         correct substitutions as appropriate, if available. 
+                         It should be a `BCP 47 language code 
+                         &lt;https://www.w3.org/International/articles/language-tags/&gt;`_ 
+                         Requires libraqm. 
+ 
+        :param stroke_width: The width of the text stroke. 
+ 
+        :param anchor:  The text anchor alignment. Determines the relative location of 
+                        the anchor to the text. The default alignment is top left. 
+                        See :ref:`text-anchors` for valid values. 
+ 
+        :return: ``(left, top, right, bottom)`` bounding box 
+        &quot;&quot;&quot;</span>
+        <span class="s1">size</span><span class="s2">, </span><span class="s1">offset = self.font.getsize(</span>
+            <span class="s1">text</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">direction</span><span class="s2">, </span><span class="s1">features</span><span class="s2">, </span><span class="s1">language</span><span class="s2">, </span><span class="s1">anchor</span>
+        <span class="s1">)</span>
+        <span class="s1">left</span><span class="s2">, </span><span class="s1">top = offset[</span><span class="s3">0</span><span class="s1">] - stroke_width</span><span class="s2">, </span><span class="s1">offset[</span><span class="s3">1</span><span class="s1">] - stroke_width</span>
+        <span class="s1">width</span><span class="s2">, </span><span class="s1">height = size[</span><span class="s3">0</span><span class="s1">] + </span><span class="s3">2 </span><span class="s1">* stroke_width</span><span class="s2">, </span><span class="s1">size[</span><span class="s3">1</span><span class="s1">] + </span><span class="s3">2 </span><span class="s1">* stroke_width</span>
+        <span class="s2">return </span><span class="s1">left</span><span class="s2">, </span><span class="s1">top</span><span class="s2">, </span><span class="s1">left + width</span><span class="s2">, </span><span class="s1">top + height</span>
+
+    <span class="s2">def </span><span class="s1">getsize(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">text</span><span class="s2">,</span>
+        <span class="s1">direction=</span><span class="s2">None,</span>
+        <span class="s1">features=</span><span class="s2">None,</span>
+        <span class="s1">language=</span><span class="s2">None,</span>
+        <span class="s1">stroke_width=</span><span class="s3">0</span><span class="s2">,</span>
+    <span class="s1">):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        .. deprecated:: 9.2.0 
+ 
+        Use :py:meth:`getlength()` to measure the offset of following text with 
+        1/64 pixel precision. 
+        Use :py:meth:`getbbox()` to get the exact bounding box based on an anchor. 
+ 
+        See :ref:`deprecations &lt;Font size and offset methods&gt;` for more information. 
+ 
+        Returns width and height (in pixels) of given text if rendered in font with 
+        provided direction, features, and language. 
+ 
+        .. note:: For historical reasons this function measures text height from 
+            the ascender line instead of the top, see :ref:`text-anchors`. 
+            If you wish to measure text height from the top, it is recommended 
+            to use the bottom value of :meth:`getbbox` with ``anchor='lt'`` instead. 
+ 
+        :param text: Text to measure. 
+ 
+        :param direction: Direction of the text. It can be 'rtl' (right to 
+                          left), 'ltr' (left to right) or 'ttb' (top to bottom). 
+                          Requires libraqm. 
+ 
+                          .. versionadded:: 4.2.0 
+ 
+        :param features: A list of OpenType font features to be used during text 
+                         layout. This is usually used to turn on optional 
+                         font features that are not enabled by default, 
+                         for example 'dlig' or 'ss01', but can be also 
+                         used to turn off default font features for 
+                         example '-liga' to disable ligatures or '-kern' 
+                         to disable kerning.  To get all supported 
+                         features, see 
+                         https://learn.microsoft.com/en-us/typography/opentype/spec/featurelist 
+                         Requires libraqm. 
+ 
+                         .. versionadded:: 4.2.0 
+ 
+        :param language: Language of the text. Different languages may use 
+                         different glyph shapes or ligatures. This parameter tells 
+                         the font which language the text is in, and to apply the 
+                         correct substitutions as appropriate, if available. 
+                         It should be a `BCP 47 language code 
+                         &lt;https://www.w3.org/International/articles/language-tags/&gt;`_ 
+                         Requires libraqm. 
+ 
+                         .. versionadded:: 6.0.0 
+ 
+        :param stroke_width: The width of the text stroke. 
+ 
+                         .. versionadded:: 6.2.0 
+ 
+        :return: (width, height) 
+        &quot;&quot;&quot;</span>
+        <span class="s1">deprecate(</span><span class="s4">&quot;getsize&quot;</span><span class="s2">, </span><span class="s3">10</span><span class="s2">, </span><span class="s4">&quot;getbbox or getlength&quot;</span><span class="s1">)</span>
+        <span class="s0"># vertical offset is added for historical reasons</span>
+        <span class="s0"># see https://github.com/python-pillow/Pillow/pull/4910#discussion_r486682929</span>
+        <span class="s1">size</span><span class="s2">, </span><span class="s1">offset = self.font.getsize(text</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">direction</span><span class="s2">, </span><span class="s1">features</span><span class="s2">, </span><span class="s1">language)</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">size[</span><span class="s3">0</span><span class="s1">] + stroke_width * </span><span class="s3">2</span><span class="s2">,</span>
+            <span class="s1">size[</span><span class="s3">1</span><span class="s1">] + stroke_width * </span><span class="s3">2 </span><span class="s1">+ offset[</span><span class="s3">1</span><span class="s1">]</span><span class="s2">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">getsize_multiline(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">text</span><span class="s2">,</span>
+        <span class="s1">direction=</span><span class="s2">None,</span>
+        <span class="s1">spacing=</span><span class="s3">4</span><span class="s2">,</span>
+        <span class="s1">features=</span><span class="s2">None,</span>
+        <span class="s1">language=</span><span class="s2">None,</span>
+        <span class="s1">stroke_width=</span><span class="s3">0</span><span class="s2">,</span>
+    <span class="s1">):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        .. deprecated:: 9.2.0 
+ 
+        Use :py:meth:`.ImageDraw.multiline_textbbox` instead. 
+ 
+        See :ref:`deprecations &lt;Font size and offset methods&gt;` for more information. 
+ 
+        Returns width and height (in pixels) of given text if rendered in font 
+        with provided direction, features, and language, while respecting 
+        newline characters. 
+ 
+        :param text: Text to measure. 
+ 
+        :param direction: Direction of the text. It can be 'rtl' (right to 
+                          left), 'ltr' (left to right) or 'ttb' (top to bottom). 
+                          Requires libraqm. 
+ 
+        :param spacing: The vertical gap between lines, defaulting to 4 pixels. 
+ 
+        :param features: A list of OpenType font features to be used during text 
+                         layout. This is usually used to turn on optional 
+                         font features that are not enabled by default, 
+                         for example 'dlig' or 'ss01', but can be also 
+                         used to turn off default font features for 
+                         example '-liga' to disable ligatures or '-kern' 
+                         to disable kerning.  To get all supported 
+                         features, see 
+                         https://learn.microsoft.com/en-us/typography/opentype/spec/featurelist 
+                         Requires libraqm. 
+ 
+        :param language: Language of the text. Different languages may use 
+                         different glyph shapes or ligatures. This parameter tells 
+                         the font which language the text is in, and to apply the 
+                         correct substitutions as appropriate, if available. 
+                         It should be a `BCP 47 language code 
+                         &lt;https://www.w3.org/International/articles/language-tags/&gt;`_ 
+                         Requires libraqm. 
+ 
+                         .. versionadded:: 6.0.0 
+ 
+        :param stroke_width: The width of the text stroke. 
+ 
+                         .. versionadded:: 6.2.0 
+ 
+        :return: (width, height) 
+        &quot;&quot;&quot;</span>
+        <span class="s1">deprecate(</span><span class="s4">&quot;getsize_multiline&quot;</span><span class="s2">, </span><span class="s3">10</span><span class="s2">, </span><span class="s4">&quot;ImageDraw.multiline_textbbox&quot;</span><span class="s1">)</span>
+        <span class="s1">max_width = </span><span class="s3">0</span>
+        <span class="s1">lines = self._multiline_split(text)</span>
+        <span class="s2">with </span><span class="s1">warnings.catch_warnings():</span>
+            <span class="s1">warnings.filterwarnings(</span><span class="s4">&quot;ignore&quot;</span><span class="s2">, </span><span class="s1">category=DeprecationWarning)</span>
+            <span class="s1">line_spacing = self.getsize(</span><span class="s4">&quot;A&quot;</span><span class="s2">, </span><span class="s1">stroke_width=stroke_width)[</span><span class="s3">1</span><span class="s1">] + spacing</span>
+            <span class="s2">for </span><span class="s1">line </span><span class="s2">in </span><span class="s1">lines:</span>
+                <span class="s1">line_width</span><span class="s2">, </span><span class="s1">line_height = self.getsize(</span>
+                    <span class="s1">line</span><span class="s2">, </span><span class="s1">direction</span><span class="s2">, </span><span class="s1">features</span><span class="s2">, </span><span class="s1">language</span><span class="s2">, </span><span class="s1">stroke_width</span>
+                <span class="s1">)</span>
+                <span class="s1">max_width = max(max_width</span><span class="s2">, </span><span class="s1">line_width)</span>
+
+        <span class="s2">return </span><span class="s1">max_width</span><span class="s2">, </span><span class="s1">len(lines) * line_spacing - spacing</span>
+
+    <span class="s2">def </span><span class="s1">getoffset(self</span><span class="s2">, </span><span class="s1">text):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        .. deprecated:: 9.2.0 
+ 
+        Use :py:meth:`.getbbox` instead. 
+ 
+        See :ref:`deprecations &lt;Font size and offset methods&gt;` for more information. 
+ 
+        Returns the offset of given text. This is the gap between the 
+        starting coordinate and the first marking. Note that this gap is 
+        included in the result of :py:func:`~PIL.ImageFont.FreeTypeFont.getsize`. 
+ 
+        :param text: Text to measure. 
+ 
+        :return: A tuple of the x and y offset 
+        &quot;&quot;&quot;</span>
+        <span class="s1">deprecate(</span><span class="s4">&quot;getoffset&quot;</span><span class="s2">, </span><span class="s3">10</span><span class="s2">, </span><span class="s4">&quot;getbbox&quot;</span><span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">self.font.getsize(text)[</span><span class="s3">1</span><span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">getmask(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">text</span><span class="s2">,</span>
+        <span class="s1">mode=</span><span class="s4">&quot;&quot;</span><span class="s2">,</span>
+        <span class="s1">direction=</span><span class="s2">None,</span>
+        <span class="s1">features=</span><span class="s2">None,</span>
+        <span class="s1">language=</span><span class="s2">None,</span>
+        <span class="s1">stroke_width=</span><span class="s3">0</span><span class="s2">,</span>
+        <span class="s1">anchor=</span><span class="s2">None,</span>
+        <span class="s1">ink=</span><span class="s3">0</span><span class="s2">,</span>
+    <span class="s1">):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Create a bitmap for the text. 
+ 
+        If the font uses antialiasing, the bitmap should have mode ``L`` and use a 
+        maximum value of 255. If the font has embedded color data, the bitmap 
+        should have mode ``RGBA``. Otherwise, it should have mode ``1``. 
+ 
+        :param text: Text to render. 
+        :param mode: Used by some graphics drivers to indicate what mode the 
+                     driver prefers; if empty, the renderer may return either 
+                     mode. Note that the mode is always a string, to simplify 
+                     C-level implementations. 
+ 
+                     .. versionadded:: 1.1.5 
+ 
+        :param direction: Direction of the text. It can be 'rtl' (right to 
+                          left), 'ltr' (left to right) or 'ttb' (top to bottom). 
+                          Requires libraqm. 
+ 
+                          .. versionadded:: 4.2.0 
+ 
+        :param features: A list of OpenType font features to be used during text 
+                         layout. This is usually used to turn on optional 
+                         font features that are not enabled by default, 
+                         for example 'dlig' or 'ss01', but can be also 
+                         used to turn off default font features for 
+                         example '-liga' to disable ligatures or '-kern' 
+                         to disable kerning.  To get all supported 
+                         features, see 
+                         https://learn.microsoft.com/en-us/typography/opentype/spec/featurelist 
+                         Requires libraqm. 
+ 
+                         .. versionadded:: 4.2.0 
+ 
+        :param language: Language of the text. Different languages may use 
+                         different glyph shapes or ligatures. This parameter tells 
+                         the font which language the text is in, and to apply the 
+                         correct substitutions as appropriate, if available. 
+                         It should be a `BCP 47 language code 
+                         &lt;https://www.w3.org/International/articles/language-tags/&gt;`_ 
+                         Requires libraqm. 
+ 
+                         .. versionadded:: 6.0.0 
+ 
+        :param stroke_width: The width of the text stroke. 
+ 
+                         .. versionadded:: 6.2.0 
+ 
+        :param anchor:  The text anchor alignment. Determines the relative location of 
+                        the anchor to the text. The default alignment is top left. 
+                        See :ref:`text-anchors` for valid values. 
+ 
+                         .. versionadded:: 8.0.0 
+ 
+        :param ink: Foreground ink for rendering in RGBA mode. 
+ 
+                         .. versionadded:: 8.0.0 
+ 
+        :return: An internal PIL storage memory instance as defined by the 
+                 :py:mod:`PIL.Image.core` interface module. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self.getmask2(</span>
+            <span class="s1">text</span><span class="s2">,</span>
+            <span class="s1">mode</span><span class="s2">,</span>
+            <span class="s1">direction=direction</span><span class="s2">,</span>
+            <span class="s1">features=features</span><span class="s2">,</span>
+            <span class="s1">language=language</span><span class="s2">,</span>
+            <span class="s1">stroke_width=stroke_width</span><span class="s2">,</span>
+            <span class="s1">anchor=anchor</span><span class="s2">,</span>
+            <span class="s1">ink=ink</span><span class="s2">,</span>
+        <span class="s1">)[</span><span class="s3">0</span><span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">getmask2(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">text</span><span class="s2">,</span>
+        <span class="s1">mode=</span><span class="s4">&quot;&quot;</span><span class="s2">,</span>
+        <span class="s1">fill=_UNSPECIFIED</span><span class="s2">,</span>
+        <span class="s1">direction=</span><span class="s2">None,</span>
+        <span class="s1">features=</span><span class="s2">None,</span>
+        <span class="s1">language=</span><span class="s2">None,</span>
+        <span class="s1">stroke_width=</span><span class="s3">0</span><span class="s2">,</span>
+        <span class="s1">anchor=</span><span class="s2">None,</span>
+        <span class="s1">ink=</span><span class="s3">0</span><span class="s2">,</span>
+        <span class="s1">*args</span><span class="s2">,</span>
+        <span class="s1">**kwargs</span><span class="s2">,</span>
+    <span class="s1">):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Create a bitmap for the text. 
+ 
+        If the font uses antialiasing, the bitmap should have mode ``L`` and use a 
+        maximum value of 255. If the font has embedded color data, the bitmap 
+        should have mode ``RGBA``. Otherwise, it should have mode ``1``. 
+ 
+        :param text: Text to render. 
+        :param mode: Used by some graphics drivers to indicate what mode the 
+                     driver prefers; if empty, the renderer may return either 
+                     mode. Note that the mode is always a string, to simplify 
+                     C-level implementations. 
+ 
+                     .. versionadded:: 1.1.5 
+ 
+        :param fill: Optional fill function. By default, an internal Pillow function 
+                     will be used. 
+ 
+                     Deprecated. This parameter will be removed in Pillow 10 
+                     (2023-07-01). 
+ 
+        :param direction: Direction of the text. It can be 'rtl' (right to 
+                          left), 'ltr' (left to right) or 'ttb' (top to bottom). 
+                          Requires libraqm. 
+ 
+                          .. versionadded:: 4.2.0 
+ 
+        :param features: A list of OpenType font features to be used during text 
+                         layout. This is usually used to turn on optional 
+                         font features that are not enabled by default, 
+                         for example 'dlig' or 'ss01', but can be also 
+                         used to turn off default font features for 
+                         example '-liga' to disable ligatures or '-kern' 
+                         to disable kerning.  To get all supported 
+                         features, see 
+                         https://learn.microsoft.com/en-us/typography/opentype/spec/featurelist 
+                         Requires libraqm. 
+ 
+                         .. versionadded:: 4.2.0 
+ 
+        :param language: Language of the text. Different languages may use 
+                         different glyph shapes or ligatures. This parameter tells 
+                         the font which language the text is in, and to apply the 
+                         correct substitutions as appropriate, if available. 
+                         It should be a `BCP 47 language code 
+                         &lt;https://www.w3.org/International/articles/language-tags/&gt;`_ 
+                         Requires libraqm. 
+ 
+                         .. versionadded:: 6.0.0 
+ 
+        :param stroke_width: The width of the text stroke. 
+ 
+                         .. versionadded:: 6.2.0 
+ 
+        :param anchor:  The text anchor alignment. Determines the relative location of 
+                        the anchor to the text. The default alignment is top left. 
+                        See :ref:`text-anchors` for valid values. 
+ 
+                         .. versionadded:: 8.0.0 
+ 
+        :param ink: Foreground ink for rendering in RGBA mode. 
+ 
+                         .. versionadded:: 8.0.0 
+ 
+        :return: A tuple of an internal PIL storage memory instance as defined by the 
+                 :py:mod:`PIL.Image.core` interface module, and the text offset, the 
+                 gap between the starting coordinate and the first marking 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">fill </span><span class="s2">is </span><span class="s1">_UNSPECIFIED:</span>
+            <span class="s1">fill = Image.core.fill</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">deprecate(</span><span class="s4">&quot;fill&quot;</span><span class="s2">, </span><span class="s3">10</span><span class="s1">)</span>
+        <span class="s1">size</span><span class="s2">, </span><span class="s1">offset = self.font.getsize(</span>
+            <span class="s1">text</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">direction</span><span class="s2">, </span><span class="s1">features</span><span class="s2">, </span><span class="s1">language</span><span class="s2">, </span><span class="s1">anchor</span>
+        <span class="s1">)</span>
+        <span class="s1">size = size[</span><span class="s3">0</span><span class="s1">] + stroke_width * </span><span class="s3">2</span><span class="s2">, </span><span class="s1">size[</span><span class="s3">1</span><span class="s1">] + stroke_width * </span><span class="s3">2</span>
+        <span class="s1">offset = offset[</span><span class="s3">0</span><span class="s1">] - stroke_width</span><span class="s2">, </span><span class="s1">offset[</span><span class="s3">1</span><span class="s1">] - stroke_width</span>
+        <span class="s1">Image._decompression_bomb_check(size)</span>
+        <span class="s1">im = fill(</span><span class="s4">&quot;RGBA&quot; </span><span class="s2">if </span><span class="s1">mode == </span><span class="s4">&quot;RGBA&quot; </span><span class="s2">else </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">size</span><span class="s2">, </span><span class="s3">0</span><span class="s1">)</span>
+        <span class="s1">self.font.render(</span>
+            <span class="s1">text</span><span class="s2">, </span><span class="s1">im.id</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">direction</span><span class="s2">, </span><span class="s1">features</span><span class="s2">, </span><span class="s1">language</span><span class="s2">, </span><span class="s1">stroke_width</span><span class="s2">, </span><span class="s1">ink</span>
+        <span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">im</span><span class="s2">, </span><span class="s1">offset</span>
+
+    <span class="s2">def </span><span class="s1">font_variant(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">font=</span><span class="s2">None, </span><span class="s1">size=</span><span class="s2">None, </span><span class="s1">index=</span><span class="s2">None, </span><span class="s1">encoding=</span><span class="s2">None, </span><span class="s1">layout_engine=</span><span class="s2">None</span>
+    <span class="s1">):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Create a copy of this FreeTypeFont object, 
+        using any specified arguments to override the settings. 
+ 
+        Parameters are identical to the parameters used to initialize this 
+        object. 
+ 
+        :return: A FreeTypeFont object. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">font </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">font = BytesIO(self.font_bytes)</span>
+            <span class="s2">except </span><span class="s1">AttributeError:</span>
+                <span class="s1">font = self.path</span>
+        <span class="s2">return </span><span class="s1">FreeTypeFont(</span>
+            <span class="s1">font=font</span><span class="s2">,</span>
+            <span class="s1">size=self.size </span><span class="s2">if </span><span class="s1">size </span><span class="s2">is None else </span><span class="s1">size</span><span class="s2">,</span>
+            <span class="s1">index=self.index </span><span class="s2">if </span><span class="s1">index </span><span class="s2">is None else </span><span class="s1">index</span><span class="s2">,</span>
+            <span class="s1">encoding=self.encoding </span><span class="s2">if </span><span class="s1">encoding </span><span class="s2">is None else </span><span class="s1">encoding</span><span class="s2">,</span>
+            <span class="s1">layout_engine=layout_engine </span><span class="s2">or </span><span class="s1">self.layout_engine</span><span class="s2">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">get_variation_names(self):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        :returns: A list of the named styles in a variation font. 
+        :exception OSError: If the font is not a variation font. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">names = self.font.getvarnames()</span>
+        <span class="s2">except </span><span class="s1">AttributeError </span><span class="s2">as </span><span class="s1">e:</span>
+            <span class="s2">raise </span><span class="s1">NotImplementedError(</span><span class="s4">&quot;FreeType 2.9.1 or greater is required&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+        <span class="s2">return </span><span class="s1">[name.replace(</span><span class="s6">b&quot;</span><span class="s2">\x00</span><span class="s6">&quot;</span><span class="s2">, </span><span class="s6">b&quot;&quot;</span><span class="s1">) </span><span class="s2">for </span><span class="s1">name </span><span class="s2">in </span><span class="s1">names]</span>
+
+    <span class="s2">def </span><span class="s1">set_variation_by_name(self</span><span class="s2">, </span><span class="s1">name):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        :param name: The name of the style. 
+        :exception OSError: If the font is not a variation font. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">names = self.get_variation_names()</span>
+        <span class="s2">if not </span><span class="s1">isinstance(name</span><span class="s2">, </span><span class="s1">bytes):</span>
+            <span class="s1">name = name.encode()</span>
+        <span class="s1">index = names.index(name) + </span><span class="s3">1</span>
+
+        <span class="s2">if </span><span class="s1">index == getattr(self</span><span class="s2">, </span><span class="s4">&quot;_last_variation_index&quot;</span><span class="s2">, None</span><span class="s1">):</span>
+            <span class="s0"># When the same name is set twice in a row,</span>
+            <span class="s0"># there is an 'unknown freetype error'</span>
+            <span class="s0"># https://savannah.nongnu.org/bugs/?56186</span>
+            <span class="s2">return</span>
+        <span class="s1">self._last_variation_index = index</span>
+
+        <span class="s1">self.font.setvarname(index)</span>
+
+    <span class="s2">def </span><span class="s1">get_variation_axes(self):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        :returns: A list of the axes in a variation font. 
+        :exception OSError: If the font is not a variation font. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">axes = self.font.getvaraxes()</span>
+        <span class="s2">except </span><span class="s1">AttributeError </span><span class="s2">as </span><span class="s1">e:</span>
+            <span class="s2">raise </span><span class="s1">NotImplementedError(</span><span class="s4">&quot;FreeType 2.9.1 or greater is required&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+        <span class="s2">for </span><span class="s1">axis </span><span class="s2">in </span><span class="s1">axes:</span>
+            <span class="s1">axis[</span><span class="s4">&quot;name&quot;</span><span class="s1">] = axis[</span><span class="s4">&quot;name&quot;</span><span class="s1">].replace(</span><span class="s6">b&quot;</span><span class="s2">\x00</span><span class="s6">&quot;</span><span class="s2">, </span><span class="s6">b&quot;&quot;</span><span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">axes</span>
+
+    <span class="s2">def </span><span class="s1">set_variation_by_axes(self</span><span class="s2">, </span><span class="s1">axes):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        :param axes: A list of values for each axis. 
+        :exception OSError: If the font is not a variation font. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">self.font.setvaraxes(axes)</span>
+        <span class="s2">except </span><span class="s1">AttributeError </span><span class="s2">as </span><span class="s1">e:</span>
+            <span class="s2">raise </span><span class="s1">NotImplementedError(</span><span class="s4">&quot;FreeType 2.9.1 or greater is required&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+
+
+<span class="s2">class </span><span class="s1">TransposedFont:</span>
+    <span class="s5">&quot;&quot;&quot;Wrapper for writing rotated or mirrored text&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">font</span><span class="s2">, </span><span class="s1">orientation=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Wrapper that creates a transposed font from any existing font 
+        object. 
+ 
+        :param font: A font object. 
+        :param orientation: An optional orientation.  If given, this should 
+            be one of Image.Transpose.FLIP_LEFT_RIGHT, Image.Transpose.FLIP_TOP_BOTTOM, 
+            Image.Transpose.ROTATE_90, Image.Transpose.ROTATE_180, or 
+            Image.Transpose.ROTATE_270. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.font = font</span>
+        <span class="s1">self.orientation = orientation  </span><span class="s0"># any 'transpose' argument, or None</span>
+
+    <span class="s2">def </span><span class="s1">getsize(self</span><span class="s2">, </span><span class="s1">text</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        .. deprecated:: 9.2.0 
+ 
+        Use :py:meth:`.getbbox` or :py:meth:`.getlength` instead. 
+ 
+        See :ref:`deprecations &lt;Font size and offset methods&gt;` for more information. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">deprecate(</span><span class="s4">&quot;getsize&quot;</span><span class="s2">, </span><span class="s3">10</span><span class="s2">, </span><span class="s4">&quot;getbbox or getlength&quot;</span><span class="s1">)</span>
+        <span class="s2">with </span><span class="s1">warnings.catch_warnings():</span>
+            <span class="s1">warnings.filterwarnings(</span><span class="s4">&quot;ignore&quot;</span><span class="s2">, </span><span class="s1">category=DeprecationWarning)</span>
+            <span class="s1">w</span><span class="s2">, </span><span class="s1">h = self.font.getsize(text)</span>
+        <span class="s2">if </span><span class="s1">self.orientation </span><span class="s2">in </span><span class="s1">(Image.Transpose.ROTATE_90</span><span class="s2">, </span><span class="s1">Image.Transpose.ROTATE_270):</span>
+            <span class="s2">return </span><span class="s1">h</span><span class="s2">, </span><span class="s1">w</span>
+        <span class="s2">return </span><span class="s1">w</span><span class="s2">, </span><span class="s1">h</span>
+
+    <span class="s2">def </span><span class="s1">getmask(self</span><span class="s2">, </span><span class="s1">text</span><span class="s2">, </span><span class="s1">mode=</span><span class="s4">&quot;&quot;</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s1">im = self.font.getmask(text</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs)</span>
+        <span class="s2">if </span><span class="s1">self.orientation </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">im.transpose(self.orientation)</span>
+        <span class="s2">return </span><span class="s1">im</span>
+
+    <span class="s2">def </span><span class="s1">getbbox(self</span><span class="s2">, </span><span class="s1">text</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s0"># TransposedFont doesn't support getmask2, move top-left point to (0, 0)</span>
+        <span class="s0"># this has no effect on ImageFont and simulates anchor=&quot;lt&quot; for FreeTypeFont</span>
+        <span class="s1">left</span><span class="s2">, </span><span class="s1">top</span><span class="s2">, </span><span class="s1">right</span><span class="s2">, </span><span class="s1">bottom = self.font.getbbox(text</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs)</span>
+        <span class="s1">width = right - left</span>
+        <span class="s1">height = bottom - top</span>
+        <span class="s2">if </span><span class="s1">self.orientation </span><span class="s2">in </span><span class="s1">(Image.Transpose.ROTATE_90</span><span class="s2">, </span><span class="s1">Image.Transpose.ROTATE_270):</span>
+            <span class="s2">return </span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">height</span><span class="s2">, </span><span class="s1">width</span>
+        <span class="s2">return </span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">width</span><span class="s2">, </span><span class="s1">height</span>
+
+    <span class="s2">def </span><span class="s1">getlength(self</span><span class="s2">, </span><span class="s1">text</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs):</span>
+        <span class="s2">if </span><span class="s1">self.orientation </span><span class="s2">in </span><span class="s1">(Image.Transpose.ROTATE_90</span><span class="s2">, </span><span class="s1">Image.Transpose.ROTATE_270):</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span>
+                <span class="s4">&quot;text length is undefined for text rotated by 90 or 270 degrees&quot;</span>
+            <span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">self.font.getlength(text</span><span class="s2">, </span><span class="s1">*args</span><span class="s2">, </span><span class="s1">**kwargs)</span>
+
+
+<span class="s2">def </span><span class="s1">load(filename):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Load a font file.  This function loads a font object from the given 
+    bitmap font file, and returns the corresponding font object. 
+ 
+    :param filename: Name of font file. 
+    :return: A font object. 
+    :exception OSError: If the file could not be read. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">f = ImageFont()</span>
+    <span class="s1">f._load_pilfont(filename)</span>
+    <span class="s2">return </span><span class="s1">f</span>
+
+
+<span class="s2">def </span><span class="s1">truetype(font=</span><span class="s2">None, </span><span class="s1">size=</span><span class="s3">10</span><span class="s2">, </span><span class="s1">index=</span><span class="s3">0</span><span class="s2">, </span><span class="s1">encoding=</span><span class="s4">&quot;&quot;</span><span class="s2">, </span><span class="s1">layout_engine=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Load a TrueType or OpenType font from a file or file-like object, 
+    and create a font object. 
+    This function loads a font object from the given file or file-like 
+    object, and creates a font object for a font of the given size. 
+ 
+    Pillow uses FreeType to open font files. On Windows, be aware that FreeType 
+    will keep the file open as long as the FreeTypeFont object exists. Windows 
+    limits the number of files that can be open in C at once to 512, so if many 
+    fonts are opened simultaneously and that limit is approached, an 
+    ``OSError`` may be thrown, reporting that FreeType &quot;cannot open resource&quot;. 
+    A workaround would be to copy the file(s) into memory, and open that instead. 
+ 
+    This function requires the _imagingft service. 
+ 
+    :param font: A filename or file-like object containing a TrueType font. 
+                 If the file is not found in this filename, the loader may also 
+                 search in other directories, such as the :file:`fonts/` 
+                 directory on Windows or :file:`/Library/Fonts/`, 
+                 :file:`/System/Library/Fonts/` and :file:`~/Library/Fonts/` on 
+                 macOS. 
+ 
+    :param size: The requested size, in pixels. 
+    :param index: Which font face to load (default is first available face). 
+    :param encoding: Which font encoding to use (default is Unicode). Possible 
+                     encodings include (see the FreeType documentation for more 
+                     information): 
+ 
+                     * &quot;unic&quot; (Unicode) 
+                     * &quot;symb&quot; (Microsoft Symbol) 
+                     * &quot;ADOB&quot; (Adobe Standard) 
+                     * &quot;ADBE&quot; (Adobe Expert) 
+                     * &quot;ADBC&quot; (Adobe Custom) 
+                     * &quot;armn&quot; (Apple Roman) 
+                     * &quot;sjis&quot; (Shift JIS) 
+                     * &quot;gb  &quot; (PRC) 
+                     * &quot;big5&quot; 
+                     * &quot;wans&quot; (Extended Wansung) 
+                     * &quot;joha&quot; (Johab) 
+                     * &quot;lat1&quot; (Latin-1) 
+ 
+                     This specifies the character set to use. It does not alter the 
+                     encoding of any text provided in subsequent operations. 
+    :param layout_engine: Which layout engine to use, if available: 
+                     :data:`.ImageFont.Layout.BASIC` or :data:`.ImageFont.Layout.RAQM`. 
+                     If it is available, Raqm layout will be used by default. 
+                     Otherwise, basic layout will be used. 
+ 
+                     Raqm layout is recommended for all non-English text. If Raqm layout 
+                     is not required, basic layout will have better performance. 
+ 
+                     You can check support for Raqm layout using 
+                     :py:func:`PIL.features.check_feature` with ``feature=&quot;raqm&quot;``. 
+ 
+                     .. versionadded:: 4.2.0 
+    :return: A font object. 
+    :exception OSError: If the file could not be read. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">freetype(font):</span>
+        <span class="s2">return </span><span class="s1">FreeTypeFont(font</span><span class="s2">, </span><span class="s1">size</span><span class="s2">, </span><span class="s1">index</span><span class="s2">, </span><span class="s1">encoding</span><span class="s2">, </span><span class="s1">layout_engine)</span>
+
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">freetype(font)</span>
+    <span class="s2">except </span><span class="s1">OSError:</span>
+        <span class="s2">if not </span><span class="s1">is_path(font):</span>
+            <span class="s2">raise</span>
+        <span class="s1">ttf_filename = os.path.basename(font)</span>
+
+        <span class="s1">dirs = []</span>
+        <span class="s2">if </span><span class="s1">sys.platform == </span><span class="s4">&quot;win32&quot;</span><span class="s1">:</span>
+            <span class="s0"># check the windows font repository</span>
+            <span class="s0"># NOTE: must use uppercase WINDIR, to work around bugs in</span>
+            <span class="s0"># 1.5.2's os.environ.get()</span>
+            <span class="s1">windir = os.environ.get(</span><span class="s4">&quot;WINDIR&quot;</span><span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">windir:</span>
+                <span class="s1">dirs.append(os.path.join(windir</span><span class="s2">, </span><span class="s4">&quot;fonts&quot;</span><span class="s1">))</span>
+        <span class="s2">elif </span><span class="s1">sys.platform </span><span class="s2">in </span><span class="s1">(</span><span class="s4">&quot;linux&quot;</span><span class="s2">, </span><span class="s4">&quot;linux2&quot;</span><span class="s1">):</span>
+            <span class="s1">lindirs = os.environ.get(</span><span class="s4">&quot;XDG_DATA_DIRS&quot;</span><span class="s2">, </span><span class="s4">&quot;&quot;</span><span class="s1">)</span>
+            <span class="s2">if not </span><span class="s1">lindirs:</span>
+                <span class="s0"># According to the freedesktop spec, XDG_DATA_DIRS should</span>
+                <span class="s0"># default to /usr/share</span>
+                <span class="s1">lindirs = </span><span class="s4">&quot;/usr/share&quot;</span>
+            <span class="s1">dirs += [os.path.join(lindir</span><span class="s2">, </span><span class="s4">&quot;fonts&quot;</span><span class="s1">) </span><span class="s2">for </span><span class="s1">lindir </span><span class="s2">in </span><span class="s1">lindirs.split(</span><span class="s4">&quot;:&quot;</span><span class="s1">)]</span>
+        <span class="s2">elif </span><span class="s1">sys.platform == </span><span class="s4">&quot;darwin&quot;</span><span class="s1">:</span>
+            <span class="s1">dirs += [</span>
+                <span class="s4">&quot;/Library/Fonts&quot;</span><span class="s2">,</span>
+                <span class="s4">&quot;/System/Library/Fonts&quot;</span><span class="s2">,</span>
+                <span class="s1">os.path.expanduser(</span><span class="s4">&quot;~/Library/Fonts&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s1">]</span>
+
+        <span class="s1">ext = os.path.splitext(ttf_filename)[</span><span class="s3">1</span><span class="s1">]</span>
+        <span class="s1">first_font_with_a_different_extension = </span><span class="s2">None</span>
+        <span class="s2">for </span><span class="s1">directory </span><span class="s2">in </span><span class="s1">dirs:</span>
+            <span class="s2">for </span><span class="s1">walkroot</span><span class="s2">, </span><span class="s1">walkdir</span><span class="s2">, </span><span class="s1">walkfilenames </span><span class="s2">in </span><span class="s1">os.walk(directory):</span>
+                <span class="s2">for </span><span class="s1">walkfilename </span><span class="s2">in </span><span class="s1">walkfilenames:</span>
+                    <span class="s2">if </span><span class="s1">ext </span><span class="s2">and </span><span class="s1">walkfilename == ttf_filename:</span>
+                        <span class="s2">return </span><span class="s1">freetype(os.path.join(walkroot</span><span class="s2">, </span><span class="s1">walkfilename))</span>
+                    <span class="s2">elif not </span><span class="s1">ext </span><span class="s2">and </span><span class="s1">os.path.splitext(walkfilename)[</span><span class="s3">0</span><span class="s1">] == ttf_filename:</span>
+                        <span class="s1">fontpath = os.path.join(walkroot</span><span class="s2">, </span><span class="s1">walkfilename)</span>
+                        <span class="s2">if </span><span class="s1">os.path.splitext(fontpath)[</span><span class="s3">1</span><span class="s1">] == </span><span class="s4">&quot;.ttf&quot;</span><span class="s1">:</span>
+                            <span class="s2">return </span><span class="s1">freetype(fontpath)</span>
+                        <span class="s2">if not </span><span class="s1">ext </span><span class="s2">and </span><span class="s1">first_font_with_a_different_extension </span><span class="s2">is None</span><span class="s1">:</span>
+                            <span class="s1">first_font_with_a_different_extension = fontpath</span>
+        <span class="s2">if </span><span class="s1">first_font_with_a_different_extension:</span>
+            <span class="s2">return </span><span class="s1">freetype(first_font_with_a_different_extension)</span>
+        <span class="s2">raise</span>
+
+
+<span class="s2">def </span><span class="s1">load_path(filename):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Load font file. Same as :py:func:`~PIL.ImageFont.load`, but searches for a 
+    bitmap font along the Python path. 
+ 
+    :param filename: Name of font file. 
+    :return: A font object. 
+    :exception OSError: If the file could not be read. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">for </span><span class="s1">directory </span><span class="s2">in </span><span class="s1">sys.path:</span>
+        <span class="s2">if </span><span class="s1">is_directory(directory):</span>
+            <span class="s2">if not </span><span class="s1">isinstance(filename</span><span class="s2">, </span><span class="s1">str):</span>
+                <span class="s1">filename = filename.decode(</span><span class="s4">&quot;utf-8&quot;</span><span class="s1">)</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">load(os.path.join(directory</span><span class="s2">, </span><span class="s1">filename))</span>
+            <span class="s2">except </span><span class="s1">OSError:</span>
+                <span class="s2">pass</span>
+    <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">&quot;cannot find font file&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">load_default():</span>
+    <span class="s5">&quot;&quot;&quot;Load a &quot;better than nothing&quot; default font. 
+ 
+    .. versionadded:: 1.1.4 
+ 
+    :return: A font object. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">f = ImageFont()</span>
+    <span class="s1">f._load_pilfont_data(</span>
+        <span class="s0"># courB08</span>
+        <span class="s1">BytesIO(</span>
+            <span class="s1">base64.b64decode(</span>
+                <span class="s6">b&quot;&quot;&quot; 
+UElMZm9udAo7Ozs7OzsxMDsKREFUQQoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAA//8AAQAAAAAAAAABAAEA 
+BgAAAAH/+gADAAAAAQAAAAMABgAGAAAAAf/6AAT//QADAAAABgADAAYAAAAA//kABQABAAYAAAAL 
+AAgABgAAAAD/+AAFAAEACwAAABAACQAGAAAAAP/5AAUAAAAQAAAAFQAHAAYAAP////oABQAAABUA 
+AAAbAAYABgAAAAH/+QAE//wAGwAAAB4AAwAGAAAAAf/5AAQAAQAeAAAAIQAIAAYAAAAB//kABAAB 
+ACEAAAAkAAgABgAAAAD/+QAE//0AJAAAACgABAAGAAAAAP/6AAX//wAoAAAALQAFAAYAAAAB//8A 
+BAACAC0AAAAwAAMABgAAAAD//AAF//0AMAAAADUAAQAGAAAAAf//AAMAAAA1AAAANwABAAYAAAAB 
+//kABQABADcAAAA7AAgABgAAAAD/+QAFAAAAOwAAAEAABwAGAAAAAP/5AAYAAABAAAAARgAHAAYA 
+AAAA//kABQAAAEYAAABLAAcABgAAAAD/+QAFAAAASwAAAFAABwAGAAAAAP/5AAYAAABQAAAAVgAH 
+AAYAAAAA//kABQAAAFYAAABbAAcABgAAAAD/+QAFAAAAWwAAAGAABwAGAAAAAP/5AAUAAABgAAAA 
+ZQAHAAYAAAAA//kABQAAAGUAAABqAAcABgAAAAD/+QAFAAAAagAAAG8ABwAGAAAAAf/8AAMAAABv 
+AAAAcQAEAAYAAAAA//wAAwACAHEAAAB0AAYABgAAAAD/+gAE//8AdAAAAHgABQAGAAAAAP/7AAT/ 
+/gB4AAAAfAADAAYAAAAB//oABf//AHwAAACAAAUABgAAAAD/+gAFAAAAgAAAAIUABgAGAAAAAP/5 
+AAYAAQCFAAAAiwAIAAYAAP////oABgAAAIsAAACSAAYABgAA////+gAFAAAAkgAAAJgABgAGAAAA 
+AP/6AAUAAACYAAAAnQAGAAYAAP////oABQAAAJ0AAACjAAYABgAA////+gAFAAAAowAAAKkABgAG 
+AAD////6AAUAAACpAAAArwAGAAYAAAAA//oABQAAAK8AAAC0AAYABgAA////+gAGAAAAtAAAALsA 
+BgAGAAAAAP/6AAQAAAC7AAAAvwAGAAYAAP////oABQAAAL8AAADFAAYABgAA////+gAGAAAAxQAA 
+AMwABgAGAAD////6AAUAAADMAAAA0gAGAAYAAP////oABQAAANIAAADYAAYABgAA////+gAGAAAA 
+2AAAAN8ABgAGAAAAAP/6AAUAAADfAAAA5AAGAAYAAP////oABQAAAOQAAADqAAYABgAAAAD/+gAF 
+AAEA6gAAAO8ABwAGAAD////6AAYAAADvAAAA9gAGAAYAAAAA//oABQAAAPYAAAD7AAYABgAA//// 
++gAFAAAA+wAAAQEABgAGAAD////6AAYAAAEBAAABCAAGAAYAAP////oABgAAAQgAAAEPAAYABgAA 
+////+gAGAAABDwAAARYABgAGAAAAAP/6AAYAAAEWAAABHAAGAAYAAP////oABgAAARwAAAEjAAYA 
+BgAAAAD/+gAFAAABIwAAASgABgAGAAAAAf/5AAQAAQEoAAABKwAIAAYAAAAA//kABAABASsAAAEv 
+AAgABgAAAAH/+QAEAAEBLwAAATIACAAGAAAAAP/5AAX//AEyAAABNwADAAYAAAAAAAEABgACATcA 
+AAE9AAEABgAAAAH/+QAE//wBPQAAAUAAAwAGAAAAAP/7AAYAAAFAAAABRgAFAAYAAP////kABQAA 
+AUYAAAFMAAcABgAAAAD/+wAFAAABTAAAAVEABQAGAAAAAP/5AAYAAAFRAAABVwAHAAYAAAAA//sA 
+BQAAAVcAAAFcAAUABgAAAAD/+QAFAAABXAAAAWEABwAGAAAAAP/7AAYAAgFhAAABZwAHAAYAAP// 
+//kABQAAAWcAAAFtAAcABgAAAAD/+QAGAAABbQAAAXMABwAGAAAAAP/5AAQAAgFzAAABdwAJAAYA 
+AP////kABgAAAXcAAAF+AAcABgAAAAD/+QAGAAABfgAAAYQABwAGAAD////7AAUAAAGEAAABigAF 
+AAYAAP////sABQAAAYoAAAGQAAUABgAAAAD/+wAFAAABkAAAAZUABQAGAAD////7AAUAAgGVAAAB 
+mwAHAAYAAAAA//sABgACAZsAAAGhAAcABgAAAAD/+wAGAAABoQAAAacABQAGAAAAAP/7AAYAAAGn 
+AAABrQAFAAYAAAAA//kABgAAAa0AAAGzAAcABgAA////+wAGAAABswAAAboABQAGAAD////7AAUA 
+AAG6AAABwAAFAAYAAP////sABgAAAcAAAAHHAAUABgAAAAD/+wAGAAABxwAAAc0ABQAGAAD////7 
+AAYAAgHNAAAB1AAHAAYAAAAA//sABQAAAdQAAAHZAAUABgAAAAH/+QAFAAEB2QAAAd0ACAAGAAAA 
+Av/6AAMAAQHdAAAB3gAHAAYAAAAA//kABAABAd4AAAHiAAgABgAAAAD/+wAF//0B4gAAAecAAgAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA 
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYAAAAB 
+//sAAwACAecAAAHpAAcABgAAAAD/+QAFAAEB6QAAAe4ACAAGAAAAAP/5AAYAAAHuAAAB9AAHAAYA 
+AAAA//oABf//AfQAAAH5AAUABgAAAAD/+QAGAAAB+QAAAf8ABwAGAAAAAv/5AAMAAgH/AAACAAAJ 
+AAYAAAAA//kABQABAgAAAAIFAAgABgAAAAH/+gAE//sCBQAAAggAAQAGAAAAAP/5AAYAAAIIAAAC 
+DgAHAAYAAAAB//kABf/+Ag4AAAISAAUABgAA////+wAGAAACEgAAAhkABQAGAAAAAP/7AAX//gIZ 
+AAACHgADAAYAAAAA//wABf/9Ah4AAAIjAAEABgAAAAD/+QAHAAACIwAAAioABwAGAAAAAP/6AAT/ 
++wIqAAACLgABAAYAAAAA//kABP/8Ai4AAAIyAAMABgAAAAD/+gAFAAACMgAAAjcABgAGAAAAAf/5 
+AAT//QI3AAACOgAEAAYAAAAB//kABP/9AjoAAAI9AAQABgAAAAL/+QAE//sCPQAAAj8AAgAGAAD/ 
+///7AAYAAgI/AAACRgAHAAYAAAAA//kABgABAkYAAAJMAAgABgAAAAH//AAD//0CTAAAAk4AAQAG 
+AAAAAf//AAQAAgJOAAACUQADAAYAAAAB//kABP/9AlEAAAJUAAQABgAAAAH/+QAF//4CVAAAAlgA 
+BQAGAAD////7AAYAAAJYAAACXwAFAAYAAP////kABgAAAl8AAAJmAAcABgAA////+QAGAAACZgAA 
+Am0ABwAGAAD////5AAYAAAJtAAACdAAHAAYAAAAA//sABQACAnQAAAJ5AAcABgAA////9wAGAAAC 
+eQAAAoAACQAGAAD////3AAYAAAKAAAAChwAJAAYAAP////cABgAAAocAAAKOAAkABgAA////9wAG 
+AAACjgAAApUACQAGAAD////4AAYAAAKVAAACnAAIAAYAAP////cABgAAApwAAAKjAAkABgAA//// 
++gAGAAACowAAAqoABgAGAAAAAP/6AAUAAgKqAAACrwAIAAYAAP////cABQAAAq8AAAK1AAkABgAA 
+////9wAFAAACtQAAArsACQAGAAD////3AAUAAAK7AAACwQAJAAYAAP////gABQAAAsEAAALHAAgA 
+BgAAAAD/9wAEAAACxwAAAssACQAGAAAAAP/3AAQAAALLAAACzwAJAAYAAAAA//cABAAAAs8AAALT 
+AAkABgAAAAD/+AAEAAAC0wAAAtcACAAGAAD////6AAUAAALXAAAC3QAGAAYAAP////cABgAAAt0A 
+AALkAAkABgAAAAD/9wAFAAAC5AAAAukACQAGAAAAAP/3AAUAAALpAAAC7gAJAAYAAAAA//cABQAA 
+Au4AAALzAAkABgAAAAD/9wAFAAAC8wAAAvgACQAGAAAAAP/4AAUAAAL4AAAC/QAIAAYAAAAA//oA 
+Bf//Av0AAAMCAAUABgAA////+gAGAAADAgAAAwkABgAGAAD////3AAYAAAMJAAADEAAJAAYAAP// 
+//cABgAAAxAAAAMXAAkABgAA////9wAGAAADFwAAAx4ACQAGAAD////4AAYAAAAAAAoABwASAAYA 
+AP////cABgAAAAcACgAOABMABgAA////+gAFAAAADgAKABQAEAAGAAD////6AAYAAAAUAAoAGwAQ 
+AAYAAAAA//gABgAAABsACgAhABIABgAAAAD/+AAGAAAAIQAKACcAEgAGAAAAAP/4AAYAAAAnAAoA 
+LQASAAYAAAAA//gABgAAAC0ACgAzABIABgAAAAD/+QAGAAAAMwAKADkAEQAGAAAAAP/3AAYAAAA5 
+AAoAPwATAAYAAP////sABQAAAD8ACgBFAA8ABgAAAAD/+wAFAAIARQAKAEoAEQAGAAAAAP/4AAUA 
+AABKAAoATwASAAYAAAAA//gABQAAAE8ACgBUABIABgAAAAD/+AAFAAAAVAAKAFkAEgAGAAAAAP/5 
+AAUAAABZAAoAXgARAAYAAAAA//gABgAAAF4ACgBkABIABgAAAAD/+AAGAAAAZAAKAGoAEgAGAAAA 
+AP/4AAYAAABqAAoAcAASAAYAAAAA//kABgAAAHAACgB2ABEABgAAAAD/+AAFAAAAdgAKAHsAEgAG 
+AAD////4AAYAAAB7AAoAggASAAYAAAAA//gABQAAAIIACgCHABIABgAAAAD/+AAFAAAAhwAKAIwA 
+EgAGAAAAAP/4AAUAAACMAAoAkQASAAYAAAAA//gABQAAAJEACgCWABIABgAAAAD/+QAFAAAAlgAK 
+AJsAEQAGAAAAAP/6AAX//wCbAAoAoAAPAAYAAAAA//oABQABAKAACgClABEABgAA////+AAGAAAA 
+pQAKAKwAEgAGAAD////4AAYAAACsAAoAswASAAYAAP////gABgAAALMACgC6ABIABgAA////+QAG 
+AAAAugAKAMEAEQAGAAD////4AAYAAgDBAAoAyAAUAAYAAP////kABQACAMgACgDOABMABgAA//// 
++QAGAAIAzgAKANUAEw== 
+&quot;&quot;&quot;</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span><span class="s2">,</span>
+        <span class="s1">Image.open(</span>
+            <span class="s1">BytesIO(</span>
+                <span class="s1">base64.b64decode(</span>
+                    <span class="s6">b&quot;&quot;&quot; 
+iVBORw0KGgoAAAANSUhEUgAAAx4AAAAUAQAAAAArMtZoAAAEwElEQVR4nABlAJr/AHVE4czCI/4u 
+Mc4b7vuds/xzjz5/3/7u/n9vMe7vnfH/9++vPn/xyf5zhxzjt8GHw8+2d83u8x27199/nxuQ6Od9 
+M43/5z2I+9n9ZtmDBwMQECDRQw/eQIQohJXxpBCNVE6QCCAAAAD//wBlAJr/AgALyj1t/wINwq0g 
+LeNZUworuN1cjTPIzrTX6ofHWeo3v336qPzfEwRmBnHTtf95/fglZK5N0PDgfRTslpGBvz7LFc4F 
+IUXBWQGjQ5MGCx34EDFPwXiY4YbYxavpnhHFrk14CDAAAAD//wBlAJr/AgKqRooH2gAgPeggvUAA 
+Bu2WfgPoAwzRAABAAAAAAACQgLz/3Uv4Gv+gX7BJgDeeGP6AAAD1NMDzKHD7ANWr3loYbxsAD791 
+NAADfcoIDyP44K/jv4Y63/Z+t98Ovt+ub4T48LAAAAD//wBlAJr/AuplMlADJAAAAGuAphWpqhMx 
+in0A/fRvAYBABPgBwBUgABBQ/sYAyv9g0bCHgOLoGAAAAAAAREAAwI7nr0ArYpow7aX8//9LaP/9 
+SjdavWA8ePHeBIKB//81/83ndznOaXx379wAAAD//wBlAJr/AqDxW+D3AABAAbUh/QMnbQag/gAY 
+AYDAAACgtgD/gOqAAAB5IA/8AAAk+n9w0AAA8AAAmFRJuPo27ciC0cD5oeW4E7KA/wD3ECMAn2tt 
+y8PgwH8AfAxFzC0JzeAMtratAsC/ffwAAAD//wBlAJr/BGKAyCAA4AAAAvgeYTAwHd1kmQF5chkG 
+ABoMIHcL5xVpTfQbUqzlAAAErwAQBgAAEOClA5D9il08AEh/tUzdCBsXkbgACED+woQg8Si9VeqY 
+lODCn7lmF6NhnAEYgAAA/NMIAAAAAAD//2JgjLZgVGBg5Pv/Tvpc8hwGBjYGJADjHDrAwPzAjv/H 
+/Wf3PzCwtzcwHmBgYGcwbZz8wHaCAQMDOwMDQ8MCBgYOC3W7mp+f0w+wHOYxO3OG+e376hsMZjk3 
+AAAAAP//YmCMY2A4wMAIN5e5gQETPD6AZisDAwMDgzSDAAPjByiHcQMDAwMDg1nOze1lByRu5/47 
+c4859311AYNZzg0AAAAA//9iYGDBYihOIIMuwIjGL39/fwffA8b//xv/P2BPtzzHwCBjUQAAAAD/ 
+/yLFBrIBAAAA//9i1HhcwdhizX7u8NZNzyLbvT97bfrMf/QHI8evOwcSqGUJAAAA//9iYBB81iSw 
+pEE170Qrg5MIYydHqwdDQRMrAwcVrQAAAAD//2J4x7j9AAMDn8Q/BgYLBoaiAwwMjPdvMDBYM1Tv 
+oJodAAAAAP//Yqo/83+dxePWlxl3npsel9lvLfPcqlE9725C+acfVLMEAAAA//9i+s9gwCoaaGMR 
+evta/58PTEWzr21hufPjA8N+qlnBwAAAAAD//2JiWLci5v1+HmFXDqcnULE/MxgYGBj+f6CaJQAA 
+AAD//2Ji2FrkY3iYpYC5qDeGgeEMAwPDvwQBBoYvcTwOVLMEAAAA//9isDBgkP///0EOg9z35v// 
+Gc/eeW7BwPj5+QGZhANUswMAAAD//2JgqGBgYGBgqEMXlvhMPUsAAAAA//8iYDd1AAAAAP//AwDR 
+w7IkEbzhVQAAAABJRU5ErkJggg== 
+&quot;&quot;&quot;</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span><span class="s2">,</span>
+    <span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">f</span>
+</pre>
+</body>
+</html>

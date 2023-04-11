@@ -1,0 +1,507 @@
+<html>
+<head>
+<title>BlpImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #629755; font-style: italic;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6897bb;}
+.s4 { color: #6a8759;}
+.s5 { color: #808080;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+BlpImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot; 
+Blizzard Mipmap Format (.blp) 
+Jerome Leclanche &lt;jerome@leclan.ch&gt; 
+ 
+The contents of this file are hereby released in the public domain (CC0) 
+Full text of the CC0 license: 
+  https://creativecommons.org/publicdomain/zero/1.0/ 
+ 
+BLP1 files, used mostly in Warcraft III, are not fully supported. 
+All types of BLP2 files used in World of Warcraft are supported. 
+ 
+The BLP file structure consists of a header, up to 16 mipmaps of the 
+texture 
+ 
+Texture sizes must be powers of two, though the two dimensions do 
+not have to be equal; 512x256 is valid, but 512x200 is not. 
+The first mipmap (mipmap #0) is the full size image; each subsequent 
+mipmap halves both dimensions. The final mipmap should be 1x1. 
+ 
+BLP files come in many different flavours: 
+* JPEG-compressed (type == 0) - only supported for BLP1. 
+* RAW images (type == 1, encoding == 1). Each mipmap is stored as an 
+  array of 8-bit values, one per pixel, left to right, top to bottom. 
+  Each value is an index to the palette. 
+* DXT-compressed (type == 1, encoding == 2): 
+- DXT1 compression is used if alpha_encoding == 0. 
+  - An additional alpha bit is used if alpha_depth == 1. 
+  - DXT3 compression is used if alpha_encoding == 1. 
+  - DXT5 compression is used if alpha_encoding == 7. 
+&quot;&quot;&quot;</span>
+
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">struct</span>
+<span class="s2">from </span><span class="s1">enum </span><span class="s2">import </span><span class="s1">IntEnum</span>
+<span class="s2">from </span><span class="s1">io </span><span class="s2">import </span><span class="s1">BytesIO</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span>
+<span class="s2">from </span><span class="s1">._deprecate </span><span class="s2">import </span><span class="s1">deprecate</span>
+
+
+<span class="s2">class </span><span class="s1">Format(IntEnum):</span>
+    <span class="s1">JPEG = </span><span class="s3">0</span>
+
+
+<span class="s2">class </span><span class="s1">Encoding(IntEnum):</span>
+    <span class="s1">UNCOMPRESSED = </span><span class="s3">1</span>
+    <span class="s1">DXT = </span><span class="s3">2</span>
+    <span class="s1">UNCOMPRESSED_RAW_BGRA = </span><span class="s3">3</span>
+
+
+<span class="s2">class </span><span class="s1">AlphaEncoding(IntEnum):</span>
+    <span class="s1">DXT1 = </span><span class="s3">0</span>
+    <span class="s1">DXT3 = </span><span class="s3">1</span>
+    <span class="s1">DXT5 = </span><span class="s3">7</span>
+
+
+<span class="s2">def </span><span class="s1">__getattr__(name):</span>
+    <span class="s2">for </span><span class="s1">enum</span><span class="s2">, </span><span class="s1">prefix </span><span class="s2">in </span><span class="s1">{</span>
+        <span class="s1">Format: </span><span class="s4">&quot;BLP_FORMAT_&quot;</span><span class="s2">,</span>
+        <span class="s1">Encoding: </span><span class="s4">&quot;BLP_ENCODING_&quot;</span><span class="s2">,</span>
+        <span class="s1">AlphaEncoding: </span><span class="s4">&quot;BLP_ALPHA_ENCODING_&quot;</span><span class="s2">,</span>
+    <span class="s1">}.items():</span>
+        <span class="s2">if </span><span class="s1">name.startswith(prefix):</span>
+            <span class="s1">name = name[len(prefix) :]</span>
+            <span class="s2">if </span><span class="s1">name </span><span class="s2">in </span><span class="s1">enum.__members__:</span>
+                <span class="s1">deprecate(</span><span class="s4">f&quot;</span><span class="s2">{</span><span class="s1">prefix</span><span class="s2">}{</span><span class="s1">name</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s2">, </span><span class="s3">10</span><span class="s2">, </span><span class="s4">f&quot;</span><span class="s2">{</span><span class="s1">enum.__name__</span><span class="s2">}</span><span class="s4">.</span><span class="s2">{</span><span class="s1">name</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+                <span class="s2">return </span><span class="s1">enum[name]</span>
+    <span class="s2">raise </span><span class="s1">AttributeError(</span><span class="s4">f&quot;module '</span><span class="s2">{</span><span class="s1">__name__</span><span class="s2">}</span><span class="s4">' has no attribute '</span><span class="s2">{</span><span class="s1">name</span><span class="s2">}</span><span class="s4">'&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">unpack_565(i):</span>
+    <span class="s2">return </span><span class="s1">((i &gt;&gt; </span><span class="s3">11</span><span class="s1">) &amp; </span><span class="s3">0x1F</span><span class="s1">) &lt;&lt; </span><span class="s3">3</span><span class="s2">, </span><span class="s1">((i &gt;&gt; </span><span class="s3">5</span><span class="s1">) &amp; </span><span class="s3">0x3F</span><span class="s1">) &lt;&lt; </span><span class="s3">2</span><span class="s2">, </span><span class="s1">(i &amp; </span><span class="s3">0x1F</span><span class="s1">) &lt;&lt; </span><span class="s3">3</span>
+
+
+<span class="s2">def </span><span class="s1">decode_dxt1(data</span><span class="s2">, </span><span class="s1">alpha=</span><span class="s2">False</span><span class="s1">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    input: one &quot;row&quot; of data (i.e. will produce 4*width pixels) 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">blocks = len(data) // </span><span class="s3">8  </span><span class="s5"># number of blocks in row</span>
+    <span class="s1">ret = (bytearray()</span><span class="s2">, </span><span class="s1">bytearray()</span><span class="s2">, </span><span class="s1">bytearray()</span><span class="s2">, </span><span class="s1">bytearray())</span>
+
+    <span class="s2">for </span><span class="s1">block </span><span class="s2">in </span><span class="s1">range(blocks):</span>
+        <span class="s5"># Decode next 8-byte block.</span>
+        <span class="s1">idx = block * </span><span class="s3">8</span>
+        <span class="s1">color0</span><span class="s2">, </span><span class="s1">color1</span><span class="s2">, </span><span class="s1">bits = struct.unpack_from(</span><span class="s4">&quot;&lt;HHI&quot;</span><span class="s2">, </span><span class="s1">data</span><span class="s2">, </span><span class="s1">idx)</span>
+
+        <span class="s1">r0</span><span class="s2">, </span><span class="s1">g0</span><span class="s2">, </span><span class="s1">b0 = unpack_565(color0)</span>
+        <span class="s1">r1</span><span class="s2">, </span><span class="s1">g1</span><span class="s2">, </span><span class="s1">b1 = unpack_565(color1)</span>
+
+        <span class="s5"># Decode this block into 4x4 pixels</span>
+        <span class="s5"># Accumulate the results onto our 4 row accumulators</span>
+        <span class="s2">for </span><span class="s1">j </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">4</span><span class="s1">):</span>
+            <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">4</span><span class="s1">):</span>
+                <span class="s5"># get next control op and generate a pixel</span>
+
+                <span class="s1">control = bits &amp; </span><span class="s3">3</span>
+                <span class="s1">bits = bits &gt;&gt; </span><span class="s3">2</span>
+
+                <span class="s1">a = </span><span class="s3">0xFF</span>
+                <span class="s2">if </span><span class="s1">control == </span><span class="s3">0</span><span class="s1">:</span>
+                    <span class="s1">r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b = r0</span><span class="s2">, </span><span class="s1">g0</span><span class="s2">, </span><span class="s1">b0</span>
+                <span class="s2">elif </span><span class="s1">control == </span><span class="s3">1</span><span class="s1">:</span>
+                    <span class="s1">r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b = r1</span><span class="s2">, </span><span class="s1">g1</span><span class="s2">, </span><span class="s1">b1</span>
+                <span class="s2">elif </span><span class="s1">control == </span><span class="s3">2</span><span class="s1">:</span>
+                    <span class="s2">if </span><span class="s1">color0 &gt; color1:</span>
+                        <span class="s1">r = (</span><span class="s3">2 </span><span class="s1">* r0 + r1) // </span><span class="s3">3</span>
+                        <span class="s1">g = (</span><span class="s3">2 </span><span class="s1">* g0 + g1) // </span><span class="s3">3</span>
+                        <span class="s1">b = (</span><span class="s3">2 </span><span class="s1">* b0 + b1) // </span><span class="s3">3</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">r = (r0 + r1) // </span><span class="s3">2</span>
+                        <span class="s1">g = (g0 + g1) // </span><span class="s3">2</span>
+                        <span class="s1">b = (b0 + b1) // </span><span class="s3">2</span>
+                <span class="s2">elif </span><span class="s1">control == </span><span class="s3">3</span><span class="s1">:</span>
+                    <span class="s2">if </span><span class="s1">color0 &gt; color1:</span>
+                        <span class="s1">r = (</span><span class="s3">2 </span><span class="s1">* r1 + r0) // </span><span class="s3">3</span>
+                        <span class="s1">g = (</span><span class="s3">2 </span><span class="s1">* g1 + g0) // </span><span class="s3">3</span>
+                        <span class="s1">b = (</span><span class="s3">2 </span><span class="s1">* b1 + b0) // </span><span class="s3">3</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b</span><span class="s2">, </span><span class="s1">a = </span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span>
+
+                <span class="s2">if </span><span class="s1">alpha:</span>
+                    <span class="s1">ret[j].extend([r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b</span><span class="s2">, </span><span class="s1">a])</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">ret[j].extend([r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b])</span>
+
+    <span class="s2">return </span><span class="s1">ret</span>
+
+
+<span class="s2">def </span><span class="s1">decode_dxt3(data):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    input: one &quot;row&quot; of data (i.e. will produce 4*width pixels) 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">blocks = len(data) // </span><span class="s3">16  </span><span class="s5"># number of blocks in row</span>
+    <span class="s1">ret = (bytearray()</span><span class="s2">, </span><span class="s1">bytearray()</span><span class="s2">, </span><span class="s1">bytearray()</span><span class="s2">, </span><span class="s1">bytearray())</span>
+
+    <span class="s2">for </span><span class="s1">block </span><span class="s2">in </span><span class="s1">range(blocks):</span>
+        <span class="s1">idx = block * </span><span class="s3">16</span>
+        <span class="s1">block = data[idx : idx + </span><span class="s3">16</span><span class="s1">]</span>
+        <span class="s5"># Decode next 16-byte block.</span>
+        <span class="s1">bits = struct.unpack_from(</span><span class="s4">&quot;&lt;8B&quot;</span><span class="s2">, </span><span class="s1">block)</span>
+        <span class="s1">color0</span><span class="s2">, </span><span class="s1">color1 = struct.unpack_from(</span><span class="s4">&quot;&lt;HH&quot;</span><span class="s2">, </span><span class="s1">block</span><span class="s2">, </span><span class="s3">8</span><span class="s1">)</span>
+
+        <span class="s1">(code</span><span class="s2">,</span><span class="s1">) = struct.unpack_from(</span><span class="s4">&quot;&lt;I&quot;</span><span class="s2">, </span><span class="s1">block</span><span class="s2">, </span><span class="s3">12</span><span class="s1">)</span>
+
+        <span class="s1">r0</span><span class="s2">, </span><span class="s1">g0</span><span class="s2">, </span><span class="s1">b0 = unpack_565(color0)</span>
+        <span class="s1">r1</span><span class="s2">, </span><span class="s1">g1</span><span class="s2">, </span><span class="s1">b1 = unpack_565(color1)</span>
+
+        <span class="s2">for </span><span class="s1">j </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">4</span><span class="s1">):</span>
+            <span class="s1">high = </span><span class="s2">False  </span><span class="s5"># Do we want the higher bits?</span>
+            <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">4</span><span class="s1">):</span>
+                <span class="s1">alphacode_index = (</span><span class="s3">4 </span><span class="s1">* j + i) // </span><span class="s3">2</span>
+                <span class="s1">a = bits[alphacode_index]</span>
+                <span class="s2">if </span><span class="s1">high:</span>
+                    <span class="s1">high = </span><span class="s2">False</span>
+                    <span class="s1">a &gt;&gt;= </span><span class="s3">4</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">high = </span><span class="s2">True</span>
+                    <span class="s1">a &amp;= </span><span class="s3">0xF</span>
+                <span class="s1">a *= </span><span class="s3">17  </span><span class="s5"># We get a value between 0 and 15</span>
+
+                <span class="s1">color_code = (code &gt;&gt; </span><span class="s3">2 </span><span class="s1">* (</span><span class="s3">4 </span><span class="s1">* j + i)) &amp; </span><span class="s3">0x03</span>
+
+                <span class="s2">if </span><span class="s1">color_code == </span><span class="s3">0</span><span class="s1">:</span>
+                    <span class="s1">r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b = r0</span><span class="s2">, </span><span class="s1">g0</span><span class="s2">, </span><span class="s1">b0</span>
+                <span class="s2">elif </span><span class="s1">color_code == </span><span class="s3">1</span><span class="s1">:</span>
+                    <span class="s1">r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b = r1</span><span class="s2">, </span><span class="s1">g1</span><span class="s2">, </span><span class="s1">b1</span>
+                <span class="s2">elif </span><span class="s1">color_code == </span><span class="s3">2</span><span class="s1">:</span>
+                    <span class="s1">r = (</span><span class="s3">2 </span><span class="s1">* r0 + r1) // </span><span class="s3">3</span>
+                    <span class="s1">g = (</span><span class="s3">2 </span><span class="s1">* g0 + g1) // </span><span class="s3">3</span>
+                    <span class="s1">b = (</span><span class="s3">2 </span><span class="s1">* b0 + b1) // </span><span class="s3">3</span>
+                <span class="s2">elif </span><span class="s1">color_code == </span><span class="s3">3</span><span class="s1">:</span>
+                    <span class="s1">r = (</span><span class="s3">2 </span><span class="s1">* r1 + r0) // </span><span class="s3">3</span>
+                    <span class="s1">g = (</span><span class="s3">2 </span><span class="s1">* g1 + g0) // </span><span class="s3">3</span>
+                    <span class="s1">b = (</span><span class="s3">2 </span><span class="s1">* b1 + b0) // </span><span class="s3">3</span>
+
+                <span class="s1">ret[j].extend([r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b</span><span class="s2">, </span><span class="s1">a])</span>
+
+    <span class="s2">return </span><span class="s1">ret</span>
+
+
+<span class="s2">def </span><span class="s1">decode_dxt5(data):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    input: one &quot;row&quot; of data (i.e. will produce 4 * width pixels) 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">blocks = len(data) // </span><span class="s3">16  </span><span class="s5"># number of blocks in row</span>
+    <span class="s1">ret = (bytearray()</span><span class="s2">, </span><span class="s1">bytearray()</span><span class="s2">, </span><span class="s1">bytearray()</span><span class="s2">, </span><span class="s1">bytearray())</span>
+
+    <span class="s2">for </span><span class="s1">block </span><span class="s2">in </span><span class="s1">range(blocks):</span>
+        <span class="s1">idx = block * </span><span class="s3">16</span>
+        <span class="s1">block = data[idx : idx + </span><span class="s3">16</span><span class="s1">]</span>
+        <span class="s5"># Decode next 16-byte block.</span>
+        <span class="s1">a0</span><span class="s2">, </span><span class="s1">a1 = struct.unpack_from(</span><span class="s4">&quot;&lt;BB&quot;</span><span class="s2">, </span><span class="s1">block)</span>
+
+        <span class="s1">bits = struct.unpack_from(</span><span class="s4">&quot;&lt;6B&quot;</span><span class="s2">, </span><span class="s1">block</span><span class="s2">, </span><span class="s3">2</span><span class="s1">)</span>
+        <span class="s1">alphacode1 = bits[</span><span class="s3">2</span><span class="s1">] | (bits[</span><span class="s3">3</span><span class="s1">] &lt;&lt; </span><span class="s3">8</span><span class="s1">) | (bits[</span><span class="s3">4</span><span class="s1">] &lt;&lt; </span><span class="s3">16</span><span class="s1">) | (bits[</span><span class="s3">5</span><span class="s1">] &lt;&lt; </span><span class="s3">24</span><span class="s1">)</span>
+        <span class="s1">alphacode2 = bits[</span><span class="s3">0</span><span class="s1">] | (bits[</span><span class="s3">1</span><span class="s1">] &lt;&lt; </span><span class="s3">8</span><span class="s1">)</span>
+
+        <span class="s1">color0</span><span class="s2">, </span><span class="s1">color1 = struct.unpack_from(</span><span class="s4">&quot;&lt;HH&quot;</span><span class="s2">, </span><span class="s1">block</span><span class="s2">, </span><span class="s3">8</span><span class="s1">)</span>
+
+        <span class="s1">(code</span><span class="s2">,</span><span class="s1">) = struct.unpack_from(</span><span class="s4">&quot;&lt;I&quot;</span><span class="s2">, </span><span class="s1">block</span><span class="s2">, </span><span class="s3">12</span><span class="s1">)</span>
+
+        <span class="s1">r0</span><span class="s2">, </span><span class="s1">g0</span><span class="s2">, </span><span class="s1">b0 = unpack_565(color0)</span>
+        <span class="s1">r1</span><span class="s2">, </span><span class="s1">g1</span><span class="s2">, </span><span class="s1">b1 = unpack_565(color1)</span>
+
+        <span class="s2">for </span><span class="s1">j </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">4</span><span class="s1">):</span>
+            <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">4</span><span class="s1">):</span>
+                <span class="s5"># get next control op and generate a pixel</span>
+                <span class="s1">alphacode_index = </span><span class="s3">3 </span><span class="s1">* (</span><span class="s3">4 </span><span class="s1">* j + i)</span>
+
+                <span class="s2">if </span><span class="s1">alphacode_index &lt;= </span><span class="s3">12</span><span class="s1">:</span>
+                    <span class="s1">alphacode = (alphacode2 &gt;&gt; alphacode_index) &amp; </span><span class="s3">0x07</span>
+                <span class="s2">elif </span><span class="s1">alphacode_index == </span><span class="s3">15</span><span class="s1">:</span>
+                    <span class="s1">alphacode = (alphacode2 &gt;&gt; </span><span class="s3">15</span><span class="s1">) | ((alphacode1 &lt;&lt; </span><span class="s3">1</span><span class="s1">) &amp; </span><span class="s3">0x06</span><span class="s1">)</span>
+                <span class="s2">else</span><span class="s1">:  </span><span class="s5"># alphacode_index &gt;= 18 and alphacode_index &lt;= 45</span>
+                    <span class="s1">alphacode = (alphacode1 &gt;&gt; (alphacode_index - </span><span class="s3">16</span><span class="s1">)) &amp; </span><span class="s3">0x07</span>
+
+                <span class="s2">if </span><span class="s1">alphacode == </span><span class="s3">0</span><span class="s1">:</span>
+                    <span class="s1">a = a0</span>
+                <span class="s2">elif </span><span class="s1">alphacode == </span><span class="s3">1</span><span class="s1">:</span>
+                    <span class="s1">a = a1</span>
+                <span class="s2">elif </span><span class="s1">a0 &gt; a1:</span>
+                    <span class="s1">a = ((</span><span class="s3">8 </span><span class="s1">- alphacode) * a0 + (alphacode - </span><span class="s3">1</span><span class="s1">) * a1) // </span><span class="s3">7</span>
+                <span class="s2">elif </span><span class="s1">alphacode == </span><span class="s3">6</span><span class="s1">:</span>
+                    <span class="s1">a = </span><span class="s3">0</span>
+                <span class="s2">elif </span><span class="s1">alphacode == </span><span class="s3">7</span><span class="s1">:</span>
+                    <span class="s1">a = </span><span class="s3">255</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">a = ((</span><span class="s3">6 </span><span class="s1">- alphacode) * a0 + (alphacode - </span><span class="s3">1</span><span class="s1">) * a1) // </span><span class="s3">5</span>
+
+                <span class="s1">color_code = (code &gt;&gt; </span><span class="s3">2 </span><span class="s1">* (</span><span class="s3">4 </span><span class="s1">* j + i)) &amp; </span><span class="s3">0x03</span>
+
+                <span class="s2">if </span><span class="s1">color_code == </span><span class="s3">0</span><span class="s1">:</span>
+                    <span class="s1">r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b = r0</span><span class="s2">, </span><span class="s1">g0</span><span class="s2">, </span><span class="s1">b0</span>
+                <span class="s2">elif </span><span class="s1">color_code == </span><span class="s3">1</span><span class="s1">:</span>
+                    <span class="s1">r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b = r1</span><span class="s2">, </span><span class="s1">g1</span><span class="s2">, </span><span class="s1">b1</span>
+                <span class="s2">elif </span><span class="s1">color_code == </span><span class="s3">2</span><span class="s1">:</span>
+                    <span class="s1">r = (</span><span class="s3">2 </span><span class="s1">* r0 + r1) // </span><span class="s3">3</span>
+                    <span class="s1">g = (</span><span class="s3">2 </span><span class="s1">* g0 + g1) // </span><span class="s3">3</span>
+                    <span class="s1">b = (</span><span class="s3">2 </span><span class="s1">* b0 + b1) // </span><span class="s3">3</span>
+                <span class="s2">elif </span><span class="s1">color_code == </span><span class="s3">3</span><span class="s1">:</span>
+                    <span class="s1">r = (</span><span class="s3">2 </span><span class="s1">* r1 + r0) // </span><span class="s3">3</span>
+                    <span class="s1">g = (</span><span class="s3">2 </span><span class="s1">* g1 + g0) // </span><span class="s3">3</span>
+                    <span class="s1">b = (</span><span class="s3">2 </span><span class="s1">* b1 + b0) // </span><span class="s3">3</span>
+
+                <span class="s1">ret[j].extend([r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b</span><span class="s2">, </span><span class="s1">a])</span>
+
+    <span class="s2">return </span><span class="s1">ret</span>
+
+
+<span class="s2">class </span><span class="s1">BLPFormatError(NotImplementedError):</span>
+    <span class="s2">pass</span>
+
+
+<span class="s2">def </span><span class="s1">_accept(prefix):</span>
+    <span class="s2">return </span><span class="s1">prefix[:</span><span class="s3">4</span><span class="s1">] </span><span class="s2">in </span><span class="s1">(</span><span class="s6">b&quot;BLP1&quot;</span><span class="s2">, </span><span class="s6">b&quot;BLP2&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">BlpImageFile(ImageFile.ImageFile):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Blizzard Mipmap Format 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">format = </span><span class="s4">&quot;BLP&quot;</span>
+    <span class="s1">format_description = </span><span class="s4">&quot;Blizzard Mipmap Format&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+        <span class="s1">self.magic = self.fp.read(</span><span class="s3">4</span><span class="s1">)</span>
+
+        <span class="s1">self.fp.seek(</span><span class="s3">5</span><span class="s2">, </span><span class="s1">os.SEEK_CUR)</span>
+        <span class="s1">(self._blp_alpha_depth</span><span class="s2">,</span><span class="s1">) = struct.unpack(</span><span class="s4">&quot;&lt;b&quot;</span><span class="s2">, </span><span class="s1">self.fp.read(</span><span class="s3">1</span><span class="s1">))</span>
+
+        <span class="s1">self.fp.seek(</span><span class="s3">2</span><span class="s2">, </span><span class="s1">os.SEEK_CUR)</span>
+        <span class="s1">self._size = struct.unpack(</span><span class="s4">&quot;&lt;II&quot;</span><span class="s2">, </span><span class="s1">self.fp.read(</span><span class="s3">8</span><span class="s1">))</span>
+
+        <span class="s2">if </span><span class="s1">self.magic </span><span class="s2">in </span><span class="s1">(</span><span class="s6">b&quot;BLP1&quot;</span><span class="s2">, </span><span class="s6">b&quot;BLP2&quot;</span><span class="s1">):</span>
+            <span class="s1">decoder = self.magic.decode()</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">BLPFormatError(</span><span class="s4">f&quot;Bad BLP magic </span><span class="s2">{</span><span class="s1">repr(self.magic)</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+
+        <span class="s1">self.mode = </span><span class="s4">&quot;RGBA&quot; </span><span class="s2">if </span><span class="s1">self._blp_alpha_depth </span><span class="s2">else </span><span class="s4">&quot;RGB&quot;</span>
+        <span class="s1">self.tile = [(decoder</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">(self.mode</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s3">1</span><span class="s1">))]</span>
+
+
+<span class="s2">class </span><span class="s1">_BLPBaseDecoder(ImageFile.PyDecoder):</span>
+    <span class="s1">_pulls_fd = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">decode(self</span><span class="s2">, </span><span class="s1">buffer):</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">self._read_blp_header()</span>
+            <span class="s1">self._load()</span>
+        <span class="s2">except </span><span class="s1">struct.error </span><span class="s2">as </span><span class="s1">e:</span>
+            <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">&quot;Truncated BLP file&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+        <span class="s2">return </span><span class="s1">-</span><span class="s3">1</span><span class="s2">, </span><span class="s3">0</span>
+
+    <span class="s2">def </span><span class="s1">_read_blp_header(self):</span>
+        <span class="s1">self.fd.seek(</span><span class="s3">4</span><span class="s1">)</span>
+        <span class="s1">(self._blp_compression</span><span class="s2">,</span><span class="s1">) = struct.unpack(</span><span class="s4">&quot;&lt;i&quot;</span><span class="s2">, </span><span class="s1">self._safe_read(</span><span class="s3">4</span><span class="s1">))</span>
+
+        <span class="s1">(self._blp_encoding</span><span class="s2">,</span><span class="s1">) = struct.unpack(</span><span class="s4">&quot;&lt;b&quot;</span><span class="s2">, </span><span class="s1">self._safe_read(</span><span class="s3">1</span><span class="s1">))</span>
+        <span class="s1">(self._blp_alpha_depth</span><span class="s2">,</span><span class="s1">) = struct.unpack(</span><span class="s4">&quot;&lt;b&quot;</span><span class="s2">, </span><span class="s1">self._safe_read(</span><span class="s3">1</span><span class="s1">))</span>
+        <span class="s1">(self._blp_alpha_encoding</span><span class="s2">,</span><span class="s1">) = struct.unpack(</span><span class="s4">&quot;&lt;b&quot;</span><span class="s2">, </span><span class="s1">self._safe_read(</span><span class="s3">1</span><span class="s1">))</span>
+        <span class="s1">self.fd.seek(</span><span class="s3">1</span><span class="s2">, </span><span class="s1">os.SEEK_CUR)  </span><span class="s5"># mips</span>
+
+        <span class="s1">self.size = struct.unpack(</span><span class="s4">&quot;&lt;II&quot;</span><span class="s2">, </span><span class="s1">self._safe_read(</span><span class="s3">8</span><span class="s1">))</span>
+
+        <span class="s2">if </span><span class="s1">isinstance(self</span><span class="s2">, </span><span class="s1">BLP1Decoder):</span>
+            <span class="s5"># Only present for BLP1</span>
+            <span class="s1">(self._blp_encoding</span><span class="s2">,</span><span class="s1">) = struct.unpack(</span><span class="s4">&quot;&lt;i&quot;</span><span class="s2">, </span><span class="s1">self._safe_read(</span><span class="s3">4</span><span class="s1">))</span>
+            <span class="s1">self.fd.seek(</span><span class="s3">4</span><span class="s2">, </span><span class="s1">os.SEEK_CUR)  </span><span class="s5"># subtype</span>
+
+        <span class="s1">self._blp_offsets = struct.unpack(</span><span class="s4">&quot;&lt;16I&quot;</span><span class="s2">, </span><span class="s1">self._safe_read(</span><span class="s3">16 </span><span class="s1">* </span><span class="s3">4</span><span class="s1">))</span>
+        <span class="s1">self._blp_lengths = struct.unpack(</span><span class="s4">&quot;&lt;16I&quot;</span><span class="s2">, </span><span class="s1">self._safe_read(</span><span class="s3">16 </span><span class="s1">* </span><span class="s3">4</span><span class="s1">))</span>
+
+    <span class="s2">def </span><span class="s1">_safe_read(self</span><span class="s2">, </span><span class="s1">length):</span>
+        <span class="s2">return </span><span class="s1">ImageFile._safe_read(self.fd</span><span class="s2">, </span><span class="s1">length)</span>
+
+    <span class="s2">def </span><span class="s1">_read_palette(self):</span>
+        <span class="s1">ret = []</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">256</span><span class="s1">):</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">b</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">r</span><span class="s2">, </span><span class="s1">a = struct.unpack(</span><span class="s4">&quot;&lt;4B&quot;</span><span class="s2">, </span><span class="s1">self._safe_read(</span><span class="s3">4</span><span class="s1">))</span>
+            <span class="s2">except </span><span class="s1">struct.error:</span>
+                <span class="s2">break</span>
+            <span class="s1">ret.append((b</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">r</span><span class="s2">, </span><span class="s1">a))</span>
+        <span class="s2">return </span><span class="s1">ret</span>
+
+    <span class="s2">def </span><span class="s1">_read_bgra(self</span><span class="s2">, </span><span class="s1">palette):</span>
+        <span class="s1">data = bytearray()</span>
+        <span class="s1">_data = BytesIO(self._safe_read(self._blp_lengths[</span><span class="s3">0</span><span class="s1">]))</span>
+        <span class="s2">while True</span><span class="s1">:</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">(offset</span><span class="s2">,</span><span class="s1">) = struct.unpack(</span><span class="s4">&quot;&lt;B&quot;</span><span class="s2">, </span><span class="s1">_data.read(</span><span class="s3">1</span><span class="s1">))</span>
+            <span class="s2">except </span><span class="s1">struct.error:</span>
+                <span class="s2">break</span>
+            <span class="s1">b</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">r</span><span class="s2">, </span><span class="s1">a = palette[offset]</span>
+            <span class="s1">d = (r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b)</span>
+            <span class="s2">if </span><span class="s1">self._blp_alpha_depth:</span>
+                <span class="s1">d += (a</span><span class="s2">,</span><span class="s1">)</span>
+            <span class="s1">data.extend(d)</span>
+        <span class="s2">return </span><span class="s1">data</span>
+
+
+<span class="s2">class </span><span class="s1">BLP1Decoder(_BLPBaseDecoder):</span>
+    <span class="s2">def </span><span class="s1">_load(self):</span>
+        <span class="s2">if </span><span class="s1">self._blp_compression == Format.JPEG:</span>
+            <span class="s1">self._decode_jpeg_stream()</span>
+
+        <span class="s2">elif </span><span class="s1">self._blp_compression == </span><span class="s3">1</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">self._blp_encoding </span><span class="s2">in </span><span class="s1">(</span><span class="s3">4</span><span class="s2">, </span><span class="s3">5</span><span class="s1">):</span>
+                <span class="s1">palette = self._read_palette()</span>
+                <span class="s1">data = self._read_bgra(palette)</span>
+                <span class="s1">self.set_as_raw(bytes(data))</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">BLPFormatError(</span>
+                    <span class="s4">f&quot;Unsupported BLP encoding </span><span class="s2">{</span><span class="s1">repr(self._blp_encoding)</span><span class="s2">}</span><span class="s4">&quot;</span>
+                <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">BLPFormatError(</span>
+                <span class="s4">f&quot;Unsupported BLP compression </span><span class="s2">{</span><span class="s1">repr(self._blp_encoding)</span><span class="s2">}</span><span class="s4">&quot;</span>
+            <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_decode_jpeg_stream(self):</span>
+        <span class="s2">from </span><span class="s1">.JpegImagePlugin </span><span class="s2">import </span><span class="s1">JpegImageFile</span>
+
+        <span class="s1">(jpeg_header_size</span><span class="s2">,</span><span class="s1">) = struct.unpack(</span><span class="s4">&quot;&lt;I&quot;</span><span class="s2">, </span><span class="s1">self._safe_read(</span><span class="s3">4</span><span class="s1">))</span>
+        <span class="s1">jpeg_header = self._safe_read(jpeg_header_size)</span>
+        <span class="s1">self._safe_read(self._blp_offsets[</span><span class="s3">0</span><span class="s1">] - self.fd.tell())  </span><span class="s5"># What IS this?</span>
+        <span class="s1">data = self._safe_read(self._blp_lengths[</span><span class="s3">0</span><span class="s1">])</span>
+        <span class="s1">data = jpeg_header + data</span>
+        <span class="s1">data = BytesIO(data)</span>
+        <span class="s1">image = JpegImageFile(data)</span>
+        <span class="s1">Image._decompression_bomb_check(image.size)</span>
+        <span class="s1">r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b = image.convert(</span><span class="s4">&quot;RGB&quot;</span><span class="s1">).split()</span>
+        <span class="s1">image = Image.merge(</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s1">(b</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">r))</span>
+        <span class="s1">self.set_as_raw(image.tobytes())</span>
+
+
+<span class="s2">class </span><span class="s1">BLP2Decoder(_BLPBaseDecoder):</span>
+    <span class="s2">def </span><span class="s1">_load(self):</span>
+        <span class="s1">palette = self._read_palette()</span>
+
+        <span class="s1">self.fd.seek(self._blp_offsets[</span><span class="s3">0</span><span class="s1">])</span>
+
+        <span class="s2">if </span><span class="s1">self._blp_compression == </span><span class="s3">1</span><span class="s1">:</span>
+            <span class="s5"># Uncompressed or DirectX compression</span>
+
+            <span class="s2">if </span><span class="s1">self._blp_encoding == Encoding.UNCOMPRESSED:</span>
+                <span class="s1">data = self._read_bgra(palette)</span>
+
+            <span class="s2">elif </span><span class="s1">self._blp_encoding == Encoding.DXT:</span>
+                <span class="s1">data = bytearray()</span>
+                <span class="s2">if </span><span class="s1">self._blp_alpha_encoding == AlphaEncoding.DXT1:</span>
+                    <span class="s1">linesize = (self.size[</span><span class="s3">0</span><span class="s1">] + </span><span class="s3">3</span><span class="s1">) // </span><span class="s3">4 </span><span class="s1">* </span><span class="s3">8</span>
+                    <span class="s2">for </span><span class="s1">yb </span><span class="s2">in </span><span class="s1">range((self.size[</span><span class="s3">1</span><span class="s1">] + </span><span class="s3">3</span><span class="s1">) // </span><span class="s3">4</span><span class="s1">):</span>
+                        <span class="s2">for </span><span class="s1">d </span><span class="s2">in </span><span class="s1">decode_dxt1(</span>
+                            <span class="s1">self._safe_read(linesize)</span><span class="s2">, </span><span class="s1">alpha=bool(self._blp_alpha_depth)</span>
+                        <span class="s1">):</span>
+                            <span class="s1">data += d</span>
+
+                <span class="s2">elif </span><span class="s1">self._blp_alpha_encoding == AlphaEncoding.DXT3:</span>
+                    <span class="s1">linesize = (self.size[</span><span class="s3">0</span><span class="s1">] + </span><span class="s3">3</span><span class="s1">) // </span><span class="s3">4 </span><span class="s1">* </span><span class="s3">16</span>
+                    <span class="s2">for </span><span class="s1">yb </span><span class="s2">in </span><span class="s1">range((self.size[</span><span class="s3">1</span><span class="s1">] + </span><span class="s3">3</span><span class="s1">) // </span><span class="s3">4</span><span class="s1">):</span>
+                        <span class="s2">for </span><span class="s1">d </span><span class="s2">in </span><span class="s1">decode_dxt3(self._safe_read(linesize)):</span>
+                            <span class="s1">data += d</span>
+
+                <span class="s2">elif </span><span class="s1">self._blp_alpha_encoding == AlphaEncoding.DXT5:</span>
+                    <span class="s1">linesize = (self.size[</span><span class="s3">0</span><span class="s1">] + </span><span class="s3">3</span><span class="s1">) // </span><span class="s3">4 </span><span class="s1">* </span><span class="s3">16</span>
+                    <span class="s2">for </span><span class="s1">yb </span><span class="s2">in </span><span class="s1">range((self.size[</span><span class="s3">1</span><span class="s1">] + </span><span class="s3">3</span><span class="s1">) // </span><span class="s3">4</span><span class="s1">):</span>
+                        <span class="s2">for </span><span class="s1">d </span><span class="s2">in </span><span class="s1">decode_dxt5(self._safe_read(linesize)):</span>
+                            <span class="s1">data += d</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">raise </span><span class="s1">BLPFormatError(</span>
+                        <span class="s4">f&quot;Unsupported alpha encoding </span><span class="s2">{</span><span class="s1">repr(self._blp_alpha_encoding)</span><span class="s2">}</span><span class="s4">&quot;</span>
+                    <span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">BLPFormatError(</span><span class="s4">f&quot;Unknown BLP encoding </span><span class="s2">{</span><span class="s1">repr(self._blp_encoding)</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">BLPFormatError(</span>
+                <span class="s4">f&quot;Unknown BLP compression </span><span class="s2">{</span><span class="s1">repr(self._blp_compression)</span><span class="s2">}</span><span class="s4">&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s1">self.set_as_raw(bytes(data))</span>
+
+
+<span class="s2">class </span><span class="s1">BLPEncoder(ImageFile.PyEncoder):</span>
+    <span class="s1">_pushes_fd = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">_write_palette(self):</span>
+        <span class="s1">data = </span><span class="s6">b&quot;&quot;</span>
+        <span class="s1">palette = self.im.getpalette(</span><span class="s4">&quot;RGBA&quot;</span><span class="s2">, </span><span class="s4">&quot;RGBA&quot;</span><span class="s1">)</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">256</span><span class="s1">):</span>
+            <span class="s1">r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b</span><span class="s2">, </span><span class="s1">a = palette[i * </span><span class="s3">4 </span><span class="s1">: (i + </span><span class="s3">1</span><span class="s1">) * </span><span class="s3">4</span><span class="s1">]</span>
+            <span class="s1">data += struct.pack(</span><span class="s4">&quot;&lt;4B&quot;</span><span class="s2">, </span><span class="s1">b</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">r</span><span class="s2">, </span><span class="s1">a)</span>
+        <span class="s2">return </span><span class="s1">data</span>
+
+    <span class="s2">def </span><span class="s1">encode(self</span><span class="s2">, </span><span class="s1">bufsize):</span>
+        <span class="s1">palette_data = self._write_palette()</span>
+
+        <span class="s1">offset = </span><span class="s3">20 </span><span class="s1">+ </span><span class="s3">16 </span><span class="s1">* </span><span class="s3">4 </span><span class="s1">* </span><span class="s3">2 </span><span class="s1">+ len(palette_data)</span>
+        <span class="s1">data = struct.pack(</span><span class="s4">&quot;&lt;16I&quot;</span><span class="s2">, </span><span class="s1">offset</span><span class="s2">, </span><span class="s1">*((</span><span class="s3">0</span><span class="s2">,</span><span class="s1">) * </span><span class="s3">15</span><span class="s1">))</span>
+
+        <span class="s1">w</span><span class="s2">, </span><span class="s1">h = self.im.size</span>
+        <span class="s1">data += struct.pack(</span><span class="s4">&quot;&lt;16I&quot;</span><span class="s2">, </span><span class="s1">w * h</span><span class="s2">, </span><span class="s1">*((</span><span class="s3">0</span><span class="s2">,</span><span class="s1">) * </span><span class="s3">15</span><span class="s1">))</span>
+
+        <span class="s1">data += palette_data</span>
+
+        <span class="s2">for </span><span class="s1">y </span><span class="s2">in </span><span class="s1">range(h):</span>
+            <span class="s2">for </span><span class="s1">x </span><span class="s2">in </span><span class="s1">range(w):</span>
+                <span class="s1">data += struct.pack(</span><span class="s4">&quot;&lt;B&quot;</span><span class="s2">, </span><span class="s1">self.im.getpixel((x</span><span class="s2">, </span><span class="s1">y)))</span>
+
+        <span class="s2">return </span><span class="s1">len(data)</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">data</span>
+
+
+<span class="s2">def </span><span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename</span><span class="s2">, </span><span class="s1">save_all=</span><span class="s2">False</span><span class="s1">):</span>
+    <span class="s2">if </span><span class="s1">im.mode != </span><span class="s4">&quot;P&quot;</span><span class="s1">:</span>
+        <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;Unsupported BLP image mode&quot;</span><span class="s1">)</span>
+
+    <span class="s1">magic = </span><span class="s6">b&quot;BLP1&quot; </span><span class="s2">if </span><span class="s1">im.encoderinfo.get(</span><span class="s4">&quot;blp_version&quot;</span><span class="s1">) == </span><span class="s4">&quot;BLP1&quot; </span><span class="s2">else </span><span class="s6">b&quot;BLP2&quot;</span>
+    <span class="s1">fp.write(magic)</span>
+
+    <span class="s1">fp.write(struct.pack(</span><span class="s4">&quot;&lt;i&quot;</span><span class="s2">, </span><span class="s3">1</span><span class="s1">))  </span><span class="s5"># Uncompressed or DirectX compression</span>
+    <span class="s1">fp.write(struct.pack(</span><span class="s4">&quot;&lt;b&quot;</span><span class="s2">, </span><span class="s1">Encoding.UNCOMPRESSED))</span>
+    <span class="s1">fp.write(struct.pack(</span><span class="s4">&quot;&lt;b&quot;</span><span class="s2">, </span><span class="s3">1 </span><span class="s2">if </span><span class="s1">im.palette.mode == </span><span class="s4">&quot;RGBA&quot; </span><span class="s2">else </span><span class="s3">0</span><span class="s1">))</span>
+    <span class="s1">fp.write(struct.pack(</span><span class="s4">&quot;&lt;b&quot;</span><span class="s2">, </span><span class="s3">0</span><span class="s1">))  </span><span class="s5"># alpha encoding</span>
+    <span class="s1">fp.write(struct.pack(</span><span class="s4">&quot;&lt;b&quot;</span><span class="s2">, </span><span class="s3">0</span><span class="s1">))  </span><span class="s5"># mips</span>
+    <span class="s1">fp.write(struct.pack(</span><span class="s4">&quot;&lt;II&quot;</span><span class="s2">, </span><span class="s1">*im.size))</span>
+    <span class="s2">if </span><span class="s1">magic == </span><span class="s6">b&quot;BLP1&quot;</span><span class="s1">:</span>
+        <span class="s1">fp.write(struct.pack(</span><span class="s4">&quot;&lt;i&quot;</span><span class="s2">, </span><span class="s3">5</span><span class="s1">))</span>
+        <span class="s1">fp.write(struct.pack(</span><span class="s4">&quot;&lt;i&quot;</span><span class="s2">, </span><span class="s3">0</span><span class="s1">))</span>
+
+    <span class="s1">ImageFile._save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">[(</span><span class="s4">&quot;BLP&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s1">) + im.size</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">im.mode)])</span>
+
+
+<span class="s1">Image.register_open(BlpImageFile.format</span><span class="s2">, </span><span class="s1">BlpImageFile</span><span class="s2">, </span><span class="s1">_accept)</span>
+<span class="s1">Image.register_extension(BlpImageFile.format</span><span class="s2">, </span><span class="s4">&quot;.blp&quot;</span><span class="s1">)</span>
+<span class="s1">Image.register_decoder(</span><span class="s4">&quot;BLP1&quot;</span><span class="s2">, </span><span class="s1">BLP1Decoder)</span>
+<span class="s1">Image.register_decoder(</span><span class="s4">&quot;BLP2&quot;</span><span class="s2">, </span><span class="s1">BLP2Decoder)</span>
+
+<span class="s1">Image.register_save(BlpImageFile.format</span><span class="s2">, </span><span class="s1">_save)</span>
+<span class="s1">Image.register_encoder(</span><span class="s4">&quot;BLP&quot;</span><span class="s2">, </span><span class="s1">BLPEncoder)</span>
+</pre>
+</body>
+</html>

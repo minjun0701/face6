@@ -1,0 +1,395 @@
+<html>
+<head>
+<title>ImImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6a8759;}
+.s4 { color: #6897bb;}
+.s5 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># IFUNC IM file handling for PIL</span>
+<span class="s0">#</span>
+<span class="s0"># history:</span>
+<span class="s0"># 1995-09-01 fl   Created.</span>
+<span class="s0"># 1997-01-03 fl   Save palette images</span>
+<span class="s0"># 1997-01-08 fl   Added sequence support</span>
+<span class="s0"># 1997-01-23 fl   Added P and RGB save support</span>
+<span class="s0"># 1997-05-31 fl   Read floating point images</span>
+<span class="s0"># 1997-06-22 fl   Save floating point images</span>
+<span class="s0"># 1997-08-27 fl   Read and save 1-bit images</span>
+<span class="s0"># 1998-06-25 fl   Added support for RGB+LUT images</span>
+<span class="s0"># 1998-07-02 fl   Added support for YCC images</span>
+<span class="s0"># 1998-07-15 fl   Renamed offset attribute to avoid name clash</span>
+<span class="s0"># 1998-12-29 fl   Added I;16 support</span>
+<span class="s0"># 2001-02-17 fl   Use 're' instead of 'regex' (Python 2.1) (0.7)</span>
+<span class="s0"># 2003-09-26 fl   Added LA/PA support</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2003 by Secret Labs AB.</span>
+<span class="s0"># Copyright (c) 1995-2001 by Fredrik Lundh.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">re</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span><span class="s2">, </span><span class="s1">ImagePalette</span>
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Standard tags</span>
+
+<span class="s1">COMMENT = </span><span class="s3">&quot;Comment&quot;</span>
+<span class="s1">DATE = </span><span class="s3">&quot;Date&quot;</span>
+<span class="s1">EQUIPMENT = </span><span class="s3">&quot;Digitalization equipment&quot;</span>
+<span class="s1">FRAMES = </span><span class="s3">&quot;File size (no of images)&quot;</span>
+<span class="s1">LUT = </span><span class="s3">&quot;Lut&quot;</span>
+<span class="s1">NAME = </span><span class="s3">&quot;Name&quot;</span>
+<span class="s1">SCALE = </span><span class="s3">&quot;Scale (x,y)&quot;</span>
+<span class="s1">SIZE = </span><span class="s3">&quot;Image size (x*y)&quot;</span>
+<span class="s1">MODE = </span><span class="s3">&quot;Image type&quot;</span>
+
+<span class="s1">TAGS = {</span>
+    <span class="s1">COMMENT: </span><span class="s4">0</span><span class="s2">,</span>
+    <span class="s1">DATE: </span><span class="s4">0</span><span class="s2">,</span>
+    <span class="s1">EQUIPMENT: </span><span class="s4">0</span><span class="s2">,</span>
+    <span class="s1">FRAMES: </span><span class="s4">0</span><span class="s2">,</span>
+    <span class="s1">LUT: </span><span class="s4">0</span><span class="s2">,</span>
+    <span class="s1">NAME: </span><span class="s4">0</span><span class="s2">,</span>
+    <span class="s1">SCALE: </span><span class="s4">0</span><span class="s2">,</span>
+    <span class="s1">SIZE: </span><span class="s4">0</span><span class="s2">,</span>
+    <span class="s1">MODE: </span><span class="s4">0</span><span class="s2">,</span>
+<span class="s1">}</span>
+
+<span class="s1">OPEN = {</span>
+    <span class="s0"># ifunc93/p3cfunc formats</span>
+    <span class="s3">&quot;0 1 image&quot;</span><span class="s1">: (</span><span class="s3">&quot;1&quot;</span><span class="s2">, </span><span class="s3">&quot;1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;L 1 image&quot;</span><span class="s1">: (</span><span class="s3">&quot;1&quot;</span><span class="s2">, </span><span class="s3">&quot;1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;Greyscale image&quot;</span><span class="s1">: (</span><span class="s3">&quot;L&quot;</span><span class="s2">, </span><span class="s3">&quot;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;Grayscale image&quot;</span><span class="s1">: (</span><span class="s3">&quot;L&quot;</span><span class="s2">, </span><span class="s3">&quot;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;RGB image&quot;</span><span class="s1">: (</span><span class="s3">&quot;RGB&quot;</span><span class="s2">, </span><span class="s3">&quot;RGB;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;RLB image&quot;</span><span class="s1">: (</span><span class="s3">&quot;RGB&quot;</span><span class="s2">, </span><span class="s3">&quot;RLB&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;RYB image&quot;</span><span class="s1">: (</span><span class="s3">&quot;RGB&quot;</span><span class="s2">, </span><span class="s3">&quot;RLB&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;B1 image&quot;</span><span class="s1">: (</span><span class="s3">&quot;1&quot;</span><span class="s2">, </span><span class="s3">&quot;1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;B2 image&quot;</span><span class="s1">: (</span><span class="s3">&quot;P&quot;</span><span class="s2">, </span><span class="s3">&quot;P;2&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;B4 image&quot;</span><span class="s1">: (</span><span class="s3">&quot;P&quot;</span><span class="s2">, </span><span class="s3">&quot;P;4&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;X 24 image&quot;</span><span class="s1">: (</span><span class="s3">&quot;RGB&quot;</span><span class="s2">, </span><span class="s3">&quot;RGB&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;L 32 S image&quot;</span><span class="s1">: (</span><span class="s3">&quot;I&quot;</span><span class="s2">, </span><span class="s3">&quot;I;32&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;L 32 F image&quot;</span><span class="s1">: (</span><span class="s3">&quot;F&quot;</span><span class="s2">, </span><span class="s3">&quot;F;32&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s0"># old p3cfunc formats</span>
+    <span class="s3">&quot;RGB3 image&quot;</span><span class="s1">: (</span><span class="s3">&quot;RGB&quot;</span><span class="s2">, </span><span class="s3">&quot;RGB;T&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;RYB3 image&quot;</span><span class="s1">: (</span><span class="s3">&quot;RGB&quot;</span><span class="s2">, </span><span class="s3">&quot;RYB;T&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s0"># extensions</span>
+    <span class="s3">&quot;LA image&quot;</span><span class="s1">: (</span><span class="s3">&quot;LA&quot;</span><span class="s2">, </span><span class="s3">&quot;LA;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;PA image&quot;</span><span class="s1">: (</span><span class="s3">&quot;LA&quot;</span><span class="s2">, </span><span class="s3">&quot;PA;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;RGBA image&quot;</span><span class="s1">: (</span><span class="s3">&quot;RGBA&quot;</span><span class="s2">, </span><span class="s3">&quot;RGBA;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;RGBX image&quot;</span><span class="s1">: (</span><span class="s3">&quot;RGBX&quot;</span><span class="s2">, </span><span class="s3">&quot;RGBX;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;CMYK image&quot;</span><span class="s1">: (</span><span class="s3">&quot;CMYK&quot;</span><span class="s2">, </span><span class="s3">&quot;CMYK;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;YCC image&quot;</span><span class="s1">: (</span><span class="s3">&quot;YCbCr&quot;</span><span class="s2">, </span><span class="s3">&quot;YCbCr;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+<span class="s1">}</span>
+
+<span class="s0"># ifunc95 extensions</span>
+<span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">[</span><span class="s3">&quot;8&quot;</span><span class="s2">, </span><span class="s3">&quot;8S&quot;</span><span class="s2">, </span><span class="s3">&quot;16&quot;</span><span class="s2">, </span><span class="s3">&quot;16S&quot;</span><span class="s2">, </span><span class="s3">&quot;32&quot;</span><span class="s2">, </span><span class="s3">&quot;32F&quot;</span><span class="s1">]:</span>
+    <span class="s1">OPEN[</span><span class="s3">f&quot;L </span><span class="s2">{</span><span class="s1">i</span><span class="s2">} </span><span class="s3">image&quot;</span><span class="s1">] = (</span><span class="s3">&quot;F&quot;</span><span class="s2">, </span><span class="s3">f&quot;F;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+    <span class="s1">OPEN[</span><span class="s3">f&quot;L*</span><span class="s2">{</span><span class="s1">i</span><span class="s2">} </span><span class="s3">image&quot;</span><span class="s1">] = (</span><span class="s3">&quot;F&quot;</span><span class="s2">, </span><span class="s3">f&quot;F;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+<span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">[</span><span class="s3">&quot;16&quot;</span><span class="s2">, </span><span class="s3">&quot;16L&quot;</span><span class="s2">, </span><span class="s3">&quot;16B&quot;</span><span class="s1">]:</span>
+    <span class="s1">OPEN[</span><span class="s3">f&quot;L </span><span class="s2">{</span><span class="s1">i</span><span class="s2">} </span><span class="s3">image&quot;</span><span class="s1">] = (</span><span class="s3">f&quot;I;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s3">&quot;</span><span class="s2">, </span><span class="s3">f&quot;I;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+    <span class="s1">OPEN[</span><span class="s3">f&quot;L*</span><span class="s2">{</span><span class="s1">i</span><span class="s2">} </span><span class="s3">image&quot;</span><span class="s1">] = (</span><span class="s3">f&quot;I;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s3">&quot;</span><span class="s2">, </span><span class="s3">f&quot;I;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+<span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">[</span><span class="s3">&quot;32S&quot;</span><span class="s1">]:</span>
+    <span class="s1">OPEN[</span><span class="s3">f&quot;L </span><span class="s2">{</span><span class="s1">i</span><span class="s2">} </span><span class="s3">image&quot;</span><span class="s1">] = (</span><span class="s3">&quot;I&quot;</span><span class="s2">, </span><span class="s3">f&quot;I;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+    <span class="s1">OPEN[</span><span class="s3">f&quot;L*</span><span class="s2">{</span><span class="s1">i</span><span class="s2">} </span><span class="s3">image&quot;</span><span class="s1">] = (</span><span class="s3">&quot;I&quot;</span><span class="s2">, </span><span class="s3">f&quot;I;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+<span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">2</span><span class="s2">, </span><span class="s4">33</span><span class="s1">):</span>
+    <span class="s1">OPEN[</span><span class="s3">f&quot;L*</span><span class="s2">{</span><span class="s1">i</span><span class="s2">} </span><span class="s3">image&quot;</span><span class="s1">] = (</span><span class="s3">&quot;F&quot;</span><span class="s2">, </span><span class="s3">f&quot;F;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Read IM directory</span>
+
+<span class="s1">split = re.compile(</span><span class="s5">rb&quot;^([A-Za-z][^:]*):[ \t]*(.*)[ \t]*$&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">number(s):</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">int(s)</span>
+    <span class="s2">except </span><span class="s1">ValueError:</span>
+        <span class="s2">return </span><span class="s1">float(s)</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for the IFUNC IM file format.</span>
+
+
+<span class="s2">class </span><span class="s1">ImImageFile(ImageFile.ImageFile):</span>
+
+    <span class="s1">format = </span><span class="s3">&quot;IM&quot;</span>
+    <span class="s1">format_description = </span><span class="s3">&quot;IFUNC Image Memory&quot;</span>
+    <span class="s1">_close_exclusive_fp_after_loading = </span><span class="s2">False</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+
+        <span class="s0"># Quick rejection: if there's not an LF among the first</span>
+        <span class="s0"># 100 bytes, this is (probably) not a text header.</span>
+
+        <span class="s2">if </span><span class="s5">b&quot;</span><span class="s2">\n</span><span class="s5">&quot; </span><span class="s2">not in </span><span class="s1">self.fp.read(</span><span class="s4">100</span><span class="s1">):</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s3">&quot;not an IM file&quot;</span><span class="s1">)</span>
+        <span class="s1">self.fp.seek(</span><span class="s4">0</span><span class="s1">)</span>
+
+        <span class="s1">n = </span><span class="s4">0</span>
+
+        <span class="s0"># Default values</span>
+        <span class="s1">self.info[MODE] = </span><span class="s3">&quot;L&quot;</span>
+        <span class="s1">self.info[SIZE] = (</span><span class="s4">512</span><span class="s2">, </span><span class="s4">512</span><span class="s1">)</span>
+        <span class="s1">self.info[FRAMES] = </span><span class="s4">1</span>
+
+        <span class="s1">self.rawmode = </span><span class="s3">&quot;L&quot;</span>
+
+        <span class="s2">while True</span><span class="s1">:</span>
+
+            <span class="s1">s = self.fp.read(</span><span class="s4">1</span><span class="s1">)</span>
+
+            <span class="s0"># Some versions of IFUNC uses \n\r instead of \r\n...</span>
+            <span class="s2">if </span><span class="s1">s == </span><span class="s5">b&quot;</span><span class="s2">\r</span><span class="s5">&quot;</span><span class="s1">:</span>
+                <span class="s2">continue</span>
+
+            <span class="s2">if not </span><span class="s1">s </span><span class="s2">or </span><span class="s1">s == </span><span class="s5">b&quot;</span><span class="s2">\0</span><span class="s5">&quot; </span><span class="s2">or </span><span class="s1">s == </span><span class="s5">b&quot;</span><span class="s2">\x1A</span><span class="s5">&quot;</span><span class="s1">:</span>
+                <span class="s2">break</span>
+
+            <span class="s0"># FIXME: this may read whole file if not a text file</span>
+            <span class="s1">s = s + self.fp.readline()</span>
+
+            <span class="s2">if </span><span class="s1">len(s) &gt; </span><span class="s4">100</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s3">&quot;not an IM file&quot;</span><span class="s1">)</span>
+
+            <span class="s2">if </span><span class="s1">s[-</span><span class="s4">2</span><span class="s1">:] == </span><span class="s5">b&quot;</span><span class="s2">\r\n</span><span class="s5">&quot;</span><span class="s1">:</span>
+                <span class="s1">s = s[:-</span><span class="s4">2</span><span class="s1">]</span>
+            <span class="s2">elif </span><span class="s1">s[-</span><span class="s4">1</span><span class="s1">:] == </span><span class="s5">b&quot;</span><span class="s2">\n</span><span class="s5">&quot;</span><span class="s1">:</span>
+                <span class="s1">s = s[:-</span><span class="s4">1</span><span class="s1">]</span>
+
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">m = split.match(s)</span>
+            <span class="s2">except </span><span class="s1">re.error </span><span class="s2">as </span><span class="s1">e:</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s3">&quot;not an IM file&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+
+            <span class="s2">if </span><span class="s1">m:</span>
+
+                <span class="s1">k</span><span class="s2">, </span><span class="s1">v = m.group(</span><span class="s4">1</span><span class="s2">, </span><span class="s4">2</span><span class="s1">)</span>
+
+                <span class="s0"># Don't know if this is the correct encoding,</span>
+                <span class="s0"># but a decent guess (I guess)</span>
+                <span class="s1">k = k.decode(</span><span class="s3">&quot;latin-1&quot;</span><span class="s2">, </span><span class="s3">&quot;replace&quot;</span><span class="s1">)</span>
+                <span class="s1">v = v.decode(</span><span class="s3">&quot;latin-1&quot;</span><span class="s2">, </span><span class="s3">&quot;replace&quot;</span><span class="s1">)</span>
+
+                <span class="s0"># Convert value as appropriate</span>
+                <span class="s2">if </span><span class="s1">k </span><span class="s2">in </span><span class="s1">[FRAMES</span><span class="s2">, </span><span class="s1">SCALE</span><span class="s2">, </span><span class="s1">SIZE]:</span>
+                    <span class="s1">v = v.replace(</span><span class="s3">&quot;*&quot;</span><span class="s2">, </span><span class="s3">&quot;,&quot;</span><span class="s1">)</span>
+                    <span class="s1">v = tuple(map(number</span><span class="s2">, </span><span class="s1">v.split(</span><span class="s3">&quot;,&quot;</span><span class="s1">)))</span>
+                    <span class="s2">if </span><span class="s1">len(v) == </span><span class="s4">1</span><span class="s1">:</span>
+                        <span class="s1">v = v[</span><span class="s4">0</span><span class="s1">]</span>
+                <span class="s2">elif </span><span class="s1">k == MODE </span><span class="s2">and </span><span class="s1">v </span><span class="s2">in </span><span class="s1">OPEN:</span>
+                    <span class="s1">v</span><span class="s2">, </span><span class="s1">self.rawmode = OPEN[v]</span>
+
+                <span class="s0"># Add to dictionary. Note that COMMENT tags are</span>
+                <span class="s0"># combined into a list of strings.</span>
+                <span class="s2">if </span><span class="s1">k == COMMENT:</span>
+                    <span class="s2">if </span><span class="s1">k </span><span class="s2">in </span><span class="s1">self.info:</span>
+                        <span class="s1">self.info[k].append(v)</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">self.info[k] = [v]</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">self.info[k] = v</span>
+
+                <span class="s2">if </span><span class="s1">k </span><span class="s2">in </span><span class="s1">TAGS:</span>
+                    <span class="s1">n += </span><span class="s4">1</span>
+
+            <span class="s2">else</span><span class="s1">:</span>
+
+                <span class="s2">raise </span><span class="s1">SyntaxError(</span>
+                    <span class="s3">&quot;Syntax error in IM header: &quot; </span><span class="s1">+ s.decode(</span><span class="s3">&quot;ascii&quot;</span><span class="s2">, </span><span class="s3">&quot;replace&quot;</span><span class="s1">)</span>
+                <span class="s1">)</span>
+
+        <span class="s2">if not </span><span class="s1">n:</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s3">&quot;Not an IM file&quot;</span><span class="s1">)</span>
+
+        <span class="s0"># Basic attributes</span>
+        <span class="s1">self._size = self.info[SIZE]</span>
+        <span class="s1">self.mode = self.info[MODE]</span>
+
+        <span class="s0"># Skip forward to start of image data</span>
+        <span class="s2">while </span><span class="s1">s </span><span class="s2">and </span><span class="s1">s[:</span><span class="s4">1</span><span class="s1">] != </span><span class="s5">b&quot;</span><span class="s2">\x1A</span><span class="s5">&quot;</span><span class="s1">:</span>
+            <span class="s1">s = self.fp.read(</span><span class="s4">1</span><span class="s1">)</span>
+        <span class="s2">if not </span><span class="s1">s:</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s3">&quot;File truncated&quot;</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">LUT </span><span class="s2">in </span><span class="s1">self.info:</span>
+            <span class="s0"># convert lookup table to palette or lut attribute</span>
+            <span class="s1">palette = self.fp.read(</span><span class="s4">768</span><span class="s1">)</span>
+            <span class="s1">greyscale = </span><span class="s4">1  </span><span class="s0"># greyscale palette</span>
+            <span class="s1">linear = </span><span class="s4">1  </span><span class="s0"># linear greyscale palette</span>
+            <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">256</span><span class="s1">):</span>
+                <span class="s2">if </span><span class="s1">palette[i] == palette[i + </span><span class="s4">256</span><span class="s1">] == palette[i + </span><span class="s4">512</span><span class="s1">]:</span>
+                    <span class="s2">if </span><span class="s1">palette[i] != i:</span>
+                        <span class="s1">linear = </span><span class="s4">0</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">greyscale = </span><span class="s4">0</span>
+            <span class="s2">if </span><span class="s1">self.mode </span><span class="s2">in </span><span class="s1">[</span><span class="s3">&quot;L&quot;</span><span class="s2">, </span><span class="s3">&quot;LA&quot;</span><span class="s2">, </span><span class="s3">&quot;P&quot;</span><span class="s2">, </span><span class="s3">&quot;PA&quot;</span><span class="s1">]:</span>
+                <span class="s2">if </span><span class="s1">greyscale:</span>
+                    <span class="s2">if not </span><span class="s1">linear:</span>
+                        <span class="s1">self.lut = list(palette[:</span><span class="s4">256</span><span class="s1">])</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">if </span><span class="s1">self.mode </span><span class="s2">in </span><span class="s1">[</span><span class="s3">&quot;L&quot;</span><span class="s2">, </span><span class="s3">&quot;P&quot;</span><span class="s1">]:</span>
+                        <span class="s1">self.mode = self.rawmode = </span><span class="s3">&quot;P&quot;</span>
+                    <span class="s2">elif </span><span class="s1">self.mode </span><span class="s2">in </span><span class="s1">[</span><span class="s3">&quot;LA&quot;</span><span class="s2">, </span><span class="s3">&quot;PA&quot;</span><span class="s1">]:</span>
+                        <span class="s1">self.mode = </span><span class="s3">&quot;PA&quot;</span>
+                        <span class="s1">self.rawmode = </span><span class="s3">&quot;PA;L&quot;</span>
+                    <span class="s1">self.palette = ImagePalette.raw(</span><span class="s3">&quot;RGB;L&quot;</span><span class="s2">, </span><span class="s1">palette)</span>
+            <span class="s2">elif </span><span class="s1">self.mode == </span><span class="s3">&quot;RGB&quot;</span><span class="s1">:</span>
+                <span class="s2">if not </span><span class="s1">greyscale </span><span class="s2">or not </span><span class="s1">linear:</span>
+                    <span class="s1">self.lut = list(palette)</span>
+
+        <span class="s1">self.frame = </span><span class="s4">0</span>
+
+        <span class="s1">self.__offset = offs = self.fp.tell()</span>
+
+        <span class="s1">self._fp = self.fp  </span><span class="s0"># FIXME: hack</span>
+
+        <span class="s2">if </span><span class="s1">self.rawmode[:</span><span class="s4">2</span><span class="s1">] == </span><span class="s3">&quot;F;&quot;</span><span class="s1">:</span>
+
+            <span class="s0"># ifunc95 formats</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s0"># use bit decoder (if necessary)</span>
+                <span class="s1">bits = int(self.rawmode[</span><span class="s4">2</span><span class="s1">:])</span>
+                <span class="s2">if </span><span class="s1">bits </span><span class="s2">not in </span><span class="s1">[</span><span class="s4">8</span><span class="s2">, </span><span class="s4">16</span><span class="s2">, </span><span class="s4">32</span><span class="s1">]:</span>
+                    <span class="s1">self.tile = [(</span><span class="s3">&quot;bit&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s1">offs</span><span class="s2">, </span><span class="s1">(bits</span><span class="s2">, </span><span class="s4">8</span><span class="s2">, </span><span class="s4">3</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">-</span><span class="s4">1</span><span class="s1">))]</span>
+                    <span class="s2">return</span>
+            <span class="s2">except </span><span class="s1">ValueError:</span>
+                <span class="s2">pass</span>
+
+        <span class="s2">if </span><span class="s1">self.rawmode </span><span class="s2">in </span><span class="s1">[</span><span class="s3">&quot;RGB;T&quot;</span><span class="s2">, </span><span class="s3">&quot;RYB;T&quot;</span><span class="s1">]:</span>
+            <span class="s0"># Old LabEye/3PC files.  Would be very surprised if anyone</span>
+            <span class="s0"># ever stumbled upon such a file ;-)</span>
+            <span class="s1">size = self.size[</span><span class="s4">0</span><span class="s1">] * self.size[</span><span class="s4">1</span><span class="s1">]</span>
+            <span class="s1">self.tile = [</span>
+                <span class="s1">(</span><span class="s3">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s1">offs</span><span class="s2">, </span><span class="s1">(</span><span class="s3">&quot;G&quot;</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">-</span><span class="s4">1</span><span class="s1">))</span><span class="s2">,</span>
+                <span class="s1">(</span><span class="s3">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s1">offs + size</span><span class="s2">, </span><span class="s1">(</span><span class="s3">&quot;R&quot;</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">-</span><span class="s4">1</span><span class="s1">))</span><span class="s2">,</span>
+                <span class="s1">(</span><span class="s3">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s1">offs + </span><span class="s4">2 </span><span class="s1">* size</span><span class="s2">, </span><span class="s1">(</span><span class="s3">&quot;B&quot;</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">-</span><span class="s4">1</span><span class="s1">))</span><span class="s2">,</span>
+            <span class="s1">]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s0"># LabEye/IFUNC files</span>
+            <span class="s1">self.tile = [(</span><span class="s3">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s1">offs</span><span class="s2">, </span><span class="s1">(self.rawmode</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">-</span><span class="s4">1</span><span class="s1">))]</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">n_frames(self):</span>
+        <span class="s2">return </span><span class="s1">self.info[FRAMES]</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">is_animated(self):</span>
+        <span class="s2">return </span><span class="s1">self.info[FRAMES] &gt; </span><span class="s4">1</span>
+
+    <span class="s2">def </span><span class="s1">seek(self</span><span class="s2">, </span><span class="s1">frame):</span>
+        <span class="s2">if not </span><span class="s1">self._seek_check(frame):</span>
+            <span class="s2">return</span>
+
+        <span class="s1">self.frame = frame</span>
+
+        <span class="s2">if </span><span class="s1">self.mode == </span><span class="s3">&quot;1&quot;</span><span class="s1">:</span>
+            <span class="s1">bits = </span><span class="s4">1</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">bits = </span><span class="s4">8 </span><span class="s1">* len(self.mode)</span>
+
+        <span class="s1">size = ((self.size[</span><span class="s4">0</span><span class="s1">] * bits + </span><span class="s4">7</span><span class="s1">) // </span><span class="s4">8</span><span class="s1">) * self.size[</span><span class="s4">1</span><span class="s1">]</span>
+        <span class="s1">offs = self.__offset + frame * size</span>
+
+        <span class="s1">self.fp = self._fp</span>
+
+        <span class="s1">self.tile = [(</span><span class="s3">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s1">offs</span><span class="s2">, </span><span class="s1">(self.rawmode</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">-</span><span class="s4">1</span><span class="s1">))]</span>
+
+    <span class="s2">def </span><span class="s1">tell(self):</span>
+        <span class="s2">return </span><span class="s1">self.frame</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Save IM files</span>
+
+
+<span class="s1">SAVE = {</span>
+    <span class="s0"># mode: (im type, raw mode)</span>
+    <span class="s3">&quot;1&quot;</span><span class="s1">: (</span><span class="s3">&quot;0 1&quot;</span><span class="s2">, </span><span class="s3">&quot;1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;L&quot;</span><span class="s1">: (</span><span class="s3">&quot;Greyscale&quot;</span><span class="s2">, </span><span class="s3">&quot;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;LA&quot;</span><span class="s1">: (</span><span class="s3">&quot;LA&quot;</span><span class="s2">, </span><span class="s3">&quot;LA;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;P&quot;</span><span class="s1">: (</span><span class="s3">&quot;Greyscale&quot;</span><span class="s2">, </span><span class="s3">&quot;P&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;PA&quot;</span><span class="s1">: (</span><span class="s3">&quot;LA&quot;</span><span class="s2">, </span><span class="s3">&quot;PA;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;I&quot;</span><span class="s1">: (</span><span class="s3">&quot;L 32S&quot;</span><span class="s2">, </span><span class="s3">&quot;I;32S&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;I;16&quot;</span><span class="s1">: (</span><span class="s3">&quot;L 16&quot;</span><span class="s2">, </span><span class="s3">&quot;I;16&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;I;16L&quot;</span><span class="s1">: (</span><span class="s3">&quot;L 16L&quot;</span><span class="s2">, </span><span class="s3">&quot;I;16L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;I;16B&quot;</span><span class="s1">: (</span><span class="s3">&quot;L 16B&quot;</span><span class="s2">, </span><span class="s3">&quot;I;16B&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;F&quot;</span><span class="s1">: (</span><span class="s3">&quot;L 32F&quot;</span><span class="s2">, </span><span class="s3">&quot;F;32F&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;RGB&quot;</span><span class="s1">: (</span><span class="s3">&quot;RGB&quot;</span><span class="s2">, </span><span class="s3">&quot;RGB;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;RGBA&quot;</span><span class="s1">: (</span><span class="s3">&quot;RGBA&quot;</span><span class="s2">, </span><span class="s3">&quot;RGBA;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;RGBX&quot;</span><span class="s1">: (</span><span class="s3">&quot;RGBX&quot;</span><span class="s2">, </span><span class="s3">&quot;RGBX;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;CMYK&quot;</span><span class="s1">: (</span><span class="s3">&quot;CMYK&quot;</span><span class="s2">, </span><span class="s3">&quot;CMYK;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">&quot;YCbCr&quot;</span><span class="s1">: (</span><span class="s3">&quot;YCC&quot;</span><span class="s2">, </span><span class="s3">&quot;YCbCr;L&quot;</span><span class="s1">)</span><span class="s2">,</span>
+<span class="s1">}</span>
+
+
+<span class="s2">def </span><span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename):</span>
+
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">image_type</span><span class="s2">, </span><span class="s1">rawmode = SAVE[im.mode]</span>
+    <span class="s2">except </span><span class="s1">KeyError </span><span class="s2">as </span><span class="s1">e:</span>
+        <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">f&quot;Cannot save </span><span class="s2">{</span><span class="s1">im.mode</span><span class="s2">} </span><span class="s3">images as IM&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+
+    <span class="s1">frames = im.encoderinfo.get(</span><span class="s3">&quot;frames&quot;</span><span class="s2">, </span><span class="s4">1</span><span class="s1">)</span>
+
+    <span class="s1">fp.write(</span><span class="s3">f&quot;Image type: </span><span class="s2">{</span><span class="s1">image_type</span><span class="s2">} </span><span class="s3">image</span><span class="s2">\r\n</span><span class="s3">&quot;</span><span class="s1">.encode(</span><span class="s3">&quot;ascii&quot;</span><span class="s1">))</span>
+    <span class="s2">if </span><span class="s1">filename:</span>
+        <span class="s0"># Each line must be 100 characters or less,</span>
+        <span class="s0"># or: SyntaxError(&quot;not an IM file&quot;)</span>
+        <span class="s0"># 8 characters are used for &quot;Name: &quot; and &quot;\r\n&quot;</span>
+        <span class="s0"># Keep just the filename, ditch the potentially overlong path</span>
+        <span class="s1">name</span><span class="s2">, </span><span class="s1">ext = os.path.splitext(os.path.basename(filename))</span>
+        <span class="s1">name = </span><span class="s3">&quot;&quot;</span><span class="s1">.join([name[: </span><span class="s4">92 </span><span class="s1">- len(ext)]</span><span class="s2">, </span><span class="s1">ext])</span>
+
+        <span class="s1">fp.write(</span><span class="s3">f&quot;Name: </span><span class="s2">{</span><span class="s1">name</span><span class="s2">}\r\n</span><span class="s3">&quot;</span><span class="s1">.encode(</span><span class="s3">&quot;ascii&quot;</span><span class="s1">))</span>
+    <span class="s1">fp.write((</span><span class="s3">&quot;Image size (x*y): %d*%d</span><span class="s2">\r\n</span><span class="s3">&quot; </span><span class="s1">% im.size).encode(</span><span class="s3">&quot;ascii&quot;</span><span class="s1">))</span>
+    <span class="s1">fp.write(</span><span class="s3">f&quot;File size (no of images): </span><span class="s2">{</span><span class="s1">frames</span><span class="s2">}\r\n</span><span class="s3">&quot;</span><span class="s1">.encode(</span><span class="s3">&quot;ascii&quot;</span><span class="s1">))</span>
+    <span class="s2">if </span><span class="s1">im.mode </span><span class="s2">in </span><span class="s1">[</span><span class="s3">&quot;P&quot;</span><span class="s2">, </span><span class="s3">&quot;PA&quot;</span><span class="s1">]:</span>
+        <span class="s1">fp.write(</span><span class="s5">b&quot;Lut: 1</span><span class="s2">\r\n</span><span class="s5">&quot;</span><span class="s1">)</span>
+    <span class="s1">fp.write(</span><span class="s5">b&quot;</span><span class="s2">\000</span><span class="s5">&quot; </span><span class="s1">* (</span><span class="s4">511 </span><span class="s1">- fp.tell()) + </span><span class="s5">b&quot;</span><span class="s2">\032</span><span class="s5">&quot;</span><span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">im.mode </span><span class="s2">in </span><span class="s1">[</span><span class="s3">&quot;P&quot;</span><span class="s2">, </span><span class="s3">&quot;PA&quot;</span><span class="s1">]:</span>
+        <span class="s1">im_palette = im.im.getpalette(</span><span class="s3">&quot;RGB&quot;</span><span class="s2">, </span><span class="s3">&quot;RGB;L&quot;</span><span class="s1">)</span>
+        <span class="s1">colors = len(im_palette) // </span><span class="s4">3</span>
+        <span class="s1">palette = </span><span class="s5">b&quot;&quot;</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">3</span><span class="s1">):</span>
+            <span class="s1">palette += im_palette[colors * i : colors * (i + </span><span class="s4">1</span><span class="s1">)]</span>
+            <span class="s1">palette += </span><span class="s5">b&quot;</span><span class="s2">\x00</span><span class="s5">&quot; </span><span class="s1">* (</span><span class="s4">256 </span><span class="s1">- colors)</span>
+        <span class="s1">fp.write(palette)  </span><span class="s0"># 768 bytes</span>
+    <span class="s1">ImageFile._save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">[(</span><span class="s3">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + im.size</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">(rawmode</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">-</span><span class="s4">1</span><span class="s1">))])</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Registry</span>
+
+
+<span class="s1">Image.register_open(ImImageFile.format</span><span class="s2">, </span><span class="s1">ImImageFile)</span>
+<span class="s1">Image.register_save(ImImageFile.format</span><span class="s2">, </span><span class="s1">_save)</span>
+
+<span class="s1">Image.register_extension(ImImageFile.format</span><span class="s2">, </span><span class="s3">&quot;.im&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

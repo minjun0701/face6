@@ -1,0 +1,200 @@
+<html>
+<head>
+<title>WmfImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #629755; font-style: italic;}
+.s4 { color: #6a8759;}
+.s5 { color: #6897bb;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+WmfImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># WMF stub codec</span>
+<span class="s0">#</span>
+<span class="s0"># history:</span>
+<span class="s0"># 1996-12-14 fl   Created</span>
+<span class="s0"># 2004-02-22 fl   Turned into a stub driver</span>
+<span class="s0"># 2004-02-23 fl   Added EMF support</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 1997-2004.  All rights reserved.</span>
+<span class="s0"># Copyright (c) Fredrik Lundh 1996.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s0"># WMF/EMF reference documentation:</span>
+<span class="s0"># https://winprotocoldoc.blob.core.windows.net/productionwindowsarchives/MS-WMF/[MS-WMF].pdf</span>
+<span class="s0"># http://wvware.sourceforge.net/caolan/index.html</span>
+<span class="s0"># http://wvware.sourceforge.net/caolan/ora-wmf.html</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">i16le </span><span class="s2">as </span><span class="s1">word</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">si16le </span><span class="s2">as </span><span class="s1">short</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">si32le </span><span class="s2">as </span><span class="s1">_long</span>
+
+<span class="s1">_handler = </span><span class="s2">None</span>
+
+
+<span class="s2">def </span><span class="s1">register_handler(handler):</span>
+    <span class="s3">&quot;&quot;&quot; 
+    Install application-specific WMF image handler. 
+ 
+    :param handler: Handler object. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">global </span><span class="s1">_handler</span>
+    <span class="s1">_handler = handler</span>
+
+
+<span class="s2">if </span><span class="s1">hasattr(Image.core</span><span class="s2">, </span><span class="s4">&quot;drawwmf&quot;</span><span class="s1">):</span>
+    <span class="s0"># install default handler (windows only)</span>
+
+    <span class="s2">class </span><span class="s1">WmfHandler:</span>
+        <span class="s2">def </span><span class="s1">open(self</span><span class="s2">, </span><span class="s1">im):</span>
+            <span class="s1">im.mode = </span><span class="s4">&quot;RGB&quot;</span>
+            <span class="s1">self.bbox = im.info[</span><span class="s4">&quot;wmf_bbox&quot;</span><span class="s1">]</span>
+
+        <span class="s2">def </span><span class="s1">load(self</span><span class="s2">, </span><span class="s1">im):</span>
+            <span class="s1">im.fp.seek(</span><span class="s5">0</span><span class="s1">)  </span><span class="s0"># rewind</span>
+            <span class="s2">return </span><span class="s1">Image.frombytes(</span>
+                <span class="s4">&quot;RGB&quot;</span><span class="s2">,</span>
+                <span class="s1">im.size</span><span class="s2">,</span>
+                <span class="s1">Image.core.drawwmf(im.fp.read()</span><span class="s2">, </span><span class="s1">im.size</span><span class="s2">, </span><span class="s1">self.bbox)</span><span class="s2">,</span>
+                <span class="s4">&quot;raw&quot;</span><span class="s2">,</span>
+                <span class="s4">&quot;BGR&quot;</span><span class="s2">,</span>
+                <span class="s1">(im.size[</span><span class="s5">0</span><span class="s1">] * </span><span class="s5">3 </span><span class="s1">+ </span><span class="s5">3</span><span class="s1">) &amp; -</span><span class="s5">4</span><span class="s2">,</span>
+                <span class="s1">-</span><span class="s5">1</span><span class="s2">,</span>
+            <span class="s1">)</span>
+
+    <span class="s1">register_handler(WmfHandler())</span>
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Read WMF file</span>
+
+
+<span class="s2">def </span><span class="s1">_accept(prefix):</span>
+    <span class="s2">return </span><span class="s1">(</span>
+        <span class="s1">prefix[:</span><span class="s5">6</span><span class="s1">] == </span><span class="s6">b&quot;</span><span class="s2">\xd7\xcd\xc6\x9a\x00\x00</span><span class="s6">&quot; </span><span class="s2">or </span><span class="s1">prefix[:</span><span class="s5">4</span><span class="s1">] == </span><span class="s6">b&quot;</span><span class="s2">\x01\x00\x00\x00</span><span class="s6">&quot;</span>
+    <span class="s1">)</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for Windows metafiles.</span>
+
+
+<span class="s2">class </span><span class="s1">WmfStubImageFile(ImageFile.StubImageFile):</span>
+
+    <span class="s1">format = </span><span class="s4">&quot;WMF&quot;</span>
+    <span class="s1">format_description = </span><span class="s4">&quot;Windows Metafile&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+        <span class="s1">self._inch = </span><span class="s2">None</span>
+
+        <span class="s0"># check placable header</span>
+        <span class="s1">s = self.fp.read(</span><span class="s5">80</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">s[:</span><span class="s5">6</span><span class="s1">] == </span><span class="s6">b&quot;</span><span class="s2">\xd7\xcd\xc6\x9a\x00\x00</span><span class="s6">&quot;</span><span class="s1">:</span>
+
+            <span class="s0"># placeable windows metafile</span>
+
+            <span class="s0"># get units per inch</span>
+            <span class="s1">self._inch = word(s</span><span class="s2">, </span><span class="s5">14</span><span class="s1">)</span>
+
+            <span class="s0"># get bounding box</span>
+            <span class="s1">x0 = short(s</span><span class="s2">, </span><span class="s5">6</span><span class="s1">)</span>
+            <span class="s1">y0 = short(s</span><span class="s2">, </span><span class="s5">8</span><span class="s1">)</span>
+            <span class="s1">x1 = short(s</span><span class="s2">, </span><span class="s5">10</span><span class="s1">)</span>
+            <span class="s1">y1 = short(s</span><span class="s2">, </span><span class="s5">12</span><span class="s1">)</span>
+
+            <span class="s0"># normalize size to 72 dots per inch</span>
+            <span class="s1">self.info[</span><span class="s4">&quot;dpi&quot;</span><span class="s1">] = </span><span class="s5">72</span>
+            <span class="s1">size = (</span>
+                <span class="s1">(x1 - x0) * self.info[</span><span class="s4">&quot;dpi&quot;</span><span class="s1">] // self._inch</span><span class="s2">,</span>
+                <span class="s1">(y1 - y0) * self.info[</span><span class="s4">&quot;dpi&quot;</span><span class="s1">] // self._inch</span><span class="s2">,</span>
+            <span class="s1">)</span>
+
+            <span class="s1">self.info[</span><span class="s4">&quot;wmf_bbox&quot;</span><span class="s1">] = x0</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x1</span><span class="s2">, </span><span class="s1">y1</span>
+
+            <span class="s0"># sanity check (standard metafile header)</span>
+            <span class="s2">if </span><span class="s1">s[</span><span class="s5">22</span><span class="s1">:</span><span class="s5">26</span><span class="s1">] != </span><span class="s6">b&quot;</span><span class="s2">\x01\x00\t\x00</span><span class="s6">&quot;</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;Unsupported WMF file format&quot;</span><span class="s1">)</span>
+
+        <span class="s2">elif </span><span class="s1">s[:</span><span class="s5">4</span><span class="s1">] == </span><span class="s6">b&quot;</span><span class="s2">\x01\x00\x00\x00</span><span class="s6">&quot; </span><span class="s2">and </span><span class="s1">s[</span><span class="s5">40</span><span class="s1">:</span><span class="s5">44</span><span class="s1">] == </span><span class="s6">b&quot; EMF&quot;</span><span class="s1">:</span>
+            <span class="s0"># enhanced metafile</span>
+
+            <span class="s0"># get bounding box</span>
+            <span class="s1">x0 = _long(s</span><span class="s2">, </span><span class="s5">8</span><span class="s1">)</span>
+            <span class="s1">y0 = _long(s</span><span class="s2">, </span><span class="s5">12</span><span class="s1">)</span>
+            <span class="s1">x1 = _long(s</span><span class="s2">, </span><span class="s5">16</span><span class="s1">)</span>
+            <span class="s1">y1 = _long(s</span><span class="s2">, </span><span class="s5">20</span><span class="s1">)</span>
+
+            <span class="s0"># get frame (in 0.01 millimeter units)</span>
+            <span class="s1">frame = _long(s</span><span class="s2">, </span><span class="s5">24</span><span class="s1">)</span><span class="s2">, </span><span class="s1">_long(s</span><span class="s2">, </span><span class="s5">28</span><span class="s1">)</span><span class="s2">, </span><span class="s1">_long(s</span><span class="s2">, </span><span class="s5">32</span><span class="s1">)</span><span class="s2">, </span><span class="s1">_long(s</span><span class="s2">, </span><span class="s5">36</span><span class="s1">)</span>
+
+            <span class="s1">size = x1 - x0</span><span class="s2">, </span><span class="s1">y1 - y0</span>
+
+            <span class="s0"># calculate dots per inch from bbox and frame</span>
+            <span class="s1">xdpi = </span><span class="s5">2540.0 </span><span class="s1">* (x1 - y0) / (frame[</span><span class="s5">2</span><span class="s1">] - frame[</span><span class="s5">0</span><span class="s1">])</span>
+            <span class="s1">ydpi = </span><span class="s5">2540.0 </span><span class="s1">* (y1 - y0) / (frame[</span><span class="s5">3</span><span class="s1">] - frame[</span><span class="s5">1</span><span class="s1">])</span>
+
+            <span class="s1">self.info[</span><span class="s4">&quot;wmf_bbox&quot;</span><span class="s1">] = x0</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x1</span><span class="s2">, </span><span class="s1">y1</span>
+
+            <span class="s2">if </span><span class="s1">xdpi == ydpi:</span>
+                <span class="s1">self.info[</span><span class="s4">&quot;dpi&quot;</span><span class="s1">] = xdpi</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self.info[</span><span class="s4">&quot;dpi&quot;</span><span class="s1">] = xdpi</span><span class="s2">, </span><span class="s1">ydpi</span>
+
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;Unsupported file format&quot;</span><span class="s1">)</span>
+
+        <span class="s1">self.mode = </span><span class="s4">&quot;RGB&quot;</span>
+        <span class="s1">self._size = size</span>
+
+        <span class="s1">loader = self._load()</span>
+        <span class="s2">if </span><span class="s1">loader:</span>
+            <span class="s1">loader.open(self)</span>
+
+    <span class="s2">def </span><span class="s1">_load(self):</span>
+        <span class="s2">return </span><span class="s1">_handler</span>
+
+    <span class="s2">def </span><span class="s1">load(self</span><span class="s2">, </span><span class="s1">dpi=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">dpi </span><span class="s2">is not None and </span><span class="s1">self._inch </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.info[</span><span class="s4">&quot;dpi&quot;</span><span class="s1">] = dpi</span>
+            <span class="s1">x0</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x1</span><span class="s2">, </span><span class="s1">y1 = self.info[</span><span class="s4">&quot;wmf_bbox&quot;</span><span class="s1">]</span>
+            <span class="s1">self._size = (</span>
+                <span class="s1">(x1 - x0) * self.info[</span><span class="s4">&quot;dpi&quot;</span><span class="s1">] // self._inch</span><span class="s2">,</span>
+                <span class="s1">(y1 - y0) * self.info[</span><span class="s4">&quot;dpi&quot;</span><span class="s1">] // self._inch</span><span class="s2">,</span>
+            <span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">super().load()</span>
+
+
+<span class="s2">def </span><span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename):</span>
+    <span class="s2">if </span><span class="s1">_handler </span><span class="s2">is None or not </span><span class="s1">hasattr(_handler</span><span class="s2">, </span><span class="s4">&quot;save&quot;</span><span class="s1">):</span>
+        <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">&quot;WMF save handler not installed&quot;</span><span class="s1">)</span>
+    <span class="s1">_handler.save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename)</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Registry stuff</span>
+
+
+<span class="s1">Image.register_open(WmfStubImageFile.format</span><span class="s2">, </span><span class="s1">WmfStubImageFile</span><span class="s2">, </span><span class="s1">_accept)</span>
+<span class="s1">Image.register_save(WmfStubImageFile.format</span><span class="s2">, </span><span class="s1">_save)</span>
+
+<span class="s1">Image.register_extensions(WmfStubImageFile.format</span><span class="s2">, </span><span class="s1">[</span><span class="s4">&quot;.wmf&quot;</span><span class="s2">, </span><span class="s4">&quot;.emf&quot;</span><span class="s1">])</span>
+</pre>
+</body>
+</html>

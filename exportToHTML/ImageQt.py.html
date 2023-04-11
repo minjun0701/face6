@@ -1,0 +1,251 @@
+<html>
+<head>
+<title>ImageQt.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6a8759;}
+.s4 { color: #6897bb;}
+.s5 { color: #629755; font-style: italic;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageQt.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># a simple Qt image interface.</span>
+<span class="s0">#</span>
+<span class="s0"># history:</span>
+<span class="s0"># 2006-06-03 fl: created</span>
+<span class="s0"># 2006-06-04 fl: inherit from QImage instead of wrapping it</span>
+<span class="s0"># 2006-06-05 fl: removed toimage helper; move string support to ImageQt</span>
+<span class="s0"># 2013-11-13 fl: add support for Qt5 (aurelien.ballier@cyclonit.com)</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 2006 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 2006 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">from </span><span class="s1">io </span><span class="s2">import </span><span class="s1">BytesIO</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span>
+<span class="s2">from </span><span class="s1">._deprecate </span><span class="s2">import </span><span class="s1">deprecate</span>
+<span class="s2">from </span><span class="s1">._util </span><span class="s2">import </span><span class="s1">is_path</span>
+
+<span class="s1">qt_versions = [</span>
+    <span class="s1">[</span><span class="s3">&quot;6&quot;</span><span class="s2">, </span><span class="s3">&quot;PyQt6&quot;</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s1">[</span><span class="s3">&quot;side6&quot;</span><span class="s2">, </span><span class="s3">&quot;PySide6&quot;</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s1">[</span><span class="s3">&quot;5&quot;</span><span class="s2">, </span><span class="s3">&quot;PyQt5&quot;</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s1">[</span><span class="s3">&quot;side2&quot;</span><span class="s2">, </span><span class="s3">&quot;PySide2&quot;</span><span class="s1">]</span><span class="s2">,</span>
+<span class="s1">]</span>
+
+<span class="s0"># If a version has already been imported, attempt it first</span>
+<span class="s1">qt_versions.sort(key=</span><span class="s2">lambda </span><span class="s1">qt_version: qt_version[</span><span class="s4">1</span><span class="s1">] </span><span class="s2">in </span><span class="s1">sys.modules</span><span class="s2">, </span><span class="s1">reverse=</span><span class="s2">True</span><span class="s1">)</span>
+<span class="s2">for </span><span class="s1">qt_version</span><span class="s2">, </span><span class="s1">qt_module </span><span class="s2">in </span><span class="s1">qt_versions:</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">qt_module == </span><span class="s3">&quot;PyQt6&quot;</span><span class="s1">:</span>
+            <span class="s2">from </span><span class="s1">PyQt6.QtCore </span><span class="s2">import </span><span class="s1">QBuffer</span><span class="s2">, </span><span class="s1">QIODevice</span>
+            <span class="s2">from </span><span class="s1">PyQt6.QtGui </span><span class="s2">import </span><span class="s1">QImage</span><span class="s2">, </span><span class="s1">QPixmap</span><span class="s2">, </span><span class="s1">qRgba</span>
+        <span class="s2">elif </span><span class="s1">qt_module == </span><span class="s3">&quot;PySide6&quot;</span><span class="s1">:</span>
+            <span class="s2">from </span><span class="s1">PySide6.QtCore </span><span class="s2">import </span><span class="s1">QBuffer</span><span class="s2">, </span><span class="s1">QIODevice</span>
+            <span class="s2">from </span><span class="s1">PySide6.QtGui </span><span class="s2">import </span><span class="s1">QImage</span><span class="s2">, </span><span class="s1">QPixmap</span><span class="s2">, </span><span class="s1">qRgba</span>
+        <span class="s2">elif </span><span class="s1">qt_module == </span><span class="s3">&quot;PyQt5&quot;</span><span class="s1">:</span>
+            <span class="s2">from </span><span class="s1">PyQt5.QtCore </span><span class="s2">import </span><span class="s1">QBuffer</span><span class="s2">, </span><span class="s1">QIODevice</span>
+            <span class="s2">from </span><span class="s1">PyQt5.QtGui </span><span class="s2">import </span><span class="s1">QImage</span><span class="s2">, </span><span class="s1">QPixmap</span><span class="s2">, </span><span class="s1">qRgba</span>
+
+            <span class="s1">deprecate(</span><span class="s3">&quot;Support for PyQt5&quot;</span><span class="s2">, </span><span class="s4">10</span><span class="s2">, </span><span class="s3">&quot;PyQt6 or PySide6&quot;</span><span class="s1">)</span>
+        <span class="s2">elif </span><span class="s1">qt_module == </span><span class="s3">&quot;PySide2&quot;</span><span class="s1">:</span>
+            <span class="s2">from </span><span class="s1">PySide2.QtCore </span><span class="s2">import </span><span class="s1">QBuffer</span><span class="s2">, </span><span class="s1">QIODevice</span>
+            <span class="s2">from </span><span class="s1">PySide2.QtGui </span><span class="s2">import </span><span class="s1">QImage</span><span class="s2">, </span><span class="s1">QPixmap</span><span class="s2">, </span><span class="s1">qRgba</span>
+
+            <span class="s1">deprecate(</span><span class="s3">&quot;Support for PySide2&quot;</span><span class="s2">, </span><span class="s4">10</span><span class="s2">, </span><span class="s3">&quot;PyQt6 or PySide6&quot;</span><span class="s1">)</span>
+    <span class="s2">except </span><span class="s1">(ImportError</span><span class="s2">, </span><span class="s1">RuntimeError):</span>
+        <span class="s2">continue</span>
+    <span class="s1">qt_is_installed = </span><span class="s2">True</span>
+    <span class="s2">break</span>
+<span class="s2">else</span><span class="s1">:</span>
+    <span class="s1">qt_is_installed = </span><span class="s2">False</span>
+    <span class="s1">qt_version = </span><span class="s2">None</span>
+
+
+<span class="s2">def </span><span class="s1">rgb(r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b</span><span class="s2">, </span><span class="s1">a=</span><span class="s4">255</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot;(Internal) Turns an RGB color into a Qt compatible color integer.&quot;&quot;&quot;</span>
+    <span class="s0"># use qRgb to pack the colors, and then turn the resulting long</span>
+    <span class="s0"># into a negative integer with the same bitpattern.</span>
+    <span class="s2">return </span><span class="s1">qRgba(r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b</span><span class="s2">, </span><span class="s1">a) &amp; </span><span class="s4">0xFFFFFFFF</span>
+
+
+<span class="s2">def </span><span class="s1">fromqimage(im):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    :param im: QImage or PIL ImageQt object 
+    &quot;&quot;&quot;</span>
+    <span class="s1">buffer = QBuffer()</span>
+    <span class="s2">if </span><span class="s1">qt_version == </span><span class="s3">&quot;6&quot;</span><span class="s1">:</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">qt_openmode = QIODevice.OpenModeFlag</span>
+        <span class="s2">except </span><span class="s1">AttributeError:</span>
+            <span class="s1">qt_openmode = QIODevice.OpenMode</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">qt_openmode = QIODevice</span>
+    <span class="s1">buffer.open(qt_openmode.ReadWrite)</span>
+    <span class="s0"># preserve alpha channel with png</span>
+    <span class="s0"># otherwise ppm is more friendly with Image.open</span>
+    <span class="s2">if </span><span class="s1">im.hasAlphaChannel():</span>
+        <span class="s1">im.save(buffer</span><span class="s2">, </span><span class="s3">&quot;png&quot;</span><span class="s1">)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">im.save(buffer</span><span class="s2">, </span><span class="s3">&quot;ppm&quot;</span><span class="s1">)</span>
+
+    <span class="s1">b = BytesIO()</span>
+    <span class="s1">b.write(buffer.data())</span>
+    <span class="s1">buffer.close()</span>
+    <span class="s1">b.seek(</span><span class="s4">0</span><span class="s1">)</span>
+
+    <span class="s2">return </span><span class="s1">Image.open(b)</span>
+
+
+<span class="s2">def </span><span class="s1">fromqpixmap(im):</span>
+    <span class="s2">return </span><span class="s1">fromqimage(im)</span>
+    <span class="s0"># buffer = QBuffer()</span>
+    <span class="s0"># buffer.open(QIODevice.ReadWrite)</span>
+    <span class="s0"># # im.save(buffer)</span>
+    <span class="s0"># # What if png doesn't support some image features like animation?</span>
+    <span class="s0"># im.save(buffer, 'ppm')</span>
+    <span class="s0"># bytes_io = BytesIO()</span>
+    <span class="s0"># bytes_io.write(buffer.data())</span>
+    <span class="s0"># buffer.close()</span>
+    <span class="s0"># bytes_io.seek(0)</span>
+    <span class="s0"># return Image.open(bytes_io)</span>
+
+
+<span class="s2">def </span><span class="s1">align8to32(bytes</span><span class="s2">, </span><span class="s1">width</span><span class="s2">, </span><span class="s1">mode):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    converts each scanline of data from 8 bit to 32 bit aligned 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">bits_per_pixel = {</span><span class="s3">&quot;1&quot;</span><span class="s1">: </span><span class="s4">1</span><span class="s2">, </span><span class="s3">&quot;L&quot;</span><span class="s1">: </span><span class="s4">8</span><span class="s2">, </span><span class="s3">&quot;P&quot;</span><span class="s1">: </span><span class="s4">8</span><span class="s2">, </span><span class="s3">&quot;I;16&quot;</span><span class="s1">: </span><span class="s4">16</span><span class="s1">}[mode]</span>
+
+    <span class="s0"># calculate bytes per line and the extra padding if needed</span>
+    <span class="s1">bits_per_line = bits_per_pixel * width</span>
+    <span class="s1">full_bytes_per_line</span><span class="s2">, </span><span class="s1">remaining_bits_per_line = divmod(bits_per_line</span><span class="s2">, </span><span class="s4">8</span><span class="s1">)</span>
+    <span class="s1">bytes_per_line = full_bytes_per_line + (</span><span class="s4">1 </span><span class="s2">if </span><span class="s1">remaining_bits_per_line </span><span class="s2">else </span><span class="s4">0</span><span class="s1">)</span>
+
+    <span class="s1">extra_padding = -bytes_per_line % </span><span class="s4">4</span>
+
+    <span class="s0"># already 32 bit aligned by luck</span>
+    <span class="s2">if not </span><span class="s1">extra_padding:</span>
+        <span class="s2">return </span><span class="s1">bytes</span>
+
+    <span class="s1">new_data = []</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(len(bytes) // bytes_per_line):</span>
+        <span class="s1">new_data.append(</span>
+            <span class="s1">bytes[i * bytes_per_line : (i + </span><span class="s4">1</span><span class="s1">) * bytes_per_line]</span>
+            <span class="s1">+ </span><span class="s6">b&quot;</span><span class="s2">\x00</span><span class="s6">&quot; </span><span class="s1">* extra_padding</span>
+        <span class="s1">)</span>
+
+    <span class="s2">return </span><span class="s6">b&quot;&quot;</span><span class="s1">.join(new_data)</span>
+
+
+<span class="s2">def </span><span class="s1">_toqclass_helper(im):</span>
+    <span class="s1">data = </span><span class="s2">None</span>
+    <span class="s1">colortable = </span><span class="s2">None</span>
+    <span class="s1">exclusive_fp = </span><span class="s2">False</span>
+
+    <span class="s0"># handle filename, if given instead of image name</span>
+    <span class="s2">if </span><span class="s1">hasattr(im</span><span class="s2">, </span><span class="s3">&quot;toUtf8&quot;</span><span class="s1">):</span>
+        <span class="s0"># FIXME - is this really the best way to do this?</span>
+        <span class="s1">im = str(im.toUtf8()</span><span class="s2">, </span><span class="s3">&quot;utf-8&quot;</span><span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">is_path(im):</span>
+        <span class="s1">im = Image.open(im)</span>
+        <span class="s1">exclusive_fp = </span><span class="s2">True</span>
+
+    <span class="s1">qt_format = QImage.Format </span><span class="s2">if </span><span class="s1">qt_version == </span><span class="s3">&quot;6&quot; </span><span class="s2">else </span><span class="s1">QImage</span>
+    <span class="s2">if </span><span class="s1">im.mode == </span><span class="s3">&quot;1&quot;</span><span class="s1">:</span>
+        <span class="s1">format = qt_format.Format_Mono</span>
+    <span class="s2">elif </span><span class="s1">im.mode == </span><span class="s3">&quot;L&quot;</span><span class="s1">:</span>
+        <span class="s1">format = qt_format.Format_Indexed8</span>
+        <span class="s1">colortable = []</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">256</span><span class="s1">):</span>
+            <span class="s1">colortable.append(rgb(i</span><span class="s2">, </span><span class="s1">i</span><span class="s2">, </span><span class="s1">i))</span>
+    <span class="s2">elif </span><span class="s1">im.mode == </span><span class="s3">&quot;P&quot;</span><span class="s1">:</span>
+        <span class="s1">format = qt_format.Format_Indexed8</span>
+        <span class="s1">colortable = []</span>
+        <span class="s1">palette = im.getpalette()</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">0</span><span class="s2">, </span><span class="s1">len(palette)</span><span class="s2">, </span><span class="s4">3</span><span class="s1">):</span>
+            <span class="s1">colortable.append(rgb(*palette[i : i + </span><span class="s4">3</span><span class="s1">]))</span>
+    <span class="s2">elif </span><span class="s1">im.mode == </span><span class="s3">&quot;RGB&quot;</span><span class="s1">:</span>
+        <span class="s0"># Populate the 4th channel with 255</span>
+        <span class="s1">im = im.convert(</span><span class="s3">&quot;RGBA&quot;</span><span class="s1">)</span>
+
+        <span class="s1">data = im.tobytes(</span><span class="s3">&quot;raw&quot;</span><span class="s2">, </span><span class="s3">&quot;BGRA&quot;</span><span class="s1">)</span>
+        <span class="s1">format = qt_format.Format_RGB32</span>
+    <span class="s2">elif </span><span class="s1">im.mode == </span><span class="s3">&quot;RGBA&quot;</span><span class="s1">:</span>
+        <span class="s1">data = im.tobytes(</span><span class="s3">&quot;raw&quot;</span><span class="s2">, </span><span class="s3">&quot;BGRA&quot;</span><span class="s1">)</span>
+        <span class="s1">format = qt_format.Format_ARGB32</span>
+    <span class="s2">elif </span><span class="s1">im.mode == </span><span class="s3">&quot;I;16&quot; </span><span class="s2">and </span><span class="s1">hasattr(qt_format</span><span class="s2">, </span><span class="s3">&quot;Format_Grayscale16&quot;</span><span class="s1">):  </span><span class="s0"># Qt 5.13+</span>
+        <span class="s1">im = im.point(</span><span class="s2">lambda </span><span class="s1">i: i * </span><span class="s4">256</span><span class="s1">)</span>
+
+        <span class="s1">format = qt_format.Format_Grayscale16</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">exclusive_fp:</span>
+            <span class="s1">im.close()</span>
+        <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">f&quot;unsupported image mode </span><span class="s2">{</span><span class="s1">repr(im.mode)</span><span class="s2">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+
+    <span class="s1">size = im.size</span>
+    <span class="s1">__data = data </span><span class="s2">or </span><span class="s1">align8to32(im.tobytes()</span><span class="s2">, </span><span class="s1">size[</span><span class="s4">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">im.mode)</span>
+    <span class="s2">if </span><span class="s1">exclusive_fp:</span>
+        <span class="s1">im.close()</span>
+    <span class="s2">return </span><span class="s1">{</span><span class="s3">&quot;data&quot;</span><span class="s1">: __data</span><span class="s2">, </span><span class="s3">&quot;size&quot;</span><span class="s1">: size</span><span class="s2">, </span><span class="s3">&quot;format&quot;</span><span class="s1">: format</span><span class="s2">, </span><span class="s3">&quot;colortable&quot;</span><span class="s1">: colortable}</span>
+
+
+<span class="s2">if </span><span class="s1">qt_is_installed:</span>
+
+    <span class="s2">class </span><span class="s1">ImageQt(QImage):</span>
+        <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">im):</span>
+            <span class="s5">&quot;&quot;&quot; 
+            An PIL image wrapper for Qt.  This is a subclass of PyQt's QImage 
+            class. 
+ 
+            :param im: A PIL Image object, or a file name (given either as 
+                Python string or a PyQt string object). 
+            &quot;&quot;&quot;</span>
+            <span class="s1">im_data = _toqclass_helper(im)</span>
+            <span class="s0"># must keep a reference, or Qt will crash!</span>
+            <span class="s0"># All QImage constructors that take data operate on an existing</span>
+            <span class="s0"># buffer, so this buffer has to hang on for the life of the image.</span>
+            <span class="s0"># Fixes https://github.com/python-pillow/Pillow/issues/1370</span>
+            <span class="s1">self.__data = im_data[</span><span class="s3">&quot;data&quot;</span><span class="s1">]</span>
+            <span class="s1">super().__init__(</span>
+                <span class="s1">self.__data</span><span class="s2">,</span>
+                <span class="s1">im_data[</span><span class="s3">&quot;size&quot;</span><span class="s1">][</span><span class="s4">0</span><span class="s1">]</span><span class="s2">,</span>
+                <span class="s1">im_data[</span><span class="s3">&quot;size&quot;</span><span class="s1">][</span><span class="s4">1</span><span class="s1">]</span><span class="s2">,</span>
+                <span class="s1">im_data[</span><span class="s3">&quot;format&quot;</span><span class="s1">]</span><span class="s2">,</span>
+            <span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">im_data[</span><span class="s3">&quot;colortable&quot;</span><span class="s1">]:</span>
+                <span class="s1">self.setColorTable(im_data[</span><span class="s3">&quot;colortable&quot;</span><span class="s1">])</span>
+
+
+<span class="s2">def </span><span class="s1">toqimage(im):</span>
+    <span class="s2">return </span><span class="s1">ImageQt(im)</span>
+
+
+<span class="s2">def </span><span class="s1">toqpixmap(im):</span>
+    <span class="s0"># # This doesn't work. For now using a dumb approach.</span>
+    <span class="s0"># im_data = _toqclass_helper(im)</span>
+    <span class="s0"># result = QPixmap(im_data[&quot;size&quot;][0], im_data[&quot;size&quot;][1])</span>
+    <span class="s0"># result.loadFromData(im_data[&quot;data&quot;])</span>
+    <span class="s1">qimage = toqimage(im)</span>
+    <span class="s2">return </span><span class="s1">QPixmap.fromImage(qimage)</span>
+</pre>
+</body>
+</html>

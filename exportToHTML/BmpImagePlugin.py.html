@@ -1,0 +1,487 @@
+<html>
+<head>
+<title>BmpImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6897bb;}
+.s4 { color: #6a8759;}
+.s5 { color: #a5c261;}
+.s6 { color: #629755; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+BmpImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># BMP file handler</span>
+<span class="s0">#</span>
+<span class="s0"># Windows (and OS/2) native bitmap storage format.</span>
+<span class="s0">#</span>
+<span class="s0"># history:</span>
+<span class="s0"># 1995-09-01 fl   Created</span>
+<span class="s0"># 1996-04-30 fl   Added save</span>
+<span class="s0"># 1997-08-27 fl   Fixed save of 1-bit images</span>
+<span class="s0"># 1998-03-06 fl   Load P images as L where possible</span>
+<span class="s0"># 1998-07-03 fl   Load P images as 1 where possible</span>
+<span class="s0"># 1998-12-29 fl   Handle small palettes</span>
+<span class="s0"># 2002-12-30 fl   Fixed load of 1-bit palette images</span>
+<span class="s0"># 2003-04-21 fl   Fixed load of 1-bit monochrome images</span>
+<span class="s0"># 2003-04-23 fl   Added limited support for BI_BITFIELDS compression</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2003 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 1995-2003 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+
+<span class="s2">import </span><span class="s1">os</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span><span class="s2">, </span><span class="s1">ImagePalette</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">i16le </span><span class="s2">as </span><span class="s1">i16</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">i32le </span><span class="s2">as </span><span class="s1">i32</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">o8</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">o16le </span><span class="s2">as </span><span class="s1">o16</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">o32le </span><span class="s2">as </span><span class="s1">o32</span>
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Read BMP file</span>
+
+<span class="s1">BIT2MODE = {</span>
+    <span class="s0"># bits =&gt; mode, rawmode</span>
+    <span class="s3">1</span><span class="s1">: (</span><span class="s4">&quot;P&quot;</span><span class="s2">, </span><span class="s4">&quot;P;1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">4</span><span class="s1">: (</span><span class="s4">&quot;P&quot;</span><span class="s2">, </span><span class="s4">&quot;P;4&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">8</span><span class="s1">: (</span><span class="s4">&quot;P&quot;</span><span class="s2">, </span><span class="s4">&quot;P&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">16</span><span class="s1">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;BGR;15&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">24</span><span class="s1">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;BGR&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s3">32</span><span class="s1">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;BGRX&quot;</span><span class="s1">)</span><span class="s2">,</span>
+<span class="s1">}</span>
+
+
+<span class="s2">def </span><span class="s1">_accept(prefix):</span>
+    <span class="s2">return </span><span class="s1">prefix[:</span><span class="s3">2</span><span class="s1">] == </span><span class="s5">b&quot;BM&quot;</span>
+
+
+<span class="s2">def </span><span class="s1">_dib_accept(prefix):</span>
+    <span class="s2">return </span><span class="s1">i32(prefix) </span><span class="s2">in </span><span class="s1">[</span><span class="s3">12</span><span class="s2">, </span><span class="s3">40</span><span class="s2">, </span><span class="s3">64</span><span class="s2">, </span><span class="s3">108</span><span class="s2">, </span><span class="s3">124</span><span class="s1">]</span>
+
+
+<span class="s0"># =============================================================================</span>
+<span class="s0"># Image plugin for the Windows BMP format.</span>
+<span class="s0"># =============================================================================</span>
+<span class="s2">class </span><span class="s1">BmpImageFile(ImageFile.ImageFile):</span>
+    <span class="s6">&quot;&quot;&quot;Image plugin for the Windows Bitmap format (BMP)&quot;&quot;&quot;</span>
+
+    <span class="s0"># ------------------------------------------------------------- Description</span>
+    <span class="s1">format_description = </span><span class="s4">&quot;Windows Bitmap&quot;</span>
+    <span class="s1">format = </span><span class="s4">&quot;BMP&quot;</span>
+
+    <span class="s0"># -------------------------------------------------- BMP Compression values</span>
+    <span class="s1">COMPRESSIONS = {</span><span class="s4">&quot;RAW&quot;</span><span class="s1">: </span><span class="s3">0</span><span class="s2">, </span><span class="s4">&quot;RLE8&quot;</span><span class="s1">: </span><span class="s3">1</span><span class="s2">, </span><span class="s4">&quot;RLE4&quot;</span><span class="s1">: </span><span class="s3">2</span><span class="s2">, </span><span class="s4">&quot;BITFIELDS&quot;</span><span class="s1">: </span><span class="s3">3</span><span class="s2">, </span><span class="s4">&quot;JPEG&quot;</span><span class="s1">: </span><span class="s3">4</span><span class="s2">, </span><span class="s4">&quot;PNG&quot;</span><span class="s1">: </span><span class="s3">5</span><span class="s1">}</span>
+    <span class="s2">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">COMPRESSIONS.items():</span>
+        <span class="s1">vars()[k] = v</span>
+
+    <span class="s2">def </span><span class="s1">_bitmap(self</span><span class="s2">, </span><span class="s1">header=</span><span class="s3">0</span><span class="s2">, </span><span class="s1">offset=</span><span class="s3">0</span><span class="s1">):</span>
+        <span class="s6">&quot;&quot;&quot;Read relevant info about the BMP&quot;&quot;&quot;</span>
+        <span class="s1">read</span><span class="s2">, </span><span class="s1">seek = self.fp.read</span><span class="s2">, </span><span class="s1">self.fp.seek</span>
+        <span class="s2">if </span><span class="s1">header:</span>
+            <span class="s1">seek(header)</span>
+        <span class="s0"># read bmp header size @offset 14 (this is part of the header size)</span>
+        <span class="s1">file_info = {</span><span class="s4">&quot;header_size&quot;</span><span class="s1">: i32(read(</span><span class="s3">4</span><span class="s1">))</span><span class="s2">, </span><span class="s4">&quot;direction&quot;</span><span class="s1">: -</span><span class="s3">1</span><span class="s1">}</span>
+
+        <span class="s0"># -------------------- If requested, read header at a specific position</span>
+        <span class="s0"># read the rest of the bmp header, without its size</span>
+        <span class="s1">header_data = ImageFile._safe_read(self.fp</span><span class="s2">, </span><span class="s1">file_info[</span><span class="s4">&quot;header_size&quot;</span><span class="s1">] - </span><span class="s3">4</span><span class="s1">)</span>
+
+        <span class="s0"># -------------------------------------------------- IBM OS/2 Bitmap v1</span>
+        <span class="s0"># ----- This format has different offsets because of width/height types</span>
+        <span class="s2">if </span><span class="s1">file_info[</span><span class="s4">&quot;header_size&quot;</span><span class="s1">] == </span><span class="s3">12</span><span class="s1">:</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;width&quot;</span><span class="s1">] = i16(header_data</span><span class="s2">, </span><span class="s3">0</span><span class="s1">)</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;height&quot;</span><span class="s1">] = i16(header_data</span><span class="s2">, </span><span class="s3">2</span><span class="s1">)</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;planes&quot;</span><span class="s1">] = i16(header_data</span><span class="s2">, </span><span class="s3">4</span><span class="s1">)</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;bits&quot;</span><span class="s1">] = i16(header_data</span><span class="s2">, </span><span class="s3">6</span><span class="s1">)</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;compression&quot;</span><span class="s1">] = self.RAW</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;palette_padding&quot;</span><span class="s1">] = </span><span class="s3">3</span>
+
+        <span class="s0"># --------------------------------------------- Windows Bitmap v2 to v5</span>
+        <span class="s0"># v3, OS/2 v2, v4, v5</span>
+        <span class="s2">elif </span><span class="s1">file_info[</span><span class="s4">&quot;header_size&quot;</span><span class="s1">] </span><span class="s2">in </span><span class="s1">(</span><span class="s3">40</span><span class="s2">, </span><span class="s3">64</span><span class="s2">, </span><span class="s3">108</span><span class="s2">, </span><span class="s3">124</span><span class="s1">):</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;y_flip&quot;</span><span class="s1">] = header_data[</span><span class="s3">7</span><span class="s1">] == </span><span class="s3">0xFF</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;direction&quot;</span><span class="s1">] = </span><span class="s3">1 </span><span class="s2">if </span><span class="s1">file_info[</span><span class="s4">&quot;y_flip&quot;</span><span class="s1">] </span><span class="s2">else </span><span class="s1">-</span><span class="s3">1</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;width&quot;</span><span class="s1">] = i32(header_data</span><span class="s2">, </span><span class="s3">0</span><span class="s1">)</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;height&quot;</span><span class="s1">] = (</span>
+                <span class="s1">i32(header_data</span><span class="s2">, </span><span class="s3">4</span><span class="s1">)</span>
+                <span class="s2">if not </span><span class="s1">file_info[</span><span class="s4">&quot;y_flip&quot;</span><span class="s1">]</span>
+                <span class="s2">else </span><span class="s3">2</span><span class="s1">**</span><span class="s3">32 </span><span class="s1">- i32(header_data</span><span class="s2">, </span><span class="s3">4</span><span class="s1">)</span>
+            <span class="s1">)</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;planes&quot;</span><span class="s1">] = i16(header_data</span><span class="s2">, </span><span class="s3">8</span><span class="s1">)</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;bits&quot;</span><span class="s1">] = i16(header_data</span><span class="s2">, </span><span class="s3">10</span><span class="s1">)</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;compression&quot;</span><span class="s1">] = i32(header_data</span><span class="s2">, </span><span class="s3">12</span><span class="s1">)</span>
+            <span class="s0"># byte size of pixel data</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;data_size&quot;</span><span class="s1">] = i32(header_data</span><span class="s2">, </span><span class="s3">16</span><span class="s1">)</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;pixels_per_meter&quot;</span><span class="s1">] = (</span>
+                <span class="s1">i32(header_data</span><span class="s2">, </span><span class="s3">20</span><span class="s1">)</span><span class="s2">,</span>
+                <span class="s1">i32(header_data</span><span class="s2">, </span><span class="s3">24</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s1">)</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;colors&quot;</span><span class="s1">] = i32(header_data</span><span class="s2">, </span><span class="s3">28</span><span class="s1">)</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;palette_padding&quot;</span><span class="s1">] = </span><span class="s3">4</span>
+            <span class="s1">self.info[</span><span class="s4">&quot;dpi&quot;</span><span class="s1">] = tuple(x / </span><span class="s3">39.3701 </span><span class="s2">for </span><span class="s1">x </span><span class="s2">in </span><span class="s1">file_info[</span><span class="s4">&quot;pixels_per_meter&quot;</span><span class="s1">])</span>
+            <span class="s2">if </span><span class="s1">file_info[</span><span class="s4">&quot;compression&quot;</span><span class="s1">] == self.BITFIELDS:</span>
+                <span class="s2">if </span><span class="s1">len(header_data) &gt;= </span><span class="s3">52</span><span class="s1">:</span>
+                    <span class="s2">for </span><span class="s1">idx</span><span class="s2">, </span><span class="s1">mask </span><span class="s2">in </span><span class="s1">enumerate(</span>
+                        <span class="s1">[</span><span class="s4">&quot;r_mask&quot;</span><span class="s2">, </span><span class="s4">&quot;g_mask&quot;</span><span class="s2">, </span><span class="s4">&quot;b_mask&quot;</span><span class="s2">, </span><span class="s4">&quot;a_mask&quot;</span><span class="s1">]</span>
+                    <span class="s1">):</span>
+                        <span class="s1">file_info[mask] = i32(header_data</span><span class="s2">, </span><span class="s3">36 </span><span class="s1">+ idx * </span><span class="s3">4</span><span class="s1">)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s0"># 40 byte headers only have the three components in the</span>
+                    <span class="s0"># bitfields masks, ref:</span>
+                    <span class="s0"># https://msdn.microsoft.com/en-us/library/windows/desktop/dd183376(v=vs.85).aspx</span>
+                    <span class="s0"># See also</span>
+                    <span class="s0"># https://github.com/python-pillow/Pillow/issues/1293</span>
+                    <span class="s0"># There is a 4th component in the RGBQuad, in the alpha</span>
+                    <span class="s0"># location, but it is listed as a reserved component,</span>
+                    <span class="s0"># and it is not generally an alpha channel</span>
+                    <span class="s1">file_info[</span><span class="s4">&quot;a_mask&quot;</span><span class="s1">] = </span><span class="s3">0x0</span>
+                    <span class="s2">for </span><span class="s1">mask </span><span class="s2">in </span><span class="s1">[</span><span class="s4">&quot;r_mask&quot;</span><span class="s2">, </span><span class="s4">&quot;g_mask&quot;</span><span class="s2">, </span><span class="s4">&quot;b_mask&quot;</span><span class="s1">]:</span>
+                        <span class="s1">file_info[mask] = i32(read(</span><span class="s3">4</span><span class="s1">))</span>
+                <span class="s1">file_info[</span><span class="s4">&quot;rgb_mask&quot;</span><span class="s1">] = (</span>
+                    <span class="s1">file_info[</span><span class="s4">&quot;r_mask&quot;</span><span class="s1">]</span><span class="s2">,</span>
+                    <span class="s1">file_info[</span><span class="s4">&quot;g_mask&quot;</span><span class="s1">]</span><span class="s2">,</span>
+                    <span class="s1">file_info[</span><span class="s4">&quot;b_mask&quot;</span><span class="s1">]</span><span class="s2">,</span>
+                <span class="s1">)</span>
+                <span class="s1">file_info[</span><span class="s4">&quot;rgba_mask&quot;</span><span class="s1">] = (</span>
+                    <span class="s1">file_info[</span><span class="s4">&quot;r_mask&quot;</span><span class="s1">]</span><span class="s2">,</span>
+                    <span class="s1">file_info[</span><span class="s4">&quot;g_mask&quot;</span><span class="s1">]</span><span class="s2">,</span>
+                    <span class="s1">file_info[</span><span class="s4">&quot;b_mask&quot;</span><span class="s1">]</span><span class="s2">,</span>
+                    <span class="s1">file_info[</span><span class="s4">&quot;a_mask&quot;</span><span class="s1">]</span><span class="s2">,</span>
+                <span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">f&quot;Unsupported BMP header type (</span><span class="s2">{</span><span class="s1">file_info[</span><span class="s4">'header_size'</span><span class="s1">]</span><span class="s2">}</span><span class="s4">)&quot;</span><span class="s1">)</span>
+
+        <span class="s0"># ------------------ Special case : header is reported 40, which</span>
+        <span class="s0"># ---------------------- is shorter than real size for bpp &gt;= 16</span>
+        <span class="s1">self._size = file_info[</span><span class="s4">&quot;width&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s1">file_info[</span><span class="s4">&quot;height&quot;</span><span class="s1">]</span>
+
+        <span class="s0"># ------- If color count was not found in the header, compute from bits</span>
+        <span class="s1">file_info[</span><span class="s4">&quot;colors&quot;</span><span class="s1">] = (</span>
+            <span class="s1">file_info[</span><span class="s4">&quot;colors&quot;</span><span class="s1">]</span>
+            <span class="s2">if </span><span class="s1">file_info.get(</span><span class="s4">&quot;colors&quot;</span><span class="s2">, </span><span class="s3">0</span><span class="s1">)</span>
+            <span class="s2">else </span><span class="s1">(</span><span class="s3">1 </span><span class="s1">&lt;&lt; file_info[</span><span class="s4">&quot;bits&quot;</span><span class="s1">])</span>
+        <span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">offset == </span><span class="s3">14 </span><span class="s1">+ file_info[</span><span class="s4">&quot;header_size&quot;</span><span class="s1">] </span><span class="s2">and </span><span class="s1">file_info[</span><span class="s4">&quot;bits&quot;</span><span class="s1">] &lt;= </span><span class="s3">8</span><span class="s1">:</span>
+            <span class="s1">offset += </span><span class="s3">4 </span><span class="s1">* file_info[</span><span class="s4">&quot;colors&quot;</span><span class="s1">]</span>
+
+        <span class="s0"># ---------------------- Check bit depth for unusual unsupported values</span>
+        <span class="s1">self.mode</span><span class="s2">, </span><span class="s1">raw_mode = BIT2MODE.get(file_info[</span><span class="s4">&quot;bits&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s1">(</span><span class="s2">None, None</span><span class="s1">))</span>
+        <span class="s2">if </span><span class="s1">self.mode </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">f&quot;Unsupported BMP pixel depth (</span><span class="s2">{</span><span class="s1">file_info[</span><span class="s4">'bits'</span><span class="s1">]</span><span class="s2">}</span><span class="s4">)&quot;</span><span class="s1">)</span>
+
+        <span class="s0"># ---------------- Process BMP with Bitfields compression (not palette)</span>
+        <span class="s1">decoder_name = </span><span class="s4">&quot;raw&quot;</span>
+        <span class="s2">if </span><span class="s1">file_info[</span><span class="s4">&quot;compression&quot;</span><span class="s1">] == self.BITFIELDS:</span>
+            <span class="s1">SUPPORTED = {</span>
+                <span class="s3">32</span><span class="s1">: [</span>
+                    <span class="s1">(</span><span class="s3">0xFF0000</span><span class="s2">, </span><span class="s3">0xFF00</span><span class="s2">, </span><span class="s3">0xFF</span><span class="s2">, </span><span class="s3">0x0</span><span class="s1">)</span><span class="s2">,</span>
+                    <span class="s1">(</span><span class="s3">0xFF000000</span><span class="s2">, </span><span class="s3">0xFF0000</span><span class="s2">, </span><span class="s3">0xFF00</span><span class="s2">, </span><span class="s3">0x0</span><span class="s1">)</span><span class="s2">,</span>
+                    <span class="s1">(</span><span class="s3">0xFF000000</span><span class="s2">, </span><span class="s3">0xFF0000</span><span class="s2">, </span><span class="s3">0xFF00</span><span class="s2">, </span><span class="s3">0xFF</span><span class="s1">)</span><span class="s2">,</span>
+                    <span class="s1">(</span><span class="s3">0xFF</span><span class="s2">, </span><span class="s3">0xFF00</span><span class="s2">, </span><span class="s3">0xFF0000</span><span class="s2">, </span><span class="s3">0xFF000000</span><span class="s1">)</span><span class="s2">,</span>
+                    <span class="s1">(</span><span class="s3">0xFF0000</span><span class="s2">, </span><span class="s3">0xFF00</span><span class="s2">, </span><span class="s3">0xFF</span><span class="s2">, </span><span class="s3">0xFF000000</span><span class="s1">)</span><span class="s2">,</span>
+                    <span class="s1">(</span><span class="s3">0x0</span><span class="s2">, </span><span class="s3">0x0</span><span class="s2">, </span><span class="s3">0x0</span><span class="s2">, </span><span class="s3">0x0</span><span class="s1">)</span><span class="s2">,</span>
+                <span class="s1">]</span><span class="s2">,</span>
+                <span class="s3">24</span><span class="s1">: [(</span><span class="s3">0xFF0000</span><span class="s2">, </span><span class="s3">0xFF00</span><span class="s2">, </span><span class="s3">0xFF</span><span class="s1">)]</span><span class="s2">,</span>
+                <span class="s3">16</span><span class="s1">: [(</span><span class="s3">0xF800</span><span class="s2">, </span><span class="s3">0x7E0</span><span class="s2">, </span><span class="s3">0x1F</span><span class="s1">)</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0x7C00</span><span class="s2">, </span><span class="s3">0x3E0</span><span class="s2">, </span><span class="s3">0x1F</span><span class="s1">)]</span><span class="s2">,</span>
+            <span class="s1">}</span>
+            <span class="s1">MASK_MODES = {</span>
+                <span class="s1">(</span><span class="s3">32</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0xFF0000</span><span class="s2">, </span><span class="s3">0xFF00</span><span class="s2">, </span><span class="s3">0xFF</span><span class="s2">, </span><span class="s3">0x0</span><span class="s1">)): </span><span class="s4">&quot;BGRX&quot;</span><span class="s2">,</span>
+                <span class="s1">(</span><span class="s3">32</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0xFF000000</span><span class="s2">, </span><span class="s3">0xFF0000</span><span class="s2">, </span><span class="s3">0xFF00</span><span class="s2">, </span><span class="s3">0x0</span><span class="s1">)): </span><span class="s4">&quot;XBGR&quot;</span><span class="s2">,</span>
+                <span class="s1">(</span><span class="s3">32</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0xFF000000</span><span class="s2">, </span><span class="s3">0xFF0000</span><span class="s2">, </span><span class="s3">0xFF00</span><span class="s2">, </span><span class="s3">0xFF</span><span class="s1">)): </span><span class="s4">&quot;ABGR&quot;</span><span class="s2">,</span>
+                <span class="s1">(</span><span class="s3">32</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0xFF</span><span class="s2">, </span><span class="s3">0xFF00</span><span class="s2">, </span><span class="s3">0xFF0000</span><span class="s2">, </span><span class="s3">0xFF000000</span><span class="s1">)): </span><span class="s4">&quot;RGBA&quot;</span><span class="s2">,</span>
+                <span class="s1">(</span><span class="s3">32</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0xFF0000</span><span class="s2">, </span><span class="s3">0xFF00</span><span class="s2">, </span><span class="s3">0xFF</span><span class="s2">, </span><span class="s3">0xFF000000</span><span class="s1">)): </span><span class="s4">&quot;BGRA&quot;</span><span class="s2">,</span>
+                <span class="s1">(</span><span class="s3">32</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0x0</span><span class="s2">, </span><span class="s3">0x0</span><span class="s2">, </span><span class="s3">0x0</span><span class="s2">, </span><span class="s3">0x0</span><span class="s1">)): </span><span class="s4">&quot;BGRA&quot;</span><span class="s2">,</span>
+                <span class="s1">(</span><span class="s3">24</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0xFF0000</span><span class="s2">, </span><span class="s3">0xFF00</span><span class="s2">, </span><span class="s3">0xFF</span><span class="s1">)): </span><span class="s4">&quot;BGR&quot;</span><span class="s2">,</span>
+                <span class="s1">(</span><span class="s3">16</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0xF800</span><span class="s2">, </span><span class="s3">0x7E0</span><span class="s2">, </span><span class="s3">0x1F</span><span class="s1">)): </span><span class="s4">&quot;BGR;16&quot;</span><span class="s2">,</span>
+                <span class="s1">(</span><span class="s3">16</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0x7C00</span><span class="s2">, </span><span class="s3">0x3E0</span><span class="s2">, </span><span class="s3">0x1F</span><span class="s1">)): </span><span class="s4">&quot;BGR;15&quot;</span><span class="s2">,</span>
+            <span class="s1">}</span>
+            <span class="s2">if </span><span class="s1">file_info[</span><span class="s4">&quot;bits&quot;</span><span class="s1">] </span><span class="s2">in </span><span class="s1">SUPPORTED:</span>
+                <span class="s2">if </span><span class="s1">(</span>
+                    <span class="s1">file_info[</span><span class="s4">&quot;bits&quot;</span><span class="s1">] == </span><span class="s3">32</span>
+                    <span class="s2">and </span><span class="s1">file_info[</span><span class="s4">&quot;rgba_mask&quot;</span><span class="s1">] </span><span class="s2">in </span><span class="s1">SUPPORTED[file_info[</span><span class="s4">&quot;bits&quot;</span><span class="s1">]]</span>
+                <span class="s1">):</span>
+                    <span class="s1">raw_mode = MASK_MODES[(file_info[</span><span class="s4">&quot;bits&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s1">file_info[</span><span class="s4">&quot;rgba_mask&quot;</span><span class="s1">])]</span>
+                    <span class="s1">self.mode = </span><span class="s4">&quot;RGBA&quot; </span><span class="s2">if </span><span class="s4">&quot;A&quot; </span><span class="s2">in </span><span class="s1">raw_mode </span><span class="s2">else </span><span class="s1">self.mode</span>
+                <span class="s2">elif </span><span class="s1">(</span>
+                    <span class="s1">file_info[</span><span class="s4">&quot;bits&quot;</span><span class="s1">] </span><span class="s2">in </span><span class="s1">(</span><span class="s3">24</span><span class="s2">, </span><span class="s3">16</span><span class="s1">)</span>
+                    <span class="s2">and </span><span class="s1">file_info[</span><span class="s4">&quot;rgb_mask&quot;</span><span class="s1">] </span><span class="s2">in </span><span class="s1">SUPPORTED[file_info[</span><span class="s4">&quot;bits&quot;</span><span class="s1">]]</span>
+                <span class="s1">):</span>
+                    <span class="s1">raw_mode = MASK_MODES[(file_info[</span><span class="s4">&quot;bits&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s1">file_info[</span><span class="s4">&quot;rgb_mask&quot;</span><span class="s1">])]</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">&quot;Unsupported BMP bitfields layout&quot;</span><span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">&quot;Unsupported BMP bitfields layout&quot;</span><span class="s1">)</span>
+        <span class="s2">elif </span><span class="s1">file_info[</span><span class="s4">&quot;compression&quot;</span><span class="s1">] == self.RAW:</span>
+            <span class="s2">if </span><span class="s1">file_info[</span><span class="s4">&quot;bits&quot;</span><span class="s1">] == </span><span class="s3">32 </span><span class="s2">and </span><span class="s1">header == </span><span class="s3">22</span><span class="s1">:  </span><span class="s0"># 32-bit .cur offset</span>
+                <span class="s1">raw_mode</span><span class="s2">, </span><span class="s1">self.mode = </span><span class="s4">&quot;BGRA&quot;</span><span class="s2">, </span><span class="s4">&quot;RGBA&quot;</span>
+        <span class="s2">elif </span><span class="s1">file_info[</span><span class="s4">&quot;compression&quot;</span><span class="s1">] </span><span class="s2">in </span><span class="s1">(self.RLE8</span><span class="s2">, </span><span class="s1">self.RLE4):</span>
+            <span class="s1">decoder_name = </span><span class="s4">&quot;bmp_rle&quot;</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">f&quot;Unsupported BMP compression (</span><span class="s2">{</span><span class="s1">file_info[</span><span class="s4">'compression'</span><span class="s1">]</span><span class="s2">}</span><span class="s4">)&quot;</span><span class="s1">)</span>
+
+        <span class="s0"># --------------- Once the header is processed, process the palette/LUT</span>
+        <span class="s2">if </span><span class="s1">self.mode == </span><span class="s4">&quot;P&quot;</span><span class="s1">:  </span><span class="s0"># Paletted for 1, 4 and 8 bit images</span>
+
+            <span class="s0"># ---------------------------------------------------- 1-bit images</span>
+            <span class="s2">if not </span><span class="s1">(</span><span class="s3">0 </span><span class="s1">&lt; file_info[</span><span class="s4">&quot;colors&quot;</span><span class="s1">] &lt;= </span><span class="s3">65536</span><span class="s1">):</span>
+                <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">f&quot;Unsupported BMP Palette size (</span><span class="s2">{</span><span class="s1">file_info[</span><span class="s4">'colors'</span><span class="s1">]</span><span class="s2">}</span><span class="s4">)&quot;</span><span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">padding = file_info[</span><span class="s4">&quot;palette_padding&quot;</span><span class="s1">]</span>
+                <span class="s1">palette = read(padding * file_info[</span><span class="s4">&quot;colors&quot;</span><span class="s1">])</span>
+                <span class="s1">greyscale = </span><span class="s2">True</span>
+                <span class="s1">indices = (</span>
+                    <span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">255</span><span class="s1">)</span>
+                    <span class="s2">if </span><span class="s1">file_info[</span><span class="s4">&quot;colors&quot;</span><span class="s1">] == </span><span class="s3">2</span>
+                    <span class="s2">else </span><span class="s1">list(range(file_info[</span><span class="s4">&quot;colors&quot;</span><span class="s1">]))</span>
+                <span class="s1">)</span>
+
+                <span class="s0"># ----------------- Check if greyscale and ignore palette if so</span>
+                <span class="s2">for </span><span class="s1">ind</span><span class="s2">, </span><span class="s1">val </span><span class="s2">in </span><span class="s1">enumerate(indices):</span>
+                    <span class="s1">rgb = palette[ind * padding : ind * padding + </span><span class="s3">3</span><span class="s1">]</span>
+                    <span class="s2">if </span><span class="s1">rgb != o8(val) * </span><span class="s3">3</span><span class="s1">:</span>
+                        <span class="s1">greyscale = </span><span class="s2">False</span>
+
+                <span class="s0"># ------- If all colors are grey, white or black, ditch palette</span>
+                <span class="s2">if </span><span class="s1">greyscale:</span>
+                    <span class="s1">self.mode = </span><span class="s4">&quot;1&quot; </span><span class="s2">if </span><span class="s1">file_info[</span><span class="s4">&quot;colors&quot;</span><span class="s1">] == </span><span class="s3">2 </span><span class="s2">else </span><span class="s4">&quot;L&quot;</span>
+                    <span class="s1">raw_mode = self.mode</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">self.mode = </span><span class="s4">&quot;P&quot;</span>
+                    <span class="s1">self.palette = ImagePalette.raw(</span>
+                        <span class="s4">&quot;BGRX&quot; </span><span class="s2">if </span><span class="s1">padding == </span><span class="s3">4 </span><span class="s2">else </span><span class="s4">&quot;BGR&quot;</span><span class="s2">, </span><span class="s1">palette</span>
+                    <span class="s1">)</span>
+
+        <span class="s0"># ---------------------------- Finally set the tile data for the plugin</span>
+        <span class="s1">self.info[</span><span class="s4">&quot;compression&quot;</span><span class="s1">] = file_info[</span><span class="s4">&quot;compression&quot;</span><span class="s1">]</span>
+        <span class="s1">args = [raw_mode]</span>
+        <span class="s2">if </span><span class="s1">decoder_name == </span><span class="s4">&quot;bmp_rle&quot;</span><span class="s1">:</span>
+            <span class="s1">args.append(file_info[</span><span class="s4">&quot;compression&quot;</span><span class="s1">] == self.RLE4)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">args.append(((file_info[</span><span class="s4">&quot;width&quot;</span><span class="s1">] * file_info[</span><span class="s4">&quot;bits&quot;</span><span class="s1">] + </span><span class="s3">31</span><span class="s1">) &gt;&gt; </span><span class="s3">3</span><span class="s1">) &amp; (~</span><span class="s3">3</span><span class="s1">))</span>
+        <span class="s1">args.append(file_info[</span><span class="s4">&quot;direction&quot;</span><span class="s1">])</span>
+        <span class="s1">self.tile = [</span>
+            <span class="s1">(</span>
+                <span class="s1">decoder_name</span><span class="s2">,</span>
+                <span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">file_info[</span><span class="s4">&quot;width&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s1">file_info[</span><span class="s4">&quot;height&quot;</span><span class="s1">])</span><span class="s2">,</span>
+                <span class="s1">offset </span><span class="s2">or </span><span class="s1">self.fp.tell()</span><span class="s2">,</span>
+                <span class="s1">tuple(args)</span><span class="s2">,</span>
+            <span class="s1">)</span>
+        <span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+        <span class="s6">&quot;&quot;&quot;Open file, check magic number and read header&quot;&quot;&quot;</span>
+        <span class="s0"># read 14 bytes: magic number, filesize, reserved, header final offset</span>
+        <span class="s1">head_data = self.fp.read(</span><span class="s3">14</span><span class="s1">)</span>
+        <span class="s0"># choke if the file does not have the required magic bytes</span>
+        <span class="s2">if not </span><span class="s1">_accept(head_data):</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;Not a BMP file&quot;</span><span class="s1">)</span>
+        <span class="s0"># read the start position of the BMP image data (u32)</span>
+        <span class="s1">offset = i32(head_data</span><span class="s2">, </span><span class="s3">10</span><span class="s1">)</span>
+        <span class="s0"># load bitmap information (offset=raster info)</span>
+        <span class="s1">self._bitmap(offset=offset)</span>
+
+
+<span class="s2">class </span><span class="s1">BmpRleDecoder(ImageFile.PyDecoder):</span>
+    <span class="s1">_pulls_fd = </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">decode(self</span><span class="s2">, </span><span class="s1">buffer):</span>
+        <span class="s1">rle4 = self.args[</span><span class="s3">1</span><span class="s1">]</span>
+        <span class="s1">data = bytearray()</span>
+        <span class="s1">x = </span><span class="s3">0</span>
+        <span class="s2">while </span><span class="s1">len(data) &lt; self.state.xsize * self.state.ysize:</span>
+            <span class="s1">pixels = self.fd.read(</span><span class="s3">1</span><span class="s1">)</span>
+            <span class="s1">byte = self.fd.read(</span><span class="s3">1</span><span class="s1">)</span>
+            <span class="s2">if not </span><span class="s1">pixels </span><span class="s2">or not </span><span class="s1">byte:</span>
+                <span class="s2">break</span>
+            <span class="s1">num_pixels = pixels[</span><span class="s3">0</span><span class="s1">]</span>
+            <span class="s2">if </span><span class="s1">num_pixels:</span>
+                <span class="s0"># encoded mode</span>
+                <span class="s2">if </span><span class="s1">x + num_pixels &gt; self.state.xsize:</span>
+                    <span class="s0"># Too much data for row</span>
+                    <span class="s1">num_pixels = max(</span><span class="s3">0</span><span class="s2">, </span><span class="s1">self.state.xsize - x)</span>
+                <span class="s2">if </span><span class="s1">rle4:</span>
+                    <span class="s1">first_pixel = o8(byte[</span><span class="s3">0</span><span class="s1">] &gt;&gt; </span><span class="s3">4</span><span class="s1">)</span>
+                    <span class="s1">second_pixel = o8(byte[</span><span class="s3">0</span><span class="s1">] &amp; </span><span class="s3">0x0F</span><span class="s1">)</span>
+                    <span class="s2">for </span><span class="s1">index </span><span class="s2">in </span><span class="s1">range(num_pixels):</span>
+                        <span class="s2">if </span><span class="s1">index % </span><span class="s3">2 </span><span class="s1">== </span><span class="s3">0</span><span class="s1">:</span>
+                            <span class="s1">data += first_pixel</span>
+                        <span class="s2">else</span><span class="s1">:</span>
+                            <span class="s1">data += second_pixel</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">data += byte * num_pixels</span>
+                <span class="s1">x += num_pixels</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">byte[</span><span class="s3">0</span><span class="s1">] == </span><span class="s3">0</span><span class="s1">:</span>
+                    <span class="s0"># end of line</span>
+                    <span class="s2">while </span><span class="s1">len(data) % self.state.xsize != </span><span class="s3">0</span><span class="s1">:</span>
+                        <span class="s1">data += </span><span class="s5">b&quot;</span><span class="s2">\x00</span><span class="s5">&quot;</span>
+                    <span class="s1">x = </span><span class="s3">0</span>
+                <span class="s2">elif </span><span class="s1">byte[</span><span class="s3">0</span><span class="s1">] == </span><span class="s3">1</span><span class="s1">:</span>
+                    <span class="s0"># end of bitmap</span>
+                    <span class="s2">break</span>
+                <span class="s2">elif </span><span class="s1">byte[</span><span class="s3">0</span><span class="s1">] == </span><span class="s3">2</span><span class="s1">:</span>
+                    <span class="s0"># delta</span>
+                    <span class="s1">bytes_read = self.fd.read(</span><span class="s3">2</span><span class="s1">)</span>
+                    <span class="s2">if </span><span class="s1">len(bytes_read) &lt; </span><span class="s3">2</span><span class="s1">:</span>
+                        <span class="s2">break</span>
+                    <span class="s1">right</span><span class="s2">, </span><span class="s1">up = self.fd.read(</span><span class="s3">2</span><span class="s1">)</span>
+                    <span class="s1">data += </span><span class="s5">b&quot;</span><span class="s2">\x00</span><span class="s5">&quot; </span><span class="s1">* (right + up * self.state.xsize)</span>
+                    <span class="s1">x = len(data) % self.state.xsize</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s0"># absolute mode</span>
+                    <span class="s2">if </span><span class="s1">rle4:</span>
+                        <span class="s0"># 2 pixels per byte</span>
+                        <span class="s1">byte_count = byte[</span><span class="s3">0</span><span class="s1">] // </span><span class="s3">2</span>
+                        <span class="s1">bytes_read = self.fd.read(byte_count)</span>
+                        <span class="s2">for </span><span class="s1">byte_read </span><span class="s2">in </span><span class="s1">bytes_read:</span>
+                            <span class="s1">data += o8(byte_read &gt;&gt; </span><span class="s3">4</span><span class="s1">)</span>
+                            <span class="s1">data += o8(byte_read &amp; </span><span class="s3">0x0F</span><span class="s1">)</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">byte_count = byte[</span><span class="s3">0</span><span class="s1">]</span>
+                        <span class="s1">bytes_read = self.fd.read(byte_count)</span>
+                        <span class="s1">data += bytes_read</span>
+                    <span class="s2">if </span><span class="s1">len(bytes_read) &lt; byte_count:</span>
+                        <span class="s2">break</span>
+                    <span class="s1">x += byte[</span><span class="s3">0</span><span class="s1">]</span>
+
+                    <span class="s0"># align to 16-bit word boundary</span>
+                    <span class="s2">if </span><span class="s1">self.fd.tell() % </span><span class="s3">2 </span><span class="s1">!= </span><span class="s3">0</span><span class="s1">:</span>
+                        <span class="s1">self.fd.seek(</span><span class="s3">1</span><span class="s2">, </span><span class="s1">os.SEEK_CUR)</span>
+        <span class="s1">rawmode = </span><span class="s4">&quot;L&quot; </span><span class="s2">if </span><span class="s1">self.mode == </span><span class="s4">&quot;L&quot; </span><span class="s2">else </span><span class="s4">&quot;P&quot;</span>
+        <span class="s1">self.set_as_raw(bytes(data)</span><span class="s2">, </span><span class="s1">(rawmode</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">self.args[-</span><span class="s3">1</span><span class="s1">]))</span>
+        <span class="s2">return </span><span class="s1">-</span><span class="s3">1</span><span class="s2">, </span><span class="s3">0</span>
+
+
+<span class="s0"># =============================================================================</span>
+<span class="s0"># Image plugin for the DIB format (BMP alias)</span>
+<span class="s0"># =============================================================================</span>
+<span class="s2">class </span><span class="s1">DibImageFile(BmpImageFile):</span>
+
+    <span class="s1">format = </span><span class="s4">&quot;DIB&quot;</span>
+    <span class="s1">format_description = </span><span class="s4">&quot;Windows Bitmap&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+        <span class="s1">self._bitmap()</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Write BMP file</span>
+
+
+<span class="s1">SAVE = {</span>
+    <span class="s4">&quot;1&quot;</span><span class="s1">: (</span><span class="s4">&quot;1&quot;</span><span class="s2">, </span><span class="s3">1</span><span class="s2">, </span><span class="s3">2</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s4">&quot;L&quot;</span><span class="s1">: (</span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s3">8</span><span class="s2">, </span><span class="s3">256</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s4">&quot;P&quot;</span><span class="s1">: (</span><span class="s4">&quot;P&quot;</span><span class="s2">, </span><span class="s3">8</span><span class="s2">, </span><span class="s3">256</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s4">&quot;RGB&quot;</span><span class="s1">: (</span><span class="s4">&quot;BGR&quot;</span><span class="s2">, </span><span class="s3">24</span><span class="s2">, </span><span class="s3">0</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s4">&quot;RGBA&quot;</span><span class="s1">: (</span><span class="s4">&quot;BGRA&quot;</span><span class="s2">, </span><span class="s3">32</span><span class="s2">, </span><span class="s3">0</span><span class="s1">)</span><span class="s2">,</span>
+<span class="s1">}</span>
+
+
+<span class="s2">def </span><span class="s1">_dib_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename):</span>
+    <span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename</span><span class="s2">, False</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename</span><span class="s2">, </span><span class="s1">bitmap_header=</span><span class="s2">True</span><span class="s1">):</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">rawmode</span><span class="s2">, </span><span class="s1">bits</span><span class="s2">, </span><span class="s1">colors = SAVE[im.mode]</span>
+    <span class="s2">except </span><span class="s1">KeyError </span><span class="s2">as </span><span class="s1">e:</span>
+        <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">f&quot;cannot write mode </span><span class="s2">{</span><span class="s1">im.mode</span><span class="s2">} </span><span class="s4">as BMP&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+
+    <span class="s1">info = im.encoderinfo</span>
+
+    <span class="s1">dpi = info.get(</span><span class="s4">&quot;dpi&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s3">96</span><span class="s2">, </span><span class="s3">96</span><span class="s1">))</span>
+
+    <span class="s0"># 1 meter == 39.3701 inches</span>
+    <span class="s1">ppm = tuple(map(</span><span class="s2">lambda </span><span class="s1">x: int(x * </span><span class="s3">39.3701 </span><span class="s1">+ </span><span class="s3">0.5</span><span class="s1">)</span><span class="s2">, </span><span class="s1">dpi))</span>
+
+    <span class="s1">stride = ((im.size[</span><span class="s3">0</span><span class="s1">] * bits + </span><span class="s3">7</span><span class="s1">) // </span><span class="s3">8 </span><span class="s1">+ </span><span class="s3">3</span><span class="s1">) &amp; (~</span><span class="s3">3</span><span class="s1">)</span>
+    <span class="s1">header = </span><span class="s3">40  </span><span class="s0"># or 64 for OS/2 version 2</span>
+    <span class="s1">image = stride * im.size[</span><span class="s3">1</span><span class="s1">]</span>
+
+    <span class="s2">if </span><span class="s1">im.mode == </span><span class="s4">&quot;1&quot;</span><span class="s1">:</span>
+        <span class="s1">palette = </span><span class="s5">b&quot;&quot;</span><span class="s1">.join(o8(i) * </span><span class="s3">4 </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">255</span><span class="s1">))</span>
+    <span class="s2">elif </span><span class="s1">im.mode == </span><span class="s4">&quot;L&quot;</span><span class="s1">:</span>
+        <span class="s1">palette = </span><span class="s5">b&quot;&quot;</span><span class="s1">.join(o8(i) * </span><span class="s3">4 </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">256</span><span class="s1">))</span>
+    <span class="s2">elif </span><span class="s1">im.mode == </span><span class="s4">&quot;P&quot;</span><span class="s1">:</span>
+        <span class="s1">palette = im.im.getpalette(</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;BGRX&quot;</span><span class="s1">)</span>
+        <span class="s1">colors = len(palette) // </span><span class="s3">4</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">palette = </span><span class="s2">None</span>
+
+    <span class="s0"># bitmap header</span>
+    <span class="s2">if </span><span class="s1">bitmap_header:</span>
+        <span class="s1">offset = </span><span class="s3">14 </span><span class="s1">+ header + colors * </span><span class="s3">4</span>
+        <span class="s1">file_size = offset + image</span>
+        <span class="s2">if </span><span class="s1">file_size &gt; </span><span class="s3">2</span><span class="s1">**</span><span class="s3">32 </span><span class="s1">- </span><span class="s3">1</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;File size is too large for the BMP format&quot;</span><span class="s1">)</span>
+        <span class="s1">fp.write(</span>
+            <span class="s5">b&quot;BM&quot;  </span><span class="s0"># file type (magic)</span>
+            <span class="s1">+ o32(file_size)  </span><span class="s0"># file size</span>
+            <span class="s1">+ o32(</span><span class="s3">0</span><span class="s1">)  </span><span class="s0"># reserved</span>
+            <span class="s1">+ o32(offset)  </span><span class="s0"># image data offset</span>
+        <span class="s1">)</span>
+
+    <span class="s0"># bitmap info header</span>
+    <span class="s1">fp.write(</span>
+        <span class="s1">o32(header)  </span><span class="s0"># info header size</span>
+        <span class="s1">+ o32(im.size[</span><span class="s3">0</span><span class="s1">])  </span><span class="s0"># width</span>
+        <span class="s1">+ o32(im.size[</span><span class="s3">1</span><span class="s1">])  </span><span class="s0"># height</span>
+        <span class="s1">+ o16(</span><span class="s3">1</span><span class="s1">)  </span><span class="s0"># planes</span>
+        <span class="s1">+ o16(bits)  </span><span class="s0"># depth</span>
+        <span class="s1">+ o32(</span><span class="s3">0</span><span class="s1">)  </span><span class="s0"># compression (0=uncompressed)</span>
+        <span class="s1">+ o32(image)  </span><span class="s0"># size of bitmap</span>
+        <span class="s1">+ o32(ppm[</span><span class="s3">0</span><span class="s1">])  </span><span class="s0"># resolution</span>
+        <span class="s1">+ o32(ppm[</span><span class="s3">1</span><span class="s1">])  </span><span class="s0"># resolution</span>
+        <span class="s1">+ o32(colors)  </span><span class="s0"># colors used</span>
+        <span class="s1">+ o32(colors)  </span><span class="s0"># colors important</span>
+    <span class="s1">)</span>
+
+    <span class="s1">fp.write(</span><span class="s5">b&quot;</span><span class="s2">\0</span><span class="s5">&quot; </span><span class="s1">* (header - </span><span class="s3">40</span><span class="s1">))  </span><span class="s0"># padding (for OS/2 format)</span>
+
+    <span class="s2">if </span><span class="s1">palette:</span>
+        <span class="s1">fp.write(palette)</span>
+
+    <span class="s1">ImageFile._save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">[(</span><span class="s4">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s1">) + im.size</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">(rawmode</span><span class="s2">, </span><span class="s1">stride</span><span class="s2">, </span><span class="s1">-</span><span class="s3">1</span><span class="s1">))])</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Registry</span>
+
+
+<span class="s1">Image.register_open(BmpImageFile.format</span><span class="s2">, </span><span class="s1">BmpImageFile</span><span class="s2">, </span><span class="s1">_accept)</span>
+<span class="s1">Image.register_save(BmpImageFile.format</span><span class="s2">, </span><span class="s1">_save)</span>
+
+<span class="s1">Image.register_extension(BmpImageFile.format</span><span class="s2">, </span><span class="s4">&quot;.bmp&quot;</span><span class="s1">)</span>
+
+<span class="s1">Image.register_mime(BmpImageFile.format</span><span class="s2">, </span><span class="s4">&quot;image/bmp&quot;</span><span class="s1">)</span>
+
+<span class="s1">Image.register_decoder(</span><span class="s4">&quot;bmp_rle&quot;</span><span class="s2">, </span><span class="s1">BmpRleDecoder)</span>
+
+<span class="s1">Image.register_open(DibImageFile.format</span><span class="s2">, </span><span class="s1">DibImageFile</span><span class="s2">, </span><span class="s1">_dib_accept)</span>
+<span class="s1">Image.register_save(DibImageFile.format</span><span class="s2">, </span><span class="s1">_dib_save)</span>
+
+<span class="s1">Image.register_extension(DibImageFile.format</span><span class="s2">, </span><span class="s4">&quot;.dib&quot;</span><span class="s1">)</span>
+
+<span class="s1">Image.register_mime(DibImageFile.format</span><span class="s2">, </span><span class="s4">&quot;image/bmp&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

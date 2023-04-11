@@ -1,0 +1,281 @@
+<html>
+<head>
+<title>ImageMath.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #629755; font-style: italic;}
+.s4 { color: #6a8759;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageMath.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># a simple math add-on for the Python Imaging Library</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1999-02-15 fl   Original PIL Plus release</span>
+<span class="s0"># 2005-05-05 fl   Simplified and cleaned up for PIL 1.1.6</span>
+<span class="s0"># 2005-09-12 fl   Fixed int() and float() for Python 2.4.1</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1999-2005 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 2005 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">import </span><span class="s1">builtins</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">_imagingmath</span>
+
+
+<span class="s2">def </span><span class="s1">_isconstant(v):</span>
+    <span class="s2">return </span><span class="s1">isinstance(v</span><span class="s2">, </span><span class="s1">(int</span><span class="s2">, </span><span class="s1">float))</span>
+
+
+<span class="s2">class </span><span class="s1">_Operand:</span>
+    <span class="s3">&quot;&quot;&quot;Wraps an image operand, providing standard operators&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">im):</span>
+        <span class="s1">self.im = im</span>
+
+    <span class="s2">def </span><span class="s1">__fixup(self</span><span class="s2">, </span><span class="s1">im1):</span>
+        <span class="s0"># convert image to suitable mode</span>
+        <span class="s2">if </span><span class="s1">isinstance(im1</span><span class="s2">, </span><span class="s1">_Operand):</span>
+            <span class="s0"># argument was an image.</span>
+            <span class="s2">if </span><span class="s1">im1.im.mode </span><span class="s2">in </span><span class="s1">(</span><span class="s4">&quot;1&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s1">):</span>
+                <span class="s2">return </span><span class="s1">im1.im.convert(</span><span class="s4">&quot;I&quot;</span><span class="s1">)</span>
+            <span class="s2">elif </span><span class="s1">im1.im.mode </span><span class="s2">in </span><span class="s1">(</span><span class="s4">&quot;I&quot;</span><span class="s2">, </span><span class="s4">&quot;F&quot;</span><span class="s1">):</span>
+                <span class="s2">return </span><span class="s1">im1.im</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">f&quot;unsupported mode: </span><span class="s2">{</span><span class="s1">im1.im.mode</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s0"># argument was a constant</span>
+            <span class="s2">if </span><span class="s1">_isconstant(im1) </span><span class="s2">and </span><span class="s1">self.im.mode </span><span class="s2">in </span><span class="s1">(</span><span class="s4">&quot;1&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s4">&quot;I&quot;</span><span class="s1">):</span>
+                <span class="s2">return </span><span class="s1">Image.new(</span><span class="s4">&quot;I&quot;</span><span class="s2">, </span><span class="s1">self.im.size</span><span class="s2">, </span><span class="s1">im1)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">Image.new(</span><span class="s4">&quot;F&quot;</span><span class="s2">, </span><span class="s1">self.im.size</span><span class="s2">, </span><span class="s1">im1)</span>
+
+    <span class="s2">def </span><span class="s1">apply(self</span><span class="s2">, </span><span class="s1">op</span><span class="s2">, </span><span class="s1">im1</span><span class="s2">, </span><span class="s1">im2=</span><span class="s2">None, </span><span class="s1">mode=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s1">im1 = self.__fixup(im1)</span>
+        <span class="s2">if </span><span class="s1">im2 </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s0"># unary operation</span>
+            <span class="s1">out = Image.new(mode </span><span class="s2">or </span><span class="s1">im1.mode</span><span class="s2">, </span><span class="s1">im1.size</span><span class="s2">, None</span><span class="s1">)</span>
+            <span class="s1">im1.load()</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">op = getattr(_imagingmath</span><span class="s2">, </span><span class="s1">op + </span><span class="s4">&quot;_&quot; </span><span class="s1">+ im1.mode)</span>
+            <span class="s2">except </span><span class="s1">AttributeError </span><span class="s2">as </span><span class="s1">e:</span>
+                <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s4">f&quot;bad operand type for '</span><span class="s2">{</span><span class="s1">op</span><span class="s2">}</span><span class="s4">'&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+            <span class="s1">_imagingmath.unop(op</span><span class="s2">, </span><span class="s1">out.im.id</span><span class="s2">, </span><span class="s1">im1.im.id)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s0"># binary operation</span>
+            <span class="s1">im2 = self.__fixup(im2)</span>
+            <span class="s2">if </span><span class="s1">im1.mode != im2.mode:</span>
+                <span class="s0"># convert both arguments to floating point</span>
+                <span class="s2">if </span><span class="s1">im1.mode != </span><span class="s4">&quot;F&quot;</span><span class="s1">:</span>
+                    <span class="s1">im1 = im1.convert(</span><span class="s4">&quot;F&quot;</span><span class="s1">)</span>
+                <span class="s2">if </span><span class="s1">im2.mode != </span><span class="s4">&quot;F&quot;</span><span class="s1">:</span>
+                    <span class="s1">im2 = im2.convert(</span><span class="s4">&quot;F&quot;</span><span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">im1.size != im2.size:</span>
+                <span class="s0"># crop both arguments to a common size</span>
+                <span class="s1">size = (min(im1.size[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">im2.size[</span><span class="s5">0</span><span class="s1">])</span><span class="s2">, </span><span class="s1">min(im1.size[</span><span class="s5">1</span><span class="s1">]</span><span class="s2">, </span><span class="s1">im2.size[</span><span class="s5">1</span><span class="s1">]))</span>
+                <span class="s2">if </span><span class="s1">im1.size != size:</span>
+                    <span class="s1">im1 = im1.crop((</span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s1">) + size)</span>
+                <span class="s2">if </span><span class="s1">im2.size != size:</span>
+                    <span class="s1">im2 = im2.crop((</span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s1">) + size)</span>
+            <span class="s1">out = Image.new(mode </span><span class="s2">or </span><span class="s1">im1.mode</span><span class="s2">, </span><span class="s1">im1.size</span><span class="s2">, None</span><span class="s1">)</span>
+            <span class="s1">im1.load()</span>
+            <span class="s1">im2.load()</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">op = getattr(_imagingmath</span><span class="s2">, </span><span class="s1">op + </span><span class="s4">&quot;_&quot; </span><span class="s1">+ im1.mode)</span>
+            <span class="s2">except </span><span class="s1">AttributeError </span><span class="s2">as </span><span class="s1">e:</span>
+                <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s4">f&quot;bad operand type for '</span><span class="s2">{</span><span class="s1">op</span><span class="s2">}</span><span class="s4">'&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+            <span class="s1">_imagingmath.binop(op</span><span class="s2">, </span><span class="s1">out.im.id</span><span class="s2">, </span><span class="s1">im1.im.id</span><span class="s2">, </span><span class="s1">im2.im.id)</span>
+        <span class="s2">return </span><span class="s1">_Operand(out)</span>
+
+    <span class="s0"># unary operators</span>
+    <span class="s2">def </span><span class="s1">__bool__(self):</span>
+        <span class="s0"># an image is &quot;true&quot; if it contains at least one non-zero pixel</span>
+        <span class="s2">return </span><span class="s1">self.im.getbbox() </span><span class="s2">is not None</span>
+
+    <span class="s2">def </span><span class="s1">__abs__(self):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;abs&quot;</span><span class="s2">, </span><span class="s1">self)</span>
+
+    <span class="s2">def </span><span class="s1">__pos__(self):</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">def </span><span class="s1">__neg__(self):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;neg&quot;</span><span class="s2">, </span><span class="s1">self)</span>
+
+    <span class="s0"># binary operators</span>
+    <span class="s2">def </span><span class="s1">__add__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;add&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+    <span class="s2">def </span><span class="s1">__radd__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;add&quot;</span><span class="s2">, </span><span class="s1">other</span><span class="s2">, </span><span class="s1">self)</span>
+
+    <span class="s2">def </span><span class="s1">__sub__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;sub&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+    <span class="s2">def </span><span class="s1">__rsub__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;sub&quot;</span><span class="s2">, </span><span class="s1">other</span><span class="s2">, </span><span class="s1">self)</span>
+
+    <span class="s2">def </span><span class="s1">__mul__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;mul&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+    <span class="s2">def </span><span class="s1">__rmul__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;mul&quot;</span><span class="s2">, </span><span class="s1">other</span><span class="s2">, </span><span class="s1">self)</span>
+
+    <span class="s2">def </span><span class="s1">__truediv__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;div&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+    <span class="s2">def </span><span class="s1">__rtruediv__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;div&quot;</span><span class="s2">, </span><span class="s1">other</span><span class="s2">, </span><span class="s1">self)</span>
+
+    <span class="s2">def </span><span class="s1">__mod__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;mod&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+    <span class="s2">def </span><span class="s1">__rmod__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;mod&quot;</span><span class="s2">, </span><span class="s1">other</span><span class="s2">, </span><span class="s1">self)</span>
+
+    <span class="s2">def </span><span class="s1">__pow__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;pow&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+    <span class="s2">def </span><span class="s1">__rpow__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;pow&quot;</span><span class="s2">, </span><span class="s1">other</span><span class="s2">, </span><span class="s1">self)</span>
+
+    <span class="s0"># bitwise</span>
+    <span class="s2">def </span><span class="s1">__invert__(self):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;invert&quot;</span><span class="s2">, </span><span class="s1">self)</span>
+
+    <span class="s2">def </span><span class="s1">__and__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;and&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+    <span class="s2">def </span><span class="s1">__rand__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;and&quot;</span><span class="s2">, </span><span class="s1">other</span><span class="s2">, </span><span class="s1">self)</span>
+
+    <span class="s2">def </span><span class="s1">__or__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;or&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+    <span class="s2">def </span><span class="s1">__ror__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;or&quot;</span><span class="s2">, </span><span class="s1">other</span><span class="s2">, </span><span class="s1">self)</span>
+
+    <span class="s2">def </span><span class="s1">__xor__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;xor&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+    <span class="s2">def </span><span class="s1">__rxor__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;xor&quot;</span><span class="s2">, </span><span class="s1">other</span><span class="s2">, </span><span class="s1">self)</span>
+
+    <span class="s2">def </span><span class="s1">__lshift__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;lshift&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+    <span class="s2">def </span><span class="s1">__rshift__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;rshift&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+    <span class="s0"># logical</span>
+    <span class="s2">def </span><span class="s1">__eq__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;eq&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+    <span class="s2">def </span><span class="s1">__ne__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;ne&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+    <span class="s2">def </span><span class="s1">__lt__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;lt&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+    <span class="s2">def </span><span class="s1">__le__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;le&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+    <span class="s2">def </span><span class="s1">__gt__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;gt&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+    <span class="s2">def </span><span class="s1">__ge__(self</span><span class="s2">, </span><span class="s1">other):</span>
+        <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;ge&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+
+<span class="s0"># conversions</span>
+<span class="s2">def </span><span class="s1">imagemath_int(self):</span>
+    <span class="s2">return </span><span class="s1">_Operand(self.im.convert(</span><span class="s4">&quot;I&quot;</span><span class="s1">))</span>
+
+
+<span class="s2">def </span><span class="s1">imagemath_float(self):</span>
+    <span class="s2">return </span><span class="s1">_Operand(self.im.convert(</span><span class="s4">&quot;F&quot;</span><span class="s1">))</span>
+
+
+<span class="s0"># logical</span>
+<span class="s2">def </span><span class="s1">imagemath_equal(self</span><span class="s2">, </span><span class="s1">other):</span>
+    <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;eq&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other</span><span class="s2">, </span><span class="s1">mode=</span><span class="s4">&quot;I&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">imagemath_notequal(self</span><span class="s2">, </span><span class="s1">other):</span>
+    <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;ne&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other</span><span class="s2">, </span><span class="s1">mode=</span><span class="s4">&quot;I&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">imagemath_min(self</span><span class="s2">, </span><span class="s1">other):</span>
+    <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;min&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+
+<span class="s2">def </span><span class="s1">imagemath_max(self</span><span class="s2">, </span><span class="s1">other):</span>
+    <span class="s2">return </span><span class="s1">self.apply(</span><span class="s4">&quot;max&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">, </span><span class="s1">other)</span>
+
+
+<span class="s2">def </span><span class="s1">imagemath_convert(self</span><span class="s2">, </span><span class="s1">mode):</span>
+    <span class="s2">return </span><span class="s1">_Operand(self.im.convert(mode))</span>
+
+
+<span class="s1">ops = {}</span>
+<span class="s2">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">list(globals().items()):</span>
+    <span class="s2">if </span><span class="s1">k[:</span><span class="s5">10</span><span class="s1">] == </span><span class="s4">&quot;imagemath_&quot;</span><span class="s1">:</span>
+        <span class="s1">ops[k[</span><span class="s5">10</span><span class="s1">:]] = v</span>
+
+
+<span class="s2">def </span><span class="s1">eval(expression</span><span class="s2">, </span><span class="s1">_dict={}</span><span class="s2">, </span><span class="s1">**kw):</span>
+    <span class="s3">&quot;&quot;&quot; 
+    Evaluates an image expression. 
+ 
+    :param expression: A string containing a Python-style expression. 
+    :param options: Values to add to the evaluation context.  You 
+                    can either use a dictionary, or one or more keyword 
+                    arguments. 
+    :return: The evaluated expression. This is usually an image object, but can 
+             also be an integer, a floating point value, or a pixel tuple, 
+             depending on the expression. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0"># build execution namespace</span>
+    <span class="s1">args = ops.copy()</span>
+    <span class="s1">args.update(_dict)</span>
+    <span class="s1">args.update(kw)</span>
+    <span class="s2">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">list(args.items()):</span>
+        <span class="s2">if </span><span class="s1">hasattr(v</span><span class="s2">, </span><span class="s4">&quot;im&quot;</span><span class="s1">):</span>
+            <span class="s1">args[k] = _Operand(v)</span>
+
+    <span class="s1">compiled_code = compile(expression</span><span class="s2">, </span><span class="s4">&quot;&lt;string&gt;&quot;</span><span class="s2">, </span><span class="s4">&quot;eval&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">scan(code):</span>
+        <span class="s2">for </span><span class="s1">const </span><span class="s2">in </span><span class="s1">code.co_consts:</span>
+            <span class="s2">if </span><span class="s1">type(const) == type(compiled_code):</span>
+                <span class="s1">scan(const)</span>
+
+        <span class="s2">for </span><span class="s1">name </span><span class="s2">in </span><span class="s1">code.co_names:</span>
+            <span class="s2">if </span><span class="s1">name </span><span class="s2">not in </span><span class="s1">args </span><span class="s2">and </span><span class="s1">name != </span><span class="s4">&quot;abs&quot;</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">f&quot;'</span><span class="s2">{</span><span class="s1">name</span><span class="s2">}</span><span class="s4">' not allowed&quot;</span><span class="s1">)</span>
+
+    <span class="s1">scan(compiled_code)</span>
+    <span class="s1">out = builtins.eval(expression</span><span class="s2">, </span><span class="s1">{</span><span class="s4">&quot;__builtins&quot;</span><span class="s1">: {</span><span class="s4">&quot;abs&quot;</span><span class="s1">: abs}}</span><span class="s2">, </span><span class="s1">args)</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">out.im</span>
+    <span class="s2">except </span><span class="s1">AttributeError:</span>
+        <span class="s2">return </span><span class="s1">out</span>
+</pre>
+</body>
+</html>

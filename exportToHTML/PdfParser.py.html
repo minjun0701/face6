@@ -1,0 +1,1021 @@
+<html>
+<head>
+<title>PdfParser.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #808080;}
+.s3 { color: #6a8759;}
+.s4 { color: #6897bb;}
+.s5 { color: #629755; font-style: italic;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+PdfParser.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">calendar</span>
+<span class="s0">import </span><span class="s1">codecs</span>
+<span class="s0">import </span><span class="s1">collections</span>
+<span class="s0">import </span><span class="s1">mmap</span>
+<span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">re</span>
+<span class="s0">import </span><span class="s1">time</span>
+<span class="s0">import </span><span class="s1">zlib</span>
+
+
+<span class="s2"># see 7.9.2.2 Text String Type on page 86 and D.3 PDFDocEncoding Character Set</span>
+<span class="s2"># on page 656</span>
+<span class="s0">def </span><span class="s1">encode_text(s):</span>
+    <span class="s0">return </span><span class="s1">codecs.BOM_UTF16_BE + s.encode(</span><span class="s3">&quot;utf_16_be&quot;</span><span class="s1">)</span>
+
+
+<span class="s1">PDFDocEncoding = {</span>
+    <span class="s4">0x16</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u0017</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x18</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u02D8</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x19</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u02C7</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x1A</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u02C6</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x1B</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u02D9</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x1C</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u02DD</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x1D</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u02DB</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x1E</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u02DA</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x1F</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u02DC</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x80</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u2022</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x81</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u2020</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x82</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u2021</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x83</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u2026</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x84</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u2014</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x85</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u2013</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x86</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u0192</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x87</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u2044</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x88</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u2039</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x89</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u203A</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x8A</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u2212</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x8B</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u2030</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x8C</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u201E</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x8D</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u201C</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x8E</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u201D</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x8F</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u2018</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x90</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u2019</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x91</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u201A</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x92</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u2122</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x93</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\uFB01</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x94</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\uFB02</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x95</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u0141</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x96</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u0152</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x97</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u0160</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x98</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u0178</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x99</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u017D</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x9A</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u0131</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x9B</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u0142</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x9C</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u0153</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x9D</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u0161</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0x9E</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u017E</span><span class="s3">&quot;</span><span class="s0">,</span>
+    <span class="s4">0xA0</span><span class="s1">: </span><span class="s3">&quot;</span><span class="s0">\u20AC</span><span class="s3">&quot;</span><span class="s0">,</span>
+<span class="s1">}</span>
+
+
+<span class="s0">def </span><span class="s1">decode_text(b):</span>
+    <span class="s0">if </span><span class="s1">b[: len(codecs.BOM_UTF16_BE)] == codecs.BOM_UTF16_BE:</span>
+        <span class="s0">return </span><span class="s1">b[len(codecs.BOM_UTF16_BE) :].decode(</span><span class="s3">&quot;utf_16_be&quot;</span><span class="s1">)</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s0">return </span><span class="s3">&quot;&quot;</span><span class="s1">.join(PDFDocEncoding.get(byte</span><span class="s0">, </span><span class="s1">chr(byte)) </span><span class="s0">for </span><span class="s1">byte </span><span class="s0">in </span><span class="s1">b)</span>
+
+
+<span class="s0">class </span><span class="s1">PdfFormatError(RuntimeError):</span>
+    <span class="s5">&quot;&quot;&quot;An error that probably indicates a syntactic or semantic error in the 
+    PDF file structure&quot;&quot;&quot;</span>
+
+    <span class="s0">pass</span>
+
+
+<span class="s0">def </span><span class="s1">check_format_condition(condition</span><span class="s0">, </span><span class="s1">error_message):</span>
+    <span class="s0">if not </span><span class="s1">condition:</span>
+        <span class="s0">raise </span><span class="s1">PdfFormatError(error_message)</span>
+
+
+<span class="s0">class </span><span class="s1">IndirectReference(</span>
+    <span class="s1">collections.namedtuple(</span><span class="s3">&quot;IndirectReferenceTuple&quot;</span><span class="s0">, </span><span class="s1">[</span><span class="s3">&quot;object_id&quot;</span><span class="s0">, </span><span class="s3">&quot;generation&quot;</span><span class="s1">])</span>
+<span class="s1">):</span>
+    <span class="s0">def </span><span class="s1">__str__(self):</span>
+        <span class="s0">return </span><span class="s3">&quot;%s %s R&quot; </span><span class="s1">% self</span>
+
+    <span class="s0">def </span><span class="s1">__bytes__(self):</span>
+        <span class="s0">return </span><span class="s1">self.__str__().encode(</span><span class="s3">&quot;us-ascii&quot;</span><span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">__eq__(self</span><span class="s0">, </span><span class="s1">other):</span>
+        <span class="s0">return </span><span class="s1">(</span>
+            <span class="s1">other.__class__ </span><span class="s0">is </span><span class="s1">self.__class__</span>
+            <span class="s0">and </span><span class="s1">other.object_id == self.object_id</span>
+            <span class="s0">and </span><span class="s1">other.generation == self.generation</span>
+        <span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">__ne__(self</span><span class="s0">, </span><span class="s1">other):</span>
+        <span class="s0">return not </span><span class="s1">(self == other)</span>
+
+    <span class="s0">def </span><span class="s1">__hash__(self):</span>
+        <span class="s0">return </span><span class="s1">hash((self.object_id</span><span class="s0">, </span><span class="s1">self.generation))</span>
+
+
+<span class="s0">class </span><span class="s1">IndirectObjectDef(IndirectReference):</span>
+    <span class="s0">def </span><span class="s1">__str__(self):</span>
+        <span class="s0">return </span><span class="s3">&quot;%s %s obj&quot; </span><span class="s1">% self</span>
+
+
+<span class="s0">class </span><span class="s1">XrefTable:</span>
+    <span class="s0">def </span><span class="s1">__init__(self):</span>
+        <span class="s1">self.existing_entries = {}  </span><span class="s2"># object ID =&gt; (offset, generation)</span>
+        <span class="s1">self.new_entries = {}  </span><span class="s2"># object ID =&gt; (offset, generation)</span>
+        <span class="s1">self.deleted_entries = {</span><span class="s4">0</span><span class="s1">: </span><span class="s4">65536</span><span class="s1">}  </span><span class="s2"># object ID =&gt; generation</span>
+        <span class="s1">self.reading_finished = </span><span class="s0">False</span>
+
+    <span class="s0">def </span><span class="s1">__setitem__(self</span><span class="s0">, </span><span class="s1">key</span><span class="s0">, </span><span class="s1">value):</span>
+        <span class="s0">if </span><span class="s1">self.reading_finished:</span>
+            <span class="s1">self.new_entries[key] = value</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">self.existing_entries[key] = value</span>
+        <span class="s0">if </span><span class="s1">key </span><span class="s0">in </span><span class="s1">self.deleted_entries:</span>
+            <span class="s0">del </span><span class="s1">self.deleted_entries[key]</span>
+
+    <span class="s0">def </span><span class="s1">__getitem__(self</span><span class="s0">, </span><span class="s1">key):</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s0">return </span><span class="s1">self.new_entries[key]</span>
+        <span class="s0">except </span><span class="s1">KeyError:</span>
+            <span class="s0">return </span><span class="s1">self.existing_entries[key]</span>
+
+    <span class="s0">def </span><span class="s1">__delitem__(self</span><span class="s0">, </span><span class="s1">key):</span>
+        <span class="s0">if </span><span class="s1">key </span><span class="s0">in </span><span class="s1">self.new_entries:</span>
+            <span class="s1">generation = self.new_entries[key][</span><span class="s4">1</span><span class="s1">] + </span><span class="s4">1</span>
+            <span class="s0">del </span><span class="s1">self.new_entries[key]</span>
+            <span class="s1">self.deleted_entries[key] = generation</span>
+        <span class="s0">elif </span><span class="s1">key </span><span class="s0">in </span><span class="s1">self.existing_entries:</span>
+            <span class="s1">generation = self.existing_entries[key][</span><span class="s4">1</span><span class="s1">] + </span><span class="s4">1</span>
+            <span class="s1">self.deleted_entries[key] = generation</span>
+        <span class="s0">elif </span><span class="s1">key </span><span class="s0">in </span><span class="s1">self.deleted_entries:</span>
+            <span class="s1">generation = self.deleted_entries[key]</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s0">raise </span><span class="s1">IndexError(</span>
+                <span class="s3">&quot;object ID &quot; </span><span class="s1">+ str(key) + </span><span class="s3">&quot; cannot be deleted because it doesn't exist&quot;</span>
+            <span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">__contains__(self</span><span class="s0">, </span><span class="s1">key):</span>
+        <span class="s0">return </span><span class="s1">key </span><span class="s0">in </span><span class="s1">self.existing_entries </span><span class="s0">or </span><span class="s1">key </span><span class="s0">in </span><span class="s1">self.new_entries</span>
+
+    <span class="s0">def </span><span class="s1">__len__(self):</span>
+        <span class="s0">return </span><span class="s1">len(</span>
+            <span class="s1">set(self.existing_entries.keys())</span>
+            <span class="s1">| set(self.new_entries.keys())</span>
+            <span class="s1">| set(self.deleted_entries.keys())</span>
+        <span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">keys(self):</span>
+        <span class="s0">return </span><span class="s1">(</span>
+            <span class="s1">set(self.existing_entries.keys()) - set(self.deleted_entries.keys())</span>
+        <span class="s1">) | set(self.new_entries.keys())</span>
+
+    <span class="s0">def </span><span class="s1">write(self</span><span class="s0">, </span><span class="s1">f):</span>
+        <span class="s1">keys = sorted(set(self.new_entries.keys()) | set(self.deleted_entries.keys()))</span>
+        <span class="s1">deleted_keys = sorted(set(self.deleted_entries.keys()))</span>
+        <span class="s1">startxref = f.tell()</span>
+        <span class="s1">f.write(</span><span class="s6">b&quot;xref</span><span class="s0">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+        <span class="s0">while </span><span class="s1">keys:</span>
+            <span class="s2"># find a contiguous sequence of object IDs</span>
+            <span class="s1">prev = </span><span class="s0">None</span>
+            <span class="s0">for </span><span class="s1">index</span><span class="s0">, </span><span class="s1">key </span><span class="s0">in </span><span class="s1">enumerate(keys):</span>
+                <span class="s0">if </span><span class="s1">prev </span><span class="s0">is None or </span><span class="s1">prev + </span><span class="s4">1 </span><span class="s1">== key:</span>
+                    <span class="s1">prev = key</span>
+                <span class="s0">else</span><span class="s1">:</span>
+                    <span class="s1">contiguous_keys = keys[:index]</span>
+                    <span class="s1">keys = keys[index:]</span>
+                    <span class="s0">break</span>
+            <span class="s0">else</span><span class="s1">:</span>
+                <span class="s1">contiguous_keys = keys</span>
+                <span class="s1">keys = </span><span class="s0">None</span>
+            <span class="s1">f.write(</span><span class="s6">b&quot;%d %d</span><span class="s0">\n</span><span class="s6">&quot; </span><span class="s1">% (contiguous_keys[</span><span class="s4">0</span><span class="s1">]</span><span class="s0">, </span><span class="s1">len(contiguous_keys)))</span>
+            <span class="s0">for </span><span class="s1">object_id </span><span class="s0">in </span><span class="s1">contiguous_keys:</span>
+                <span class="s0">if </span><span class="s1">object_id </span><span class="s0">in </span><span class="s1">self.new_entries:</span>
+                    <span class="s1">f.write(</span><span class="s6">b&quot;%010d %05d n </span><span class="s0">\n</span><span class="s6">&quot; </span><span class="s1">% self.new_entries[object_id])</span>
+                <span class="s0">else</span><span class="s1">:</span>
+                    <span class="s1">this_deleted_object_id = deleted_keys.pop(</span><span class="s4">0</span><span class="s1">)</span>
+                    <span class="s1">check_format_condition(</span>
+                        <span class="s1">object_id == this_deleted_object_id</span><span class="s0">,</span>
+                        <span class="s3">f&quot;expected the next deleted object ID to be </span><span class="s0">{</span><span class="s1">object_id</span><span class="s0">}</span><span class="s3">, &quot;</span>
+                        <span class="s3">f&quot;instead found </span><span class="s0">{</span><span class="s1">this_deleted_object_id</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s0">,</span>
+                    <span class="s1">)</span>
+                    <span class="s0">try</span><span class="s1">:</span>
+                        <span class="s1">next_in_linked_list = deleted_keys[</span><span class="s4">0</span><span class="s1">]</span>
+                    <span class="s0">except </span><span class="s1">IndexError:</span>
+                        <span class="s1">next_in_linked_list = </span><span class="s4">0</span>
+                    <span class="s1">f.write(</span>
+                        <span class="s6">b&quot;%010d %05d f </span><span class="s0">\n</span><span class="s6">&quot;</span>
+                        <span class="s1">% (next_in_linked_list</span><span class="s0">, </span><span class="s1">self.deleted_entries[object_id])</span>
+                    <span class="s1">)</span>
+        <span class="s0">return </span><span class="s1">startxref</span>
+
+
+<span class="s0">class </span><span class="s1">PdfName:</span>
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s0">, </span><span class="s1">name):</span>
+        <span class="s0">if </span><span class="s1">isinstance(name</span><span class="s0">, </span><span class="s1">PdfName):</span>
+            <span class="s1">self.name = name.name</span>
+        <span class="s0">elif </span><span class="s1">isinstance(name</span><span class="s0">, </span><span class="s1">bytes):</span>
+            <span class="s1">self.name = name</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">self.name = name.encode(</span><span class="s3">&quot;us-ascii&quot;</span><span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">name_as_str(self):</span>
+        <span class="s0">return </span><span class="s1">self.name.decode(</span><span class="s3">&quot;us-ascii&quot;</span><span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">__eq__(self</span><span class="s0">, </span><span class="s1">other):</span>
+        <span class="s0">return </span><span class="s1">(</span>
+            <span class="s1">isinstance(other</span><span class="s0">, </span><span class="s1">PdfName) </span><span class="s0">and </span><span class="s1">other.name == self.name</span>
+        <span class="s1">) </span><span class="s0">or </span><span class="s1">other == self.name</span>
+
+    <span class="s0">def </span><span class="s1">__hash__(self):</span>
+        <span class="s0">return </span><span class="s1">hash(self.name)</span>
+
+    <span class="s0">def </span><span class="s1">__repr__(self):</span>
+        <span class="s0">return </span><span class="s3">f&quot;PdfName(</span><span class="s0">{</span><span class="s1">repr(self.name)</span><span class="s0">}</span><span class="s3">)&quot;</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">from_pdf_stream(cls</span><span class="s0">, </span><span class="s1">data):</span>
+        <span class="s0">return </span><span class="s1">cls(PdfParser.interpret_name(data))</span>
+
+    <span class="s1">allowed_chars = set(range(</span><span class="s4">33</span><span class="s0">, </span><span class="s4">127</span><span class="s1">)) - {ord(c) </span><span class="s0">for </span><span class="s1">c </span><span class="s0">in </span><span class="s3">&quot;#%/()&lt;&gt;[]{}&quot;</span><span class="s1">}</span>
+
+    <span class="s0">def </span><span class="s1">__bytes__(self):</span>
+        <span class="s1">result = bytearray(</span><span class="s6">b&quot;/&quot;</span><span class="s1">)</span>
+        <span class="s0">for </span><span class="s1">b </span><span class="s0">in </span><span class="s1">self.name:</span>
+            <span class="s0">if </span><span class="s1">b </span><span class="s0">in </span><span class="s1">self.allowed_chars:</span>
+                <span class="s1">result.append(b)</span>
+            <span class="s0">else</span><span class="s1">:</span>
+                <span class="s1">result.extend(</span><span class="s6">b&quot;#%02X&quot; </span><span class="s1">% b)</span>
+        <span class="s0">return </span><span class="s1">bytes(result)</span>
+
+
+<span class="s0">class </span><span class="s1">PdfArray(list):</span>
+    <span class="s0">def </span><span class="s1">__bytes__(self):</span>
+        <span class="s0">return </span><span class="s6">b&quot;[ &quot; </span><span class="s1">+ </span><span class="s6">b&quot; &quot;</span><span class="s1">.join(pdf_repr(x) </span><span class="s0">for </span><span class="s1">x </span><span class="s0">in </span><span class="s1">self) + </span><span class="s6">b&quot; ]&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">PdfDict(collections.UserDict):</span>
+    <span class="s0">def </span><span class="s1">__setattr__(self</span><span class="s0">, </span><span class="s1">key</span><span class="s0">, </span><span class="s1">value):</span>
+        <span class="s0">if </span><span class="s1">key == </span><span class="s3">&quot;data&quot;</span><span class="s1">:</span>
+            <span class="s1">collections.UserDict.__setattr__(self</span><span class="s0">, </span><span class="s1">key</span><span class="s0">, </span><span class="s1">value)</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">self[key.encode(</span><span class="s3">&quot;us-ascii&quot;</span><span class="s1">)] = value</span>
+
+    <span class="s0">def </span><span class="s1">__getattr__(self</span><span class="s0">, </span><span class="s1">key):</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">value = self[key.encode(</span><span class="s3">&quot;us-ascii&quot;</span><span class="s1">)]</span>
+        <span class="s0">except </span><span class="s1">KeyError </span><span class="s0">as </span><span class="s1">e:</span>
+            <span class="s0">raise </span><span class="s1">AttributeError(key) </span><span class="s0">from </span><span class="s1">e</span>
+        <span class="s0">if </span><span class="s1">isinstance(value</span><span class="s0">, </span><span class="s1">bytes):</span>
+            <span class="s1">value = decode_text(value)</span>
+        <span class="s0">if </span><span class="s1">key.endswith(</span><span class="s3">&quot;Date&quot;</span><span class="s1">):</span>
+            <span class="s0">if </span><span class="s1">value.startswith(</span><span class="s3">&quot;D:&quot;</span><span class="s1">):</span>
+                <span class="s1">value = value[</span><span class="s4">2</span><span class="s1">:]</span>
+
+            <span class="s1">relationship = </span><span class="s3">&quot;Z&quot;</span>
+            <span class="s0">if </span><span class="s1">len(value) &gt; </span><span class="s4">17</span><span class="s1">:</span>
+                <span class="s1">relationship = value[</span><span class="s4">14</span><span class="s1">]</span>
+                <span class="s1">offset = int(value[</span><span class="s4">15</span><span class="s1">:</span><span class="s4">17</span><span class="s1">]) * </span><span class="s4">60</span>
+                <span class="s0">if </span><span class="s1">len(value) &gt; </span><span class="s4">20</span><span class="s1">:</span>
+                    <span class="s1">offset += int(value[</span><span class="s4">18</span><span class="s1">:</span><span class="s4">20</span><span class="s1">])</span>
+
+            <span class="s1">format = </span><span class="s3">&quot;%Y%m%d%H%M%S&quot;</span><span class="s1">[: len(value) - </span><span class="s4">2</span><span class="s1">]</span>
+            <span class="s1">value = time.strptime(value[: len(format) + </span><span class="s4">2</span><span class="s1">]</span><span class="s0">, </span><span class="s1">format)</span>
+            <span class="s0">if </span><span class="s1">relationship </span><span class="s0">in </span><span class="s1">[</span><span class="s3">&quot;+&quot;</span><span class="s0">, </span><span class="s3">&quot;-&quot;</span><span class="s1">]:</span>
+                <span class="s1">offset *= </span><span class="s4">60</span>
+                <span class="s0">if </span><span class="s1">relationship == </span><span class="s3">&quot;+&quot;</span><span class="s1">:</span>
+                    <span class="s1">offset *= -</span><span class="s4">1</span>
+                <span class="s1">value = time.gmtime(calendar.timegm(value) + offset)</span>
+        <span class="s0">return </span><span class="s1">value</span>
+
+    <span class="s0">def </span><span class="s1">__bytes__(self):</span>
+        <span class="s1">out = bytearray(</span><span class="s6">b&quot;&lt;&lt;&quot;</span><span class="s1">)</span>
+        <span class="s0">for </span><span class="s1">key</span><span class="s0">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">self.items():</span>
+            <span class="s0">if </span><span class="s1">value </span><span class="s0">is None</span><span class="s1">:</span>
+                <span class="s0">continue</span>
+            <span class="s1">value = pdf_repr(value)</span>
+            <span class="s1">out.extend(</span><span class="s6">b&quot;</span><span class="s0">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+            <span class="s1">out.extend(bytes(PdfName(key)))</span>
+            <span class="s1">out.extend(</span><span class="s6">b&quot; &quot;</span><span class="s1">)</span>
+            <span class="s1">out.extend(value)</span>
+        <span class="s1">out.extend(</span><span class="s6">b&quot;</span><span class="s0">\n</span><span class="s6">&gt;&gt;&quot;</span><span class="s1">)</span>
+        <span class="s0">return </span><span class="s1">bytes(out)</span>
+
+
+<span class="s0">class </span><span class="s1">PdfBinary:</span>
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s0">, </span><span class="s1">data):</span>
+        <span class="s1">self.data = data</span>
+
+    <span class="s0">def </span><span class="s1">__bytes__(self):</span>
+        <span class="s0">return </span><span class="s6">b&quot;&lt;%s&gt;&quot; </span><span class="s1">% </span><span class="s6">b&quot;&quot;</span><span class="s1">.join(</span><span class="s6">b&quot;%02X&quot; </span><span class="s1">% b </span><span class="s0">for </span><span class="s1">b </span><span class="s0">in </span><span class="s1">self.data)</span>
+
+
+<span class="s0">class </span><span class="s1">PdfStream:</span>
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s0">, </span><span class="s1">dictionary</span><span class="s0">, </span><span class="s1">buf):</span>
+        <span class="s1">self.dictionary = dictionary</span>
+        <span class="s1">self.buf = buf</span>
+
+    <span class="s0">def </span><span class="s1">decode(self):</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">filter = self.dictionary.Filter</span>
+        <span class="s0">except </span><span class="s1">AttributeError:</span>
+            <span class="s0">return </span><span class="s1">self.buf</span>
+        <span class="s0">if </span><span class="s1">filter == </span><span class="s6">b&quot;FlateDecode&quot;</span><span class="s1">:</span>
+            <span class="s0">try</span><span class="s1">:</span>
+                <span class="s1">expected_length = self.dictionary.DL</span>
+            <span class="s0">except </span><span class="s1">AttributeError:</span>
+                <span class="s1">expected_length = self.dictionary.Length</span>
+            <span class="s0">return </span><span class="s1">zlib.decompress(self.buf</span><span class="s0">, </span><span class="s1">bufsize=int(expected_length))</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s0">raise </span><span class="s1">NotImplementedError(</span>
+                <span class="s3">f&quot;stream filter </span><span class="s0">{</span><span class="s1">repr(self.dictionary.Filter)</span><span class="s0">} </span><span class="s3">unknown/unsupported&quot;</span>
+            <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">pdf_repr(x):</span>
+    <span class="s0">if </span><span class="s1">x </span><span class="s0">is True</span><span class="s1">:</span>
+        <span class="s0">return </span><span class="s6">b&quot;true&quot;</span>
+    <span class="s0">elif </span><span class="s1">x </span><span class="s0">is False</span><span class="s1">:</span>
+        <span class="s0">return </span><span class="s6">b&quot;false&quot;</span>
+    <span class="s0">elif </span><span class="s1">x </span><span class="s0">is None</span><span class="s1">:</span>
+        <span class="s0">return </span><span class="s6">b&quot;null&quot;</span>
+    <span class="s0">elif </span><span class="s1">isinstance(x</span><span class="s0">, </span><span class="s1">(PdfName</span><span class="s0">, </span><span class="s1">PdfDict</span><span class="s0">, </span><span class="s1">PdfArray</span><span class="s0">, </span><span class="s1">PdfBinary)):</span>
+        <span class="s0">return </span><span class="s1">bytes(x)</span>
+    <span class="s0">elif </span><span class="s1">isinstance(x</span><span class="s0">, </span><span class="s1">int):</span>
+        <span class="s0">return </span><span class="s1">str(x).encode(</span><span class="s3">&quot;us-ascii&quot;</span><span class="s1">)</span>
+    <span class="s0">elif </span><span class="s1">isinstance(x</span><span class="s0">, </span><span class="s1">float):</span>
+        <span class="s0">return </span><span class="s1">str(x).encode(</span><span class="s3">&quot;us-ascii&quot;</span><span class="s1">)</span>
+    <span class="s0">elif </span><span class="s1">isinstance(x</span><span class="s0">, </span><span class="s1">time.struct_time):</span>
+        <span class="s0">return </span><span class="s6">b&quot;(D:&quot; </span><span class="s1">+ time.strftime(</span><span class="s3">&quot;%Y%m%d%H%M%SZ&quot;</span><span class="s0">, </span><span class="s1">x).encode(</span><span class="s3">&quot;us-ascii&quot;</span><span class="s1">) + </span><span class="s6">b&quot;)&quot;</span>
+    <span class="s0">elif </span><span class="s1">isinstance(x</span><span class="s0">, </span><span class="s1">dict):</span>
+        <span class="s0">return </span><span class="s1">bytes(PdfDict(x))</span>
+    <span class="s0">elif </span><span class="s1">isinstance(x</span><span class="s0">, </span><span class="s1">list):</span>
+        <span class="s0">return </span><span class="s1">bytes(PdfArray(x))</span>
+    <span class="s0">elif </span><span class="s1">isinstance(x</span><span class="s0">, </span><span class="s1">str):</span>
+        <span class="s0">return </span><span class="s1">pdf_repr(encode_text(x))</span>
+    <span class="s0">elif </span><span class="s1">isinstance(x</span><span class="s0">, </span><span class="s1">bytes):</span>
+        <span class="s2"># XXX escape more chars? handle binary garbage</span>
+        <span class="s1">x = x.replace(</span><span class="s6">b&quot;</span><span class="s0">\\</span><span class="s6">&quot;</span><span class="s0">, </span><span class="s6">b&quot;</span><span class="s0">\\\\</span><span class="s6">&quot;</span><span class="s1">)</span>
+        <span class="s1">x = x.replace(</span><span class="s6">b&quot;(&quot;</span><span class="s0">, </span><span class="s6">b&quot;</span><span class="s0">\\</span><span class="s6">(&quot;</span><span class="s1">)</span>
+        <span class="s1">x = x.replace(</span><span class="s6">b&quot;)&quot;</span><span class="s0">, </span><span class="s6">b&quot;</span><span class="s0">\\</span><span class="s6">)&quot;</span><span class="s1">)</span>
+        <span class="s0">return </span><span class="s6">b&quot;(&quot; </span><span class="s1">+ x + </span><span class="s6">b&quot;)&quot;</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s0">return </span><span class="s1">bytes(x)</span>
+
+
+<span class="s0">class </span><span class="s1">PdfParser:</span>
+    <span class="s5">&quot;&quot;&quot;Based on 
+    https://www.adobe.com/content/dam/acom/en/devnet/acrobat/pdfs/PDF32000_2008.pdf 
+    Supports PDF up to 1.4 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s0">, </span><span class="s1">filename=</span><span class="s0">None, </span><span class="s1">f=</span><span class="s0">None, </span><span class="s1">buf=</span><span class="s0">None, </span><span class="s1">start_offset=</span><span class="s4">0</span><span class="s0">, </span><span class="s1">mode=</span><span class="s3">&quot;rb&quot;</span><span class="s1">):</span>
+        <span class="s0">if </span><span class="s1">buf </span><span class="s0">and </span><span class="s1">f:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError(</span><span class="s3">&quot;specify buf or f or filename, but not both buf and f&quot;</span><span class="s1">)</span>
+        <span class="s1">self.filename = filename</span>
+        <span class="s1">self.buf = buf</span>
+        <span class="s1">self.f = f</span>
+        <span class="s1">self.start_offset = start_offset</span>
+        <span class="s1">self.should_close_buf = </span><span class="s0">False</span>
+        <span class="s1">self.should_close_file = </span><span class="s0">False</span>
+        <span class="s0">if </span><span class="s1">filename </span><span class="s0">is not None and </span><span class="s1">f </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">self.f = f = open(filename</span><span class="s0">, </span><span class="s1">mode)</span>
+            <span class="s1">self.should_close_file = </span><span class="s0">True</span>
+        <span class="s0">if </span><span class="s1">f </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">self.buf = buf = self.get_buf_from_file(f)</span>
+            <span class="s1">self.should_close_buf = </span><span class="s0">True</span>
+            <span class="s0">if not </span><span class="s1">filename </span><span class="s0">and </span><span class="s1">hasattr(f</span><span class="s0">, </span><span class="s3">&quot;name&quot;</span><span class="s1">):</span>
+                <span class="s1">self.filename = f.name</span>
+        <span class="s1">self.cached_objects = {}</span>
+        <span class="s0">if </span><span class="s1">buf:</span>
+            <span class="s1">self.read_pdf_info()</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">self.file_size_total = self.file_size_this = </span><span class="s4">0</span>
+            <span class="s1">self.root = PdfDict()</span>
+            <span class="s1">self.root_ref = </span><span class="s0">None</span>
+            <span class="s1">self.info = PdfDict()</span>
+            <span class="s1">self.info_ref = </span><span class="s0">None</span>
+            <span class="s1">self.page_tree_root = {}</span>
+            <span class="s1">self.pages = []</span>
+            <span class="s1">self.orig_pages = []</span>
+            <span class="s1">self.pages_ref = </span><span class="s0">None</span>
+            <span class="s1">self.last_xref_section_offset = </span><span class="s0">None</span>
+            <span class="s1">self.trailer_dict = {}</span>
+            <span class="s1">self.xref_table = XrefTable()</span>
+        <span class="s1">self.xref_table.reading_finished = </span><span class="s0">True</span>
+        <span class="s0">if </span><span class="s1">f:</span>
+            <span class="s1">self.seek_end()</span>
+
+    <span class="s0">def </span><span class="s1">__enter__(self):</span>
+        <span class="s0">return </span><span class="s1">self</span>
+
+    <span class="s0">def </span><span class="s1">__exit__(self</span><span class="s0">, </span><span class="s1">exc_type</span><span class="s0">, </span><span class="s1">exc_value</span><span class="s0">, </span><span class="s1">traceback):</span>
+        <span class="s1">self.close()</span>
+        <span class="s0">return False  </span><span class="s2"># do not suppress exceptions</span>
+
+    <span class="s0">def </span><span class="s1">start_writing(self):</span>
+        <span class="s1">self.close_buf()</span>
+        <span class="s1">self.seek_end()</span>
+
+    <span class="s0">def </span><span class="s1">close_buf(self):</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">self.buf.close()</span>
+        <span class="s0">except </span><span class="s1">AttributeError:</span>
+            <span class="s0">pass</span>
+        <span class="s1">self.buf = </span><span class="s0">None</span>
+
+    <span class="s0">def </span><span class="s1">close(self):</span>
+        <span class="s0">if </span><span class="s1">self.should_close_buf:</span>
+            <span class="s1">self.close_buf()</span>
+        <span class="s0">if </span><span class="s1">self.f </span><span class="s0">is not None and </span><span class="s1">self.should_close_file:</span>
+            <span class="s1">self.f.close()</span>
+            <span class="s1">self.f = </span><span class="s0">None</span>
+
+    <span class="s0">def </span><span class="s1">seek_end(self):</span>
+        <span class="s1">self.f.seek(</span><span class="s4">0</span><span class="s0">, </span><span class="s1">os.SEEK_END)</span>
+
+    <span class="s0">def </span><span class="s1">write_header(self):</span>
+        <span class="s1">self.f.write(</span><span class="s6">b&quot;%PDF-1.4</span><span class="s0">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">write_comment(self</span><span class="s0">, </span><span class="s1">s):</span>
+        <span class="s1">self.f.write(</span><span class="s3">f&quot;% </span><span class="s0">{</span><span class="s1">s</span><span class="s0">}\n</span><span class="s3">&quot;</span><span class="s1">.encode())</span>
+
+    <span class="s0">def </span><span class="s1">write_catalog(self):</span>
+        <span class="s1">self.del_root()</span>
+        <span class="s1">self.root_ref = self.next_object_id(self.f.tell())</span>
+        <span class="s1">self.pages_ref = self.next_object_id(</span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s1">self.rewrite_pages()</span>
+        <span class="s1">self.write_obj(self.root_ref</span><span class="s0">, </span><span class="s1">Type=PdfName(</span><span class="s6">b&quot;Catalog&quot;</span><span class="s1">)</span><span class="s0">, </span><span class="s1">Pages=self.pages_ref)</span>
+        <span class="s1">self.write_obj(</span>
+            <span class="s1">self.pages_ref</span><span class="s0">,</span>
+            <span class="s1">Type=PdfName(</span><span class="s6">b&quot;Pages&quot;</span><span class="s1">)</span><span class="s0">,</span>
+            <span class="s1">Count=len(self.pages)</span><span class="s0">,</span>
+            <span class="s1">Kids=self.pages</span><span class="s0">,</span>
+        <span class="s1">)</span>
+        <span class="s0">return </span><span class="s1">self.root_ref</span>
+
+    <span class="s0">def </span><span class="s1">rewrite_pages(self):</span>
+        <span class="s1">pages_tree_nodes_to_delete = []</span>
+        <span class="s0">for </span><span class="s1">i</span><span class="s0">, </span><span class="s1">page_ref </span><span class="s0">in </span><span class="s1">enumerate(self.orig_pages):</span>
+            <span class="s1">page_info = self.cached_objects[page_ref]</span>
+            <span class="s0">del </span><span class="s1">self.xref_table[page_ref.object_id]</span>
+            <span class="s1">pages_tree_nodes_to_delete.append(page_info[PdfName(</span><span class="s6">b&quot;Parent&quot;</span><span class="s1">)])</span>
+            <span class="s0">if </span><span class="s1">page_ref </span><span class="s0">not in </span><span class="s1">self.pages:</span>
+                <span class="s2"># the page has been deleted</span>
+                <span class="s0">continue</span>
+            <span class="s2"># make dict keys into strings for passing to write_page</span>
+            <span class="s1">stringified_page_info = {}</span>
+            <span class="s0">for </span><span class="s1">key</span><span class="s0">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">page_info.items():</span>
+                <span class="s2"># key should be a PdfName</span>
+                <span class="s1">stringified_page_info[key.name_as_str()] = value</span>
+            <span class="s1">stringified_page_info[</span><span class="s3">&quot;Parent&quot;</span><span class="s1">] = self.pages_ref</span>
+            <span class="s1">new_page_ref = self.write_page(</span><span class="s0">None, </span><span class="s1">**stringified_page_info)</span>
+            <span class="s0">for </span><span class="s1">j</span><span class="s0">, </span><span class="s1">cur_page_ref </span><span class="s0">in </span><span class="s1">enumerate(self.pages):</span>
+                <span class="s0">if </span><span class="s1">cur_page_ref == page_ref:</span>
+                    <span class="s2"># replace the page reference with the new one</span>
+                    <span class="s1">self.pages[j] = new_page_ref</span>
+        <span class="s2"># delete redundant Pages tree nodes from xref table</span>
+        <span class="s0">for </span><span class="s1">pages_tree_node_ref </span><span class="s0">in </span><span class="s1">pages_tree_nodes_to_delete:</span>
+            <span class="s0">while </span><span class="s1">pages_tree_node_ref:</span>
+                <span class="s1">pages_tree_node = self.cached_objects[pages_tree_node_ref]</span>
+                <span class="s0">if </span><span class="s1">pages_tree_node_ref.object_id </span><span class="s0">in </span><span class="s1">self.xref_table:</span>
+                    <span class="s0">del </span><span class="s1">self.xref_table[pages_tree_node_ref.object_id]</span>
+                <span class="s1">pages_tree_node_ref = pages_tree_node.get(</span><span class="s6">b&quot;Parent&quot;</span><span class="s0">, None</span><span class="s1">)</span>
+        <span class="s1">self.orig_pages = []</span>
+
+    <span class="s0">def </span><span class="s1">write_xref_and_trailer(self</span><span class="s0">, </span><span class="s1">new_root_ref=</span><span class="s0">None</span><span class="s1">):</span>
+        <span class="s0">if </span><span class="s1">new_root_ref:</span>
+            <span class="s1">self.del_root()</span>
+            <span class="s1">self.root_ref = new_root_ref</span>
+        <span class="s0">if </span><span class="s1">self.info:</span>
+            <span class="s1">self.info_ref = self.write_obj(</span><span class="s0">None, </span><span class="s1">self.info)</span>
+        <span class="s1">start_xref = self.xref_table.write(self.f)</span>
+        <span class="s1">num_entries = len(self.xref_table)</span>
+        <span class="s1">trailer_dict = {</span><span class="s6">b&quot;Root&quot;</span><span class="s1">: self.root_ref</span><span class="s0">, </span><span class="s6">b&quot;Size&quot;</span><span class="s1">: num_entries}</span>
+        <span class="s0">if </span><span class="s1">self.last_xref_section_offset </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">trailer_dict[</span><span class="s6">b&quot;Prev&quot;</span><span class="s1">] = self.last_xref_section_offset</span>
+        <span class="s0">if </span><span class="s1">self.info:</span>
+            <span class="s1">trailer_dict[</span><span class="s6">b&quot;Info&quot;</span><span class="s1">] = self.info_ref</span>
+        <span class="s1">self.last_xref_section_offset = start_xref</span>
+        <span class="s1">self.f.write(</span>
+            <span class="s6">b&quot;trailer</span><span class="s0">\n</span><span class="s6">&quot;</span>
+            <span class="s1">+ bytes(PdfDict(trailer_dict))</span>
+            <span class="s1">+ </span><span class="s6">b&quot;</span><span class="s0">\n</span><span class="s6">startxref</span><span class="s0">\n</span><span class="s6">%d</span><span class="s0">\n</span><span class="s6">%%%%EOF&quot; </span><span class="s1">% start_xref</span>
+        <span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">write_page(self</span><span class="s0">, </span><span class="s1">ref</span><span class="s0">, </span><span class="s1">*objs</span><span class="s0">, </span><span class="s1">**dict_obj):</span>
+        <span class="s0">if </span><span class="s1">isinstance(ref</span><span class="s0">, </span><span class="s1">int):</span>
+            <span class="s1">ref = self.pages[ref]</span>
+        <span class="s0">if </span><span class="s3">&quot;Type&quot; </span><span class="s0">not in </span><span class="s1">dict_obj:</span>
+            <span class="s1">dict_obj[</span><span class="s3">&quot;Type&quot;</span><span class="s1">] = PdfName(</span><span class="s6">b&quot;Page&quot;</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s3">&quot;Parent&quot; </span><span class="s0">not in </span><span class="s1">dict_obj:</span>
+            <span class="s1">dict_obj[</span><span class="s3">&quot;Parent&quot;</span><span class="s1">] = self.pages_ref</span>
+        <span class="s0">return </span><span class="s1">self.write_obj(ref</span><span class="s0">, </span><span class="s1">*objs</span><span class="s0">, </span><span class="s1">**dict_obj)</span>
+
+    <span class="s0">def </span><span class="s1">write_obj(self</span><span class="s0">, </span><span class="s1">ref</span><span class="s0">, </span><span class="s1">*objs</span><span class="s0">, </span><span class="s1">**dict_obj):</span>
+        <span class="s1">f = self.f</span>
+        <span class="s0">if </span><span class="s1">ref </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">ref = self.next_object_id(f.tell())</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">self.xref_table[ref.object_id] = (f.tell()</span><span class="s0">, </span><span class="s1">ref.generation)</span>
+        <span class="s1">f.write(bytes(IndirectObjectDef(*ref)))</span>
+        <span class="s1">stream = dict_obj.pop(</span><span class="s3">&quot;stream&quot;</span><span class="s0">, None</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">stream </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">dict_obj[</span><span class="s3">&quot;Length&quot;</span><span class="s1">] = len(stream)</span>
+        <span class="s0">if </span><span class="s1">dict_obj:</span>
+            <span class="s1">f.write(pdf_repr(dict_obj))</span>
+        <span class="s0">for </span><span class="s1">obj </span><span class="s0">in </span><span class="s1">objs:</span>
+            <span class="s1">f.write(pdf_repr(obj))</span>
+        <span class="s0">if </span><span class="s1">stream </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">f.write(</span><span class="s6">b&quot;stream</span><span class="s0">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+            <span class="s1">f.write(stream)</span>
+            <span class="s1">f.write(</span><span class="s6">b&quot;</span><span class="s0">\n</span><span class="s6">endstream</span><span class="s0">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+        <span class="s1">f.write(</span><span class="s6">b&quot;endobj</span><span class="s0">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+        <span class="s0">return </span><span class="s1">ref</span>
+
+    <span class="s0">def </span><span class="s1">del_root(self):</span>
+        <span class="s0">if </span><span class="s1">self.root_ref </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s0">return</span>
+        <span class="s0">del </span><span class="s1">self.xref_table[self.root_ref.object_id]</span>
+        <span class="s0">del </span><span class="s1">self.xref_table[self.root[</span><span class="s6">b&quot;Pages&quot;</span><span class="s1">].object_id]</span>
+
+    <span class="s1">@staticmethod</span>
+    <span class="s0">def </span><span class="s1">get_buf_from_file(f):</span>
+        <span class="s0">if </span><span class="s1">hasattr(f</span><span class="s0">, </span><span class="s3">&quot;getbuffer&quot;</span><span class="s1">):</span>
+            <span class="s0">return </span><span class="s1">f.getbuffer()</span>
+        <span class="s0">elif </span><span class="s1">hasattr(f</span><span class="s0">, </span><span class="s3">&quot;getvalue&quot;</span><span class="s1">):</span>
+            <span class="s0">return </span><span class="s1">f.getvalue()</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s0">try</span><span class="s1">:</span>
+                <span class="s0">return </span><span class="s1">mmap.mmap(f.fileno()</span><span class="s0">, </span><span class="s4">0</span><span class="s0">, </span><span class="s1">access=mmap.ACCESS_READ)</span>
+            <span class="s0">except </span><span class="s1">ValueError:  </span><span class="s2"># cannot mmap an empty file</span>
+                <span class="s0">return </span><span class="s6">b&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">read_pdf_info(self):</span>
+        <span class="s1">self.file_size_total = len(self.buf)</span>
+        <span class="s1">self.file_size_this = self.file_size_total - self.start_offset</span>
+        <span class="s1">self.read_trailer()</span>
+        <span class="s1">self.root_ref = self.trailer_dict[</span><span class="s6">b&quot;Root&quot;</span><span class="s1">]</span>
+        <span class="s1">self.info_ref = self.trailer_dict.get(</span><span class="s6">b&quot;Info&quot;</span><span class="s0">, None</span><span class="s1">)</span>
+        <span class="s1">self.root = PdfDict(self.read_indirect(self.root_ref))</span>
+        <span class="s0">if </span><span class="s1">self.info_ref </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">self.info = PdfDict()</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">self.info = PdfDict(self.read_indirect(self.info_ref))</span>
+        <span class="s1">check_format_condition(</span><span class="s6">b&quot;Type&quot; </span><span class="s0">in </span><span class="s1">self.root</span><span class="s0">, </span><span class="s3">&quot;/Type missing in Root&quot;</span><span class="s1">)</span>
+        <span class="s1">check_format_condition(</span>
+            <span class="s1">self.root[</span><span class="s6">b&quot;Type&quot;</span><span class="s1">] == </span><span class="s6">b&quot;Catalog&quot;</span><span class="s0">, </span><span class="s3">&quot;/Type in Root is not /Catalog&quot;</span>
+        <span class="s1">)</span>
+        <span class="s1">check_format_condition(</span><span class="s6">b&quot;Pages&quot; </span><span class="s0">in </span><span class="s1">self.root</span><span class="s0">, </span><span class="s3">&quot;/Pages missing in Root&quot;</span><span class="s1">)</span>
+        <span class="s1">check_format_condition(</span>
+            <span class="s1">isinstance(self.root[</span><span class="s6">b&quot;Pages&quot;</span><span class="s1">]</span><span class="s0">, </span><span class="s1">IndirectReference)</span><span class="s0">,</span>
+            <span class="s3">&quot;/Pages in Root is not an indirect reference&quot;</span><span class="s0">,</span>
+        <span class="s1">)</span>
+        <span class="s1">self.pages_ref = self.root[</span><span class="s6">b&quot;Pages&quot;</span><span class="s1">]</span>
+        <span class="s1">self.page_tree_root = self.read_indirect(self.pages_ref)</span>
+        <span class="s1">self.pages = self.linearize_page_tree(self.page_tree_root)</span>
+        <span class="s2"># save the original list of page references</span>
+        <span class="s2"># in case the user modifies, adds or deletes some pages</span>
+        <span class="s2"># and we need to rewrite the pages and their list</span>
+        <span class="s1">self.orig_pages = self.pages[:]</span>
+
+    <span class="s0">def </span><span class="s1">next_object_id(self</span><span class="s0">, </span><span class="s1">offset=</span><span class="s0">None</span><span class="s1">):</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s2"># TODO: support reuse of deleted objects</span>
+            <span class="s1">reference = IndirectReference(max(self.xref_table.keys()) + </span><span class="s4">1</span><span class="s0">, </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s0">except </span><span class="s1">ValueError:</span>
+            <span class="s1">reference = IndirectReference(</span><span class="s4">1</span><span class="s0">, </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">offset </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">self.xref_table[reference.object_id] = (offset</span><span class="s0">, </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s0">return </span><span class="s1">reference</span>
+
+    <span class="s1">delimiter = </span><span class="s6">rb&quot;[][()&lt;&gt;{}/%]&quot;</span>
+    <span class="s1">delimiter_or_ws = </span><span class="s6">rb&quot;[][()&lt;&gt;{}/%\000\011\012\014\015\040]&quot;</span>
+    <span class="s1">whitespace = </span><span class="s6">rb&quot;[\000\011\012\014\015\040]&quot;</span>
+    <span class="s1">whitespace_or_hex = </span><span class="s6">rb&quot;[\000\011\012\014\015\0400-9a-fA-F]&quot;</span>
+    <span class="s1">whitespace_optional = whitespace + </span><span class="s6">b&quot;*&quot;</span>
+    <span class="s1">whitespace_mandatory = whitespace + </span><span class="s6">b&quot;+&quot;</span>
+    <span class="s2"># No &quot;\012&quot; aka &quot;\n&quot; or &quot;\015&quot; aka &quot;\r&quot;:</span>
+    <span class="s1">whitespace_optional_no_nl = </span><span class="s6">rb&quot;[\000\011\014\040]*&quot;</span>
+    <span class="s1">newline_only = </span><span class="s6">rb&quot;[\r\n]+&quot;</span>
+    <span class="s1">newline = whitespace_optional_no_nl + newline_only + whitespace_optional_no_nl</span>
+    <span class="s1">re_trailer_end = re.compile(</span>
+        <span class="s1">whitespace_mandatory</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;trailer&quot;</span>
+        <span class="s1">+ whitespace_optional</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;&lt;&lt;(.*&gt;&gt;)&quot;</span>
+        <span class="s1">+ newline</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;startxref&quot;</span>
+        <span class="s1">+ newline</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;([0-9]+)&quot;</span>
+        <span class="s1">+ newline</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;%%EOF&quot;</span>
+        <span class="s1">+ whitespace_optional</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;$&quot;</span><span class="s0">,</span>
+        <span class="s1">re.DOTALL</span><span class="s0">,</span>
+    <span class="s1">)</span>
+    <span class="s1">re_trailer_prev = re.compile(</span>
+        <span class="s1">whitespace_optional</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;trailer&quot;</span>
+        <span class="s1">+ whitespace_optional</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;&lt;&lt;(.*?&gt;&gt;)&quot;</span>
+        <span class="s1">+ newline</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;startxref&quot;</span>
+        <span class="s1">+ newline</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;([0-9]+)&quot;</span>
+        <span class="s1">+ newline</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;%%EOF&quot;</span>
+        <span class="s1">+ whitespace_optional</span><span class="s0">,</span>
+        <span class="s1">re.DOTALL</span><span class="s0">,</span>
+    <span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">read_trailer(self):</span>
+        <span class="s1">search_start_offset = len(self.buf) - </span><span class="s4">16384</span>
+        <span class="s0">if </span><span class="s1">search_start_offset &lt; self.start_offset:</span>
+            <span class="s1">search_start_offset = self.start_offset</span>
+        <span class="s1">m = self.re_trailer_end.search(self.buf</span><span class="s0">, </span><span class="s1">search_start_offset)</span>
+        <span class="s1">check_format_condition(m</span><span class="s0">, </span><span class="s3">&quot;trailer end not found&quot;</span><span class="s1">)</span>
+        <span class="s2"># make sure we found the LAST trailer</span>
+        <span class="s1">last_match = m</span>
+        <span class="s0">while </span><span class="s1">m:</span>
+            <span class="s1">last_match = m</span>
+            <span class="s1">m = self.re_trailer_end.search(self.buf</span><span class="s0">, </span><span class="s1">m.start() + </span><span class="s4">16</span><span class="s1">)</span>
+        <span class="s0">if not </span><span class="s1">m:</span>
+            <span class="s1">m = last_match</span>
+        <span class="s1">trailer_data = m.group(</span><span class="s4">1</span><span class="s1">)</span>
+        <span class="s1">self.last_xref_section_offset = int(m.group(</span><span class="s4">2</span><span class="s1">))</span>
+        <span class="s1">self.trailer_dict = self.interpret_trailer(trailer_data)</span>
+        <span class="s1">self.xref_table = XrefTable()</span>
+        <span class="s1">self.read_xref_table(xref_section_offset=self.last_xref_section_offset)</span>
+        <span class="s0">if </span><span class="s6">b&quot;Prev&quot; </span><span class="s0">in </span><span class="s1">self.trailer_dict:</span>
+            <span class="s1">self.read_prev_trailer(self.trailer_dict[</span><span class="s6">b&quot;Prev&quot;</span><span class="s1">])</span>
+
+    <span class="s0">def </span><span class="s1">read_prev_trailer(self</span><span class="s0">, </span><span class="s1">xref_section_offset):</span>
+        <span class="s1">trailer_offset = self.read_xref_table(xref_section_offset=xref_section_offset)</span>
+        <span class="s1">m = self.re_trailer_prev.search(</span>
+            <span class="s1">self.buf[trailer_offset : trailer_offset + </span><span class="s4">16384</span><span class="s1">]</span>
+        <span class="s1">)</span>
+        <span class="s1">check_format_condition(m</span><span class="s0">, </span><span class="s3">&quot;previous trailer not found&quot;</span><span class="s1">)</span>
+        <span class="s1">trailer_data = m.group(</span><span class="s4">1</span><span class="s1">)</span>
+        <span class="s1">check_format_condition(</span>
+            <span class="s1">int(m.group(</span><span class="s4">2</span><span class="s1">)) == xref_section_offset</span><span class="s0">,</span>
+            <span class="s3">&quot;xref section offset in previous trailer doesn't match what was expected&quot;</span><span class="s0">,</span>
+        <span class="s1">)</span>
+        <span class="s1">trailer_dict = self.interpret_trailer(trailer_data)</span>
+        <span class="s0">if </span><span class="s6">b&quot;Prev&quot; </span><span class="s0">in </span><span class="s1">trailer_dict:</span>
+            <span class="s1">self.read_prev_trailer(trailer_dict[</span><span class="s6">b&quot;Prev&quot;</span><span class="s1">])</span>
+
+    <span class="s1">re_whitespace_optional = re.compile(whitespace_optional)</span>
+    <span class="s1">re_name = re.compile(</span>
+        <span class="s1">whitespace_optional</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;/([!-$&amp;'*-.0-;=?-Z\\^-z|~]+)(?=&quot;</span>
+        <span class="s1">+ delimiter_or_ws</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;)&quot;</span>
+    <span class="s1">)</span>
+    <span class="s1">re_dict_start = re.compile(whitespace_optional + </span><span class="s6">rb&quot;&lt;&lt;&quot;</span><span class="s1">)</span>
+    <span class="s1">re_dict_end = re.compile(whitespace_optional + </span><span class="s6">rb&quot;&gt;&gt;&quot; </span><span class="s1">+ whitespace_optional)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">interpret_trailer(cls</span><span class="s0">, </span><span class="s1">trailer_data):</span>
+        <span class="s1">trailer = {}</span>
+        <span class="s1">offset = </span><span class="s4">0</span>
+        <span class="s0">while True</span><span class="s1">:</span>
+            <span class="s1">m = cls.re_name.match(trailer_data</span><span class="s0">, </span><span class="s1">offset)</span>
+            <span class="s0">if not </span><span class="s1">m:</span>
+                <span class="s1">m = cls.re_dict_end.match(trailer_data</span><span class="s0">, </span><span class="s1">offset)</span>
+                <span class="s1">check_format_condition(</span>
+                    <span class="s1">m </span><span class="s0">and </span><span class="s1">m.end() == len(trailer_data)</span><span class="s0">,</span>
+                    <span class="s3">&quot;name not found in trailer, remaining data: &quot;</span>
+                    <span class="s1">+ repr(trailer_data[offset:])</span><span class="s0">,</span>
+                <span class="s1">)</span>
+                <span class="s0">break</span>
+            <span class="s1">key = cls.interpret_name(m.group(</span><span class="s4">1</span><span class="s1">))</span>
+            <span class="s1">value</span><span class="s0">, </span><span class="s1">offset = cls.get_value(trailer_data</span><span class="s0">, </span><span class="s1">m.end())</span>
+            <span class="s1">trailer[key] = value</span>
+        <span class="s1">check_format_condition(</span>
+            <span class="s6">b&quot;Size&quot; </span><span class="s0">in </span><span class="s1">trailer </span><span class="s0">and </span><span class="s1">isinstance(trailer[</span><span class="s6">b&quot;Size&quot;</span><span class="s1">]</span><span class="s0">, </span><span class="s1">int)</span><span class="s0">,</span>
+            <span class="s3">&quot;/Size not in trailer or not an integer&quot;</span><span class="s0">,</span>
+        <span class="s1">)</span>
+        <span class="s1">check_format_condition(</span>
+            <span class="s6">b&quot;Root&quot; </span><span class="s0">in </span><span class="s1">trailer </span><span class="s0">and </span><span class="s1">isinstance(trailer[</span><span class="s6">b&quot;Root&quot;</span><span class="s1">]</span><span class="s0">, </span><span class="s1">IndirectReference)</span><span class="s0">,</span>
+            <span class="s3">&quot;/Root not in trailer or not an indirect reference&quot;</span><span class="s0">,</span>
+        <span class="s1">)</span>
+        <span class="s0">return </span><span class="s1">trailer</span>
+
+    <span class="s1">re_hashes_in_name = re.compile(</span><span class="s6">rb&quot;([^#]*)(#([0-9a-fA-F]{2}))?&quot;</span><span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">interpret_name(cls</span><span class="s0">, </span><span class="s1">raw</span><span class="s0">, </span><span class="s1">as_text=</span><span class="s0">False</span><span class="s1">):</span>
+        <span class="s1">name = </span><span class="s6">b&quot;&quot;</span>
+        <span class="s0">for </span><span class="s1">m </span><span class="s0">in </span><span class="s1">cls.re_hashes_in_name.finditer(raw):</span>
+            <span class="s0">if </span><span class="s1">m.group(</span><span class="s4">3</span><span class="s1">):</span>
+                <span class="s1">name += m.group(</span><span class="s4">1</span><span class="s1">) + bytearray.fromhex(m.group(</span><span class="s4">3</span><span class="s1">).decode(</span><span class="s3">&quot;us-ascii&quot;</span><span class="s1">))</span>
+            <span class="s0">else</span><span class="s1">:</span>
+                <span class="s1">name += m.group(</span><span class="s4">1</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">as_text:</span>
+            <span class="s0">return </span><span class="s1">name.decode(</span><span class="s3">&quot;utf-8&quot;</span><span class="s1">)</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s0">return </span><span class="s1">bytes(name)</span>
+
+    <span class="s1">re_null = re.compile(whitespace_optional + </span><span class="s6">rb&quot;null(?=&quot; </span><span class="s1">+ delimiter_or_ws + </span><span class="s6">rb&quot;)&quot;</span><span class="s1">)</span>
+    <span class="s1">re_true = re.compile(whitespace_optional + </span><span class="s6">rb&quot;true(?=&quot; </span><span class="s1">+ delimiter_or_ws + </span><span class="s6">rb&quot;)&quot;</span><span class="s1">)</span>
+    <span class="s1">re_false = re.compile(whitespace_optional + </span><span class="s6">rb&quot;false(?=&quot; </span><span class="s1">+ delimiter_or_ws + </span><span class="s6">rb&quot;)&quot;</span><span class="s1">)</span>
+    <span class="s1">re_int = re.compile(</span>
+        <span class="s1">whitespace_optional + </span><span class="s6">rb&quot;([-+]?[0-9]+)(?=&quot; </span><span class="s1">+ delimiter_or_ws + </span><span class="s6">rb&quot;)&quot;</span>
+    <span class="s1">)</span>
+    <span class="s1">re_real = re.compile(</span>
+        <span class="s1">whitespace_optional</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;([-+]?([0-9]+\.[0-9]*|[0-9]*\.[0-9]+))(?=&quot;</span>
+        <span class="s1">+ delimiter_or_ws</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;)&quot;</span>
+    <span class="s1">)</span>
+    <span class="s1">re_array_start = re.compile(whitespace_optional + </span><span class="s6">rb&quot;\[&quot;</span><span class="s1">)</span>
+    <span class="s1">re_array_end = re.compile(whitespace_optional + </span><span class="s6">rb&quot;]&quot;</span><span class="s1">)</span>
+    <span class="s1">re_string_hex = re.compile(</span>
+        <span class="s1">whitespace_optional + </span><span class="s6">rb&quot;&lt;(&quot; </span><span class="s1">+ whitespace_or_hex + </span><span class="s6">rb&quot;*)&gt;&quot;</span>
+    <span class="s1">)</span>
+    <span class="s1">re_string_lit = re.compile(whitespace_optional + </span><span class="s6">rb&quot;\(&quot;</span><span class="s1">)</span>
+    <span class="s1">re_indirect_reference = re.compile(</span>
+        <span class="s1">whitespace_optional</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;([-+]?[0-9]+)&quot;</span>
+        <span class="s1">+ whitespace_mandatory</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;([-+]?[0-9]+)&quot;</span>
+        <span class="s1">+ whitespace_mandatory</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;R(?=&quot;</span>
+        <span class="s1">+ delimiter_or_ws</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;)&quot;</span>
+    <span class="s1">)</span>
+    <span class="s1">re_indirect_def_start = re.compile(</span>
+        <span class="s1">whitespace_optional</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;([-+]?[0-9]+)&quot;</span>
+        <span class="s1">+ whitespace_mandatory</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;([-+]?[0-9]+)&quot;</span>
+        <span class="s1">+ whitespace_mandatory</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;obj(?=&quot;</span>
+        <span class="s1">+ delimiter_or_ws</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;)&quot;</span>
+    <span class="s1">)</span>
+    <span class="s1">re_indirect_def_end = re.compile(</span>
+        <span class="s1">whitespace_optional + </span><span class="s6">rb&quot;endobj(?=&quot; </span><span class="s1">+ delimiter_or_ws + </span><span class="s6">rb&quot;)&quot;</span>
+    <span class="s1">)</span>
+    <span class="s1">re_comment = re.compile(</span>
+        <span class="s6">rb&quot;(&quot; </span><span class="s1">+ whitespace_optional + </span><span class="s6">rb&quot;%[^\r\n]*&quot; </span><span class="s1">+ newline + </span><span class="s6">rb&quot;)*&quot;</span>
+    <span class="s1">)</span>
+    <span class="s1">re_stream_start = re.compile(whitespace_optional + </span><span class="s6">rb&quot;stream\r?\n&quot;</span><span class="s1">)</span>
+    <span class="s1">re_stream_end = re.compile(</span>
+        <span class="s1">whitespace_optional + </span><span class="s6">rb&quot;endstream(?=&quot; </span><span class="s1">+ delimiter_or_ws + </span><span class="s6">rb&quot;)&quot;</span>
+    <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">get_value(cls</span><span class="s0">, </span><span class="s1">data</span><span class="s0">, </span><span class="s1">offset</span><span class="s0">, </span><span class="s1">expect_indirect=</span><span class="s0">None, </span><span class="s1">max_nesting=-</span><span class="s4">1</span><span class="s1">):</span>
+        <span class="s0">if </span><span class="s1">max_nesting == </span><span class="s4">0</span><span class="s1">:</span>
+            <span class="s0">return None, None</span>
+        <span class="s1">m = cls.re_comment.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+        <span class="s0">if </span><span class="s1">m:</span>
+            <span class="s1">offset = m.end()</span>
+        <span class="s1">m = cls.re_indirect_def_start.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+        <span class="s0">if </span><span class="s1">m:</span>
+            <span class="s1">check_format_condition(</span>
+                <span class="s1">int(m.group(</span><span class="s4">1</span><span class="s1">)) &gt; </span><span class="s4">0</span><span class="s0">,</span>
+                <span class="s3">&quot;indirect object definition: object ID must be greater than 0&quot;</span><span class="s0">,</span>
+            <span class="s1">)</span>
+            <span class="s1">check_format_condition(</span>
+                <span class="s1">int(m.group(</span><span class="s4">2</span><span class="s1">)) &gt;= </span><span class="s4">0</span><span class="s0">,</span>
+                <span class="s3">&quot;indirect object definition: generation must be non-negative&quot;</span><span class="s0">,</span>
+            <span class="s1">)</span>
+            <span class="s1">check_format_condition(</span>
+                <span class="s1">expect_indirect </span><span class="s0">is None</span>
+                <span class="s0">or </span><span class="s1">expect_indirect</span>
+                <span class="s1">== IndirectReference(int(m.group(</span><span class="s4">1</span><span class="s1">))</span><span class="s0">, </span><span class="s1">int(m.group(</span><span class="s4">2</span><span class="s1">)))</span><span class="s0">,</span>
+                <span class="s3">&quot;indirect object definition different than expected&quot;</span><span class="s0">,</span>
+            <span class="s1">)</span>
+            <span class="s1">object</span><span class="s0">, </span><span class="s1">offset = cls.get_value(data</span><span class="s0">, </span><span class="s1">m.end()</span><span class="s0">, </span><span class="s1">max_nesting=max_nesting - </span><span class="s4">1</span><span class="s1">)</span>
+            <span class="s0">if </span><span class="s1">offset </span><span class="s0">is None</span><span class="s1">:</span>
+                <span class="s0">return </span><span class="s1">object</span><span class="s0">, None</span>
+            <span class="s1">m = cls.re_indirect_def_end.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+            <span class="s1">check_format_condition(m</span><span class="s0">, </span><span class="s3">&quot;indirect object definition end not found&quot;</span><span class="s1">)</span>
+            <span class="s0">return </span><span class="s1">object</span><span class="s0">, </span><span class="s1">m.end()</span>
+        <span class="s1">check_format_condition(</span>
+            <span class="s0">not </span><span class="s1">expect_indirect</span><span class="s0">, </span><span class="s3">&quot;indirect object definition not found&quot;</span>
+        <span class="s1">)</span>
+        <span class="s1">m = cls.re_indirect_reference.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+        <span class="s0">if </span><span class="s1">m:</span>
+            <span class="s1">check_format_condition(</span>
+                <span class="s1">int(m.group(</span><span class="s4">1</span><span class="s1">)) &gt; </span><span class="s4">0</span><span class="s0">,</span>
+                <span class="s3">&quot;indirect object reference: object ID must be greater than 0&quot;</span><span class="s0">,</span>
+            <span class="s1">)</span>
+            <span class="s1">check_format_condition(</span>
+                <span class="s1">int(m.group(</span><span class="s4">2</span><span class="s1">)) &gt;= </span><span class="s4">0</span><span class="s0">,</span>
+                <span class="s3">&quot;indirect object reference: generation must be non-negative&quot;</span><span class="s0">,</span>
+            <span class="s1">)</span>
+            <span class="s0">return </span><span class="s1">IndirectReference(int(m.group(</span><span class="s4">1</span><span class="s1">))</span><span class="s0">, </span><span class="s1">int(m.group(</span><span class="s4">2</span><span class="s1">)))</span><span class="s0">, </span><span class="s1">m.end()</span>
+        <span class="s1">m = cls.re_dict_start.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+        <span class="s0">if </span><span class="s1">m:</span>
+            <span class="s1">offset = m.end()</span>
+            <span class="s1">result = {}</span>
+            <span class="s1">m = cls.re_dict_end.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+            <span class="s0">while not </span><span class="s1">m:</span>
+                <span class="s1">key</span><span class="s0">, </span><span class="s1">offset = cls.get_value(data</span><span class="s0">, </span><span class="s1">offset</span><span class="s0">, </span><span class="s1">max_nesting=max_nesting - </span><span class="s4">1</span><span class="s1">)</span>
+                <span class="s0">if </span><span class="s1">offset </span><span class="s0">is None</span><span class="s1">:</span>
+                    <span class="s0">return </span><span class="s1">result</span><span class="s0">, None</span>
+                <span class="s1">value</span><span class="s0">, </span><span class="s1">offset = cls.get_value(data</span><span class="s0">, </span><span class="s1">offset</span><span class="s0">, </span><span class="s1">max_nesting=max_nesting - </span><span class="s4">1</span><span class="s1">)</span>
+                <span class="s1">result[key] = value</span>
+                <span class="s0">if </span><span class="s1">offset </span><span class="s0">is None</span><span class="s1">:</span>
+                    <span class="s0">return </span><span class="s1">result</span><span class="s0">, None</span>
+                <span class="s1">m = cls.re_dict_end.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+            <span class="s1">offset = m.end()</span>
+            <span class="s1">m = cls.re_stream_start.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+            <span class="s0">if </span><span class="s1">m:</span>
+                <span class="s0">try</span><span class="s1">:</span>
+                    <span class="s1">stream_len = int(result[</span><span class="s6">b&quot;Length&quot;</span><span class="s1">])</span>
+                <span class="s0">except </span><span class="s1">(TypeError</span><span class="s0">, </span><span class="s1">KeyError</span><span class="s0">, </span><span class="s1">ValueError) </span><span class="s0">as </span><span class="s1">e:</span>
+                    <span class="s0">raise </span><span class="s1">PdfFormatError(</span>
+                        <span class="s3">&quot;bad or missing Length in stream dict (%r)&quot;</span>
+                        <span class="s1">% result.get(</span><span class="s6">b&quot;Length&quot;</span><span class="s0">, None</span><span class="s1">)</span>
+                    <span class="s1">) </span><span class="s0">from </span><span class="s1">e</span>
+                <span class="s1">stream_data = data[m.end() : m.end() + stream_len]</span>
+                <span class="s1">m = cls.re_stream_end.match(data</span><span class="s0">, </span><span class="s1">m.end() + stream_len)</span>
+                <span class="s1">check_format_condition(m</span><span class="s0">, </span><span class="s3">&quot;stream end not found&quot;</span><span class="s1">)</span>
+                <span class="s1">offset = m.end()</span>
+                <span class="s1">result = PdfStream(PdfDict(result)</span><span class="s0">, </span><span class="s1">stream_data)</span>
+            <span class="s0">else</span><span class="s1">:</span>
+                <span class="s1">result = PdfDict(result)</span>
+            <span class="s0">return </span><span class="s1">result</span><span class="s0">, </span><span class="s1">offset</span>
+        <span class="s1">m = cls.re_array_start.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+        <span class="s0">if </span><span class="s1">m:</span>
+            <span class="s1">offset = m.end()</span>
+            <span class="s1">result = []</span>
+            <span class="s1">m = cls.re_array_end.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+            <span class="s0">while not </span><span class="s1">m:</span>
+                <span class="s1">value</span><span class="s0">, </span><span class="s1">offset = cls.get_value(data</span><span class="s0">, </span><span class="s1">offset</span><span class="s0">, </span><span class="s1">max_nesting=max_nesting - </span><span class="s4">1</span><span class="s1">)</span>
+                <span class="s1">result.append(value)</span>
+                <span class="s0">if </span><span class="s1">offset </span><span class="s0">is None</span><span class="s1">:</span>
+                    <span class="s0">return </span><span class="s1">result</span><span class="s0">, None</span>
+                <span class="s1">m = cls.re_array_end.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+            <span class="s0">return </span><span class="s1">result</span><span class="s0">, </span><span class="s1">m.end()</span>
+        <span class="s1">m = cls.re_null.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+        <span class="s0">if </span><span class="s1">m:</span>
+            <span class="s0">return None, </span><span class="s1">m.end()</span>
+        <span class="s1">m = cls.re_true.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+        <span class="s0">if </span><span class="s1">m:</span>
+            <span class="s0">return True, </span><span class="s1">m.end()</span>
+        <span class="s1">m = cls.re_false.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+        <span class="s0">if </span><span class="s1">m:</span>
+            <span class="s0">return False, </span><span class="s1">m.end()</span>
+        <span class="s1">m = cls.re_name.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+        <span class="s0">if </span><span class="s1">m:</span>
+            <span class="s0">return </span><span class="s1">PdfName(cls.interpret_name(m.group(</span><span class="s4">1</span><span class="s1">)))</span><span class="s0">, </span><span class="s1">m.end()</span>
+        <span class="s1">m = cls.re_int.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+        <span class="s0">if </span><span class="s1">m:</span>
+            <span class="s0">return </span><span class="s1">int(m.group(</span><span class="s4">1</span><span class="s1">))</span><span class="s0">, </span><span class="s1">m.end()</span>
+        <span class="s1">m = cls.re_real.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+        <span class="s0">if </span><span class="s1">m:</span>
+            <span class="s2"># XXX Decimal instead of float???</span>
+            <span class="s0">return </span><span class="s1">float(m.group(</span><span class="s4">1</span><span class="s1">))</span><span class="s0">, </span><span class="s1">m.end()</span>
+        <span class="s1">m = cls.re_string_hex.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+        <span class="s0">if </span><span class="s1">m:</span>
+            <span class="s2"># filter out whitespace</span>
+            <span class="s1">hex_string = bytearray(</span>
+                <span class="s1">b </span><span class="s0">for </span><span class="s1">b </span><span class="s0">in </span><span class="s1">m.group(</span><span class="s4">1</span><span class="s1">) </span><span class="s0">if </span><span class="s1">b </span><span class="s0">in </span><span class="s6">b&quot;0123456789abcdefABCDEF&quot;</span>
+            <span class="s1">)</span>
+            <span class="s0">if </span><span class="s1">len(hex_string) % </span><span class="s4">2 </span><span class="s1">== </span><span class="s4">1</span><span class="s1">:</span>
+                <span class="s2"># append a 0 if the length is not even - yes, at the end</span>
+                <span class="s1">hex_string.append(ord(</span><span class="s6">b&quot;0&quot;</span><span class="s1">))</span>
+            <span class="s0">return </span><span class="s1">bytearray.fromhex(hex_string.decode(</span><span class="s3">&quot;us-ascii&quot;</span><span class="s1">))</span><span class="s0">, </span><span class="s1">m.end()</span>
+        <span class="s1">m = cls.re_string_lit.match(data</span><span class="s0">, </span><span class="s1">offset)</span>
+        <span class="s0">if </span><span class="s1">m:</span>
+            <span class="s0">return </span><span class="s1">cls.get_literal_string(data</span><span class="s0">, </span><span class="s1">m.end())</span>
+        <span class="s2"># return None, offset  # fallback (only for debugging)</span>
+        <span class="s0">raise </span><span class="s1">PdfFormatError(</span><span class="s3">&quot;unrecognized object: &quot; </span><span class="s1">+ repr(data[offset : offset + </span><span class="s4">32</span><span class="s1">]))</span>
+
+    <span class="s1">re_lit_str_token = re.compile(</span>
+        <span class="s6">rb&quot;(\\[nrtbf()\\])|(\\[0-9]{1,3})|(\\(\r\n|\r|\n))|(\r\n|\r|\n)|(\()|(\))&quot;</span>
+    <span class="s1">)</span>
+    <span class="s1">escaped_chars = {</span>
+        <span class="s6">b&quot;n&quot;</span><span class="s1">: </span><span class="s6">b&quot;</span><span class="s0">\n</span><span class="s6">&quot;</span><span class="s0">,</span>
+        <span class="s6">b&quot;r&quot;</span><span class="s1">: </span><span class="s6">b&quot;</span><span class="s0">\r</span><span class="s6">&quot;</span><span class="s0">,</span>
+        <span class="s6">b&quot;t&quot;</span><span class="s1">: </span><span class="s6">b&quot;</span><span class="s0">\t</span><span class="s6">&quot;</span><span class="s0">,</span>
+        <span class="s6">b&quot;b&quot;</span><span class="s1">: </span><span class="s6">b&quot;</span><span class="s0">\b</span><span class="s6">&quot;</span><span class="s0">,</span>
+        <span class="s6">b&quot;f&quot;</span><span class="s1">: </span><span class="s6">b&quot;</span><span class="s0">\f</span><span class="s6">&quot;</span><span class="s0">,</span>
+        <span class="s6">b&quot;(&quot;</span><span class="s1">: </span><span class="s6">b&quot;(&quot;</span><span class="s0">,</span>
+        <span class="s6">b&quot;)&quot;</span><span class="s1">: </span><span class="s6">b&quot;)&quot;</span><span class="s0">,</span>
+        <span class="s6">b&quot;</span><span class="s0">\\</span><span class="s6">&quot;</span><span class="s1">: </span><span class="s6">b&quot;</span><span class="s0">\\</span><span class="s6">&quot;</span><span class="s0">,</span>
+        <span class="s1">ord(</span><span class="s6">b&quot;n&quot;</span><span class="s1">): </span><span class="s6">b&quot;</span><span class="s0">\n</span><span class="s6">&quot;</span><span class="s0">,</span>
+        <span class="s1">ord(</span><span class="s6">b&quot;r&quot;</span><span class="s1">): </span><span class="s6">b&quot;</span><span class="s0">\r</span><span class="s6">&quot;</span><span class="s0">,</span>
+        <span class="s1">ord(</span><span class="s6">b&quot;t&quot;</span><span class="s1">): </span><span class="s6">b&quot;</span><span class="s0">\t</span><span class="s6">&quot;</span><span class="s0">,</span>
+        <span class="s1">ord(</span><span class="s6">b&quot;b&quot;</span><span class="s1">): </span><span class="s6">b&quot;</span><span class="s0">\b</span><span class="s6">&quot;</span><span class="s0">,</span>
+        <span class="s1">ord(</span><span class="s6">b&quot;f&quot;</span><span class="s1">): </span><span class="s6">b&quot;</span><span class="s0">\f</span><span class="s6">&quot;</span><span class="s0">,</span>
+        <span class="s1">ord(</span><span class="s6">b&quot;(&quot;</span><span class="s1">): </span><span class="s6">b&quot;(&quot;</span><span class="s0">,</span>
+        <span class="s1">ord(</span><span class="s6">b&quot;)&quot;</span><span class="s1">): </span><span class="s6">b&quot;)&quot;</span><span class="s0">,</span>
+        <span class="s1">ord(</span><span class="s6">b&quot;</span><span class="s0">\\</span><span class="s6">&quot;</span><span class="s1">): </span><span class="s6">b&quot;</span><span class="s0">\\</span><span class="s6">&quot;</span><span class="s0">,</span>
+    <span class="s1">}</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">get_literal_string(cls</span><span class="s0">, </span><span class="s1">data</span><span class="s0">, </span><span class="s1">offset):</span>
+        <span class="s1">nesting_depth = </span><span class="s4">0</span>
+        <span class="s1">result = bytearray()</span>
+        <span class="s0">for </span><span class="s1">m </span><span class="s0">in </span><span class="s1">cls.re_lit_str_token.finditer(data</span><span class="s0">, </span><span class="s1">offset):</span>
+            <span class="s1">result.extend(data[offset : m.start()])</span>
+            <span class="s0">if </span><span class="s1">m.group(</span><span class="s4">1</span><span class="s1">):</span>
+                <span class="s1">result.extend(cls.escaped_chars[m.group(</span><span class="s4">1</span><span class="s1">)[</span><span class="s4">1</span><span class="s1">]])</span>
+            <span class="s0">elif </span><span class="s1">m.group(</span><span class="s4">2</span><span class="s1">):</span>
+                <span class="s1">result.append(int(m.group(</span><span class="s4">2</span><span class="s1">)[</span><span class="s4">1</span><span class="s1">:]</span><span class="s0">, </span><span class="s4">8</span><span class="s1">))</span>
+            <span class="s0">elif </span><span class="s1">m.group(</span><span class="s4">3</span><span class="s1">):</span>
+                <span class="s0">pass</span>
+            <span class="s0">elif </span><span class="s1">m.group(</span><span class="s4">5</span><span class="s1">):</span>
+                <span class="s1">result.extend(</span><span class="s6">b&quot;</span><span class="s0">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+            <span class="s0">elif </span><span class="s1">m.group(</span><span class="s4">6</span><span class="s1">):</span>
+                <span class="s1">result.extend(</span><span class="s6">b&quot;(&quot;</span><span class="s1">)</span>
+                <span class="s1">nesting_depth += </span><span class="s4">1</span>
+            <span class="s0">elif </span><span class="s1">m.group(</span><span class="s4">7</span><span class="s1">):</span>
+                <span class="s0">if </span><span class="s1">nesting_depth == </span><span class="s4">0</span><span class="s1">:</span>
+                    <span class="s0">return </span><span class="s1">bytes(result)</span><span class="s0">, </span><span class="s1">m.end()</span>
+                <span class="s1">result.extend(</span><span class="s6">b&quot;)&quot;</span><span class="s1">)</span>
+                <span class="s1">nesting_depth -= </span><span class="s4">1</span>
+            <span class="s1">offset = m.end()</span>
+        <span class="s0">raise </span><span class="s1">PdfFormatError(</span><span class="s3">&quot;unfinished literal string&quot;</span><span class="s1">)</span>
+
+    <span class="s1">re_xref_section_start = re.compile(whitespace_optional + </span><span class="s6">rb&quot;xref&quot; </span><span class="s1">+ newline)</span>
+    <span class="s1">re_xref_subsection_start = re.compile(</span>
+        <span class="s1">whitespace_optional</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;([0-9]+)&quot;</span>
+        <span class="s1">+ whitespace_mandatory</span>
+        <span class="s1">+ </span><span class="s6">rb&quot;([0-9]+)&quot;</span>
+        <span class="s1">+ whitespace_optional</span>
+        <span class="s1">+ newline_only</span>
+    <span class="s1">)</span>
+    <span class="s1">re_xref_entry = re.compile(</span><span class="s6">rb&quot;([0-9]{10}) ([0-9]{5}) ([fn])( \r| \n|\r\n)&quot;</span><span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">read_xref_table(self</span><span class="s0">, </span><span class="s1">xref_section_offset):</span>
+        <span class="s1">subsection_found = </span><span class="s0">False</span>
+        <span class="s1">m = self.re_xref_section_start.match(</span>
+            <span class="s1">self.buf</span><span class="s0">, </span><span class="s1">xref_section_offset + self.start_offset</span>
+        <span class="s1">)</span>
+        <span class="s1">check_format_condition(m</span><span class="s0">, </span><span class="s3">&quot;xref section start not found&quot;</span><span class="s1">)</span>
+        <span class="s1">offset = m.end()</span>
+        <span class="s0">while True</span><span class="s1">:</span>
+            <span class="s1">m = self.re_xref_subsection_start.match(self.buf</span><span class="s0">, </span><span class="s1">offset)</span>
+            <span class="s0">if not </span><span class="s1">m:</span>
+                <span class="s1">check_format_condition(</span>
+                    <span class="s1">subsection_found</span><span class="s0">, </span><span class="s3">&quot;xref subsection start not found&quot;</span>
+                <span class="s1">)</span>
+                <span class="s0">break</span>
+            <span class="s1">subsection_found = </span><span class="s0">True</span>
+            <span class="s1">offset = m.end()</span>
+            <span class="s1">first_object = int(m.group(</span><span class="s4">1</span><span class="s1">))</span>
+            <span class="s1">num_objects = int(m.group(</span><span class="s4">2</span><span class="s1">))</span>
+            <span class="s0">for </span><span class="s1">i </span><span class="s0">in </span><span class="s1">range(first_object</span><span class="s0">, </span><span class="s1">first_object + num_objects):</span>
+                <span class="s1">m = self.re_xref_entry.match(self.buf</span><span class="s0">, </span><span class="s1">offset)</span>
+                <span class="s1">check_format_condition(m</span><span class="s0">, </span><span class="s3">&quot;xref entry not found&quot;</span><span class="s1">)</span>
+                <span class="s1">offset = m.end()</span>
+                <span class="s1">is_free = m.group(</span><span class="s4">3</span><span class="s1">) == </span><span class="s6">b&quot;f&quot;</span>
+                <span class="s1">generation = int(m.group(</span><span class="s4">2</span><span class="s1">))</span>
+                <span class="s0">if not </span><span class="s1">is_free:</span>
+                    <span class="s1">new_entry = (int(m.group(</span><span class="s4">1</span><span class="s1">))</span><span class="s0">, </span><span class="s1">generation)</span>
+                    <span class="s1">check_format_condition(</span>
+                        <span class="s1">i </span><span class="s0">not in </span><span class="s1">self.xref_table </span><span class="s0">or </span><span class="s1">self.xref_table[i] == new_entry</span><span class="s0">,</span>
+                        <span class="s3">&quot;xref entry duplicated (and not identical)&quot;</span><span class="s0">,</span>
+                    <span class="s1">)</span>
+                    <span class="s1">self.xref_table[i] = new_entry</span>
+        <span class="s0">return </span><span class="s1">offset</span>
+
+    <span class="s0">def </span><span class="s1">read_indirect(self</span><span class="s0">, </span><span class="s1">ref</span><span class="s0">, </span><span class="s1">max_nesting=-</span><span class="s4">1</span><span class="s1">):</span>
+        <span class="s1">offset</span><span class="s0">, </span><span class="s1">generation = self.xref_table[ref[</span><span class="s4">0</span><span class="s1">]]</span>
+        <span class="s1">check_format_condition(</span>
+            <span class="s1">generation == ref[</span><span class="s4">1</span><span class="s1">]</span><span class="s0">,</span>
+            <span class="s3">f&quot;expected to find generation </span><span class="s0">{</span><span class="s1">ref[</span><span class="s4">1</span><span class="s1">]</span><span class="s0">} </span><span class="s3">for object ID </span><span class="s0">{</span><span class="s1">ref[</span><span class="s4">0</span><span class="s1">]</span><span class="s0">} </span><span class="s3">in xref &quot;</span>
+            <span class="s3">f&quot;table, instead found generation </span><span class="s0">{</span><span class="s1">generation</span><span class="s0">} </span><span class="s3">at offset </span><span class="s0">{</span><span class="s1">offset</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s0">,</span>
+        <span class="s1">)</span>
+        <span class="s1">value = self.get_value(</span>
+            <span class="s1">self.buf</span><span class="s0">,</span>
+            <span class="s1">offset + self.start_offset</span><span class="s0">,</span>
+            <span class="s1">expect_indirect=IndirectReference(*ref)</span><span class="s0">,</span>
+            <span class="s1">max_nesting=max_nesting</span><span class="s0">,</span>
+        <span class="s1">)[</span><span class="s4">0</span><span class="s1">]</span>
+        <span class="s1">self.cached_objects[ref] = value</span>
+        <span class="s0">return </span><span class="s1">value</span>
+
+    <span class="s0">def </span><span class="s1">linearize_page_tree(self</span><span class="s0">, </span><span class="s1">node=</span><span class="s0">None</span><span class="s1">):</span>
+        <span class="s0">if </span><span class="s1">node </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">node = self.page_tree_root</span>
+        <span class="s1">check_format_condition(</span>
+            <span class="s1">node[</span><span class="s6">b&quot;Type&quot;</span><span class="s1">] == </span><span class="s6">b&quot;Pages&quot;</span><span class="s0">, </span><span class="s3">&quot;/Type of page tree node is not /Pages&quot;</span>
+        <span class="s1">)</span>
+        <span class="s1">pages = []</span>
+        <span class="s0">for </span><span class="s1">kid </span><span class="s0">in </span><span class="s1">node[</span><span class="s6">b&quot;Kids&quot;</span><span class="s1">]:</span>
+            <span class="s1">kid_object = self.read_indirect(kid)</span>
+            <span class="s0">if </span><span class="s1">kid_object[</span><span class="s6">b&quot;Type&quot;</span><span class="s1">] == </span><span class="s6">b&quot;Page&quot;</span><span class="s1">:</span>
+                <span class="s1">pages.append(kid)</span>
+            <span class="s0">else</span><span class="s1">:</span>
+                <span class="s1">pages.extend(self.linearize_page_tree(node=kid_object))</span>
+        <span class="s0">return </span><span class="s1">pages</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,684 @@
+<html>
+<head>
+<title>_win32_console.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #629755; font-style: italic;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6a8759;}
+.s4 { color: #6897bb;}
+.s5 { color: #808080;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_win32_console.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Light wrapper around the Win32 Console API - this module should only be imported on Windows 
+ 
+The API that this module wraps is documented at https://docs.microsoft.com/en-us/windows/console/console-functions 
+&quot;&quot;&quot;</span>
+<span class="s2">import </span><span class="s1">ctypes</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+
+<span class="s1">windll: Any = </span><span class="s2">None</span>
+<span class="s2">if </span><span class="s1">sys.platform == </span><span class="s3">&quot;win32&quot;</span><span class="s1">:</span>
+    <span class="s1">windll = ctypes.LibraryLoader(ctypes.WinDLL)</span>
+<span class="s2">else</span><span class="s1">:</span>
+    <span class="s2">raise </span><span class="s1">ImportError(</span><span class="s3">f&quot;</span><span class="s2">{</span><span class="s1">__name__</span><span class="s2">} </span><span class="s3">can only be imported on Windows&quot;</span><span class="s1">)</span>
+
+<span class="s2">import </span><span class="s1">time</span>
+<span class="s2">from </span><span class="s1">ctypes </span><span class="s2">import </span><span class="s1">Structure</span><span class="s2">, </span><span class="s1">byref</span><span class="s2">, </span><span class="s1">wintypes</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">IO</span><span class="s2">, </span><span class="s1">NamedTuple</span><span class="s2">, </span><span class="s1">Type</span><span class="s2">, </span><span class="s1">cast</span>
+
+<span class="s2">from </span><span class="s1">pip._vendor.rich.color </span><span class="s2">import </span><span class="s1">ColorSystem</span>
+<span class="s2">from </span><span class="s1">pip._vendor.rich.style </span><span class="s2">import </span><span class="s1">Style</span>
+
+<span class="s1">STDOUT = -</span><span class="s4">11</span>
+<span class="s1">ENABLE_VIRTUAL_TERMINAL_PROCESSING = </span><span class="s4">4</span>
+
+<span class="s1">COORD = wintypes._COORD</span>
+
+
+<span class="s2">class </span><span class="s1">LegacyWindowsError(Exception):</span>
+    <span class="s2">pass</span>
+
+
+<span class="s2">class </span><span class="s1">WindowsCoordinates(NamedTuple):</span>
+    <span class="s0">&quot;&quot;&quot;Coordinates in the Windows Console API are (y, x), not (x, y). 
+    This class is intended to prevent that confusion. 
+    Rows and columns are indexed from 0. 
+    This class can be used in place of wintypes._COORD in arguments and argtypes. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">row: int</span>
+    <span class="s1">col: int</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">from_param(cls</span><span class="s2">, </span><span class="s1">value: </span><span class="s3">&quot;WindowsCoordinates&quot;</span><span class="s1">) -&gt; COORD:</span>
+        <span class="s0">&quot;&quot;&quot;Converts a WindowsCoordinates into a wintypes _COORD structure. 
+        This classmethod is internally called by ctypes to perform the conversion. 
+ 
+        Args: 
+            value (WindowsCoordinates): The input coordinates to convert. 
+ 
+        Returns: 
+            wintypes._COORD: The converted coordinates struct. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">COORD(value.col</span><span class="s2">, </span><span class="s1">value.row)</span>
+
+
+<span class="s2">class </span><span class="s1">CONSOLE_SCREEN_BUFFER_INFO(Structure):</span>
+    <span class="s1">_fields_ = [</span>
+        <span class="s1">(</span><span class="s3">&quot;dwSize&quot;</span><span class="s2">, </span><span class="s1">COORD)</span><span class="s2">,</span>
+        <span class="s1">(</span><span class="s3">&quot;dwCursorPosition&quot;</span><span class="s2">, </span><span class="s1">COORD)</span><span class="s2">,</span>
+        <span class="s1">(</span><span class="s3">&quot;wAttributes&quot;</span><span class="s2">, </span><span class="s1">wintypes.WORD)</span><span class="s2">,</span>
+        <span class="s1">(</span><span class="s3">&quot;srWindow&quot;</span><span class="s2">, </span><span class="s1">wintypes.SMALL_RECT)</span><span class="s2">,</span>
+        <span class="s1">(</span><span class="s3">&quot;dwMaximumWindowSize&quot;</span><span class="s2">, </span><span class="s1">COORD)</span><span class="s2">,</span>
+    <span class="s1">]</span>
+
+
+<span class="s2">class </span><span class="s1">CONSOLE_CURSOR_INFO(ctypes.Structure):</span>
+    <span class="s1">_fields_ = [(</span><span class="s3">&quot;dwSize&quot;</span><span class="s2">, </span><span class="s1">wintypes.DWORD)</span><span class="s2">, </span><span class="s1">(</span><span class="s3">&quot;bVisible&quot;</span><span class="s2">, </span><span class="s1">wintypes.BOOL)]</span>
+
+
+<span class="s1">_GetStdHandle = windll.kernel32.GetStdHandle</span>
+<span class="s1">_GetStdHandle.argtypes = [</span>
+    <span class="s1">wintypes.DWORD</span><span class="s2">,</span>
+<span class="s1">]</span>
+<span class="s1">_GetStdHandle.restype = wintypes.HANDLE</span>
+
+
+<span class="s2">def </span><span class="s1">GetStdHandle(handle: int = STDOUT) -&gt; wintypes.HANDLE:</span>
+    <span class="s0">&quot;&quot;&quot;Retrieves a handle to the specified standard device (standard input, standard output, or standard error). 
+ 
+    Args: 
+        handle (int): Integer identifier for the handle. Defaults to -11 (stdout). 
+ 
+    Returns: 
+        wintypes.HANDLE: The handle 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">cast(wintypes.HANDLE</span><span class="s2">, </span><span class="s1">_GetStdHandle(handle))</span>
+
+
+<span class="s1">_GetConsoleMode = windll.kernel32.GetConsoleMode</span>
+<span class="s1">_GetConsoleMode.argtypes = [wintypes.HANDLE</span><span class="s2">, </span><span class="s1">wintypes.LPDWORD]</span>
+<span class="s1">_GetConsoleMode.restype = wintypes.BOOL</span>
+
+
+<span class="s2">def </span><span class="s1">GetConsoleMode(std_handle: wintypes.HANDLE) -&gt; int:</span>
+    <span class="s0">&quot;&quot;&quot;Retrieves the current input mode of a console's input buffer 
+    or the current output mode of a console screen buffer. 
+ 
+    Args: 
+        std_handle (wintypes.HANDLE): A handle to the console input buffer or the console screen buffer. 
+ 
+    Raises: 
+        LegacyWindowsError: If any error occurs while calling the Windows console API. 
+ 
+    Returns: 
+        int: Value representing the current console mode as documented at 
+            https://docs.microsoft.com/en-us/windows/console/getconsolemode#parameters 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">console_mode = wintypes.DWORD()</span>
+    <span class="s1">success = bool(_GetConsoleMode(std_handle</span><span class="s2">, </span><span class="s1">console_mode))</span>
+    <span class="s2">if not </span><span class="s1">success:</span>
+        <span class="s2">raise </span><span class="s1">LegacyWindowsError(</span><span class="s3">&quot;Unable to get legacy Windows Console Mode&quot;</span><span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">console_mode.value</span>
+
+
+<span class="s1">_FillConsoleOutputCharacterW = windll.kernel32.FillConsoleOutputCharacterW</span>
+<span class="s1">_FillConsoleOutputCharacterW.argtypes = [</span>
+    <span class="s1">wintypes.HANDLE</span><span class="s2">,</span>
+    <span class="s1">ctypes.c_char</span><span class="s2">,</span>
+    <span class="s1">wintypes.DWORD</span><span class="s2">,</span>
+    <span class="s1">cast(Type[COORD]</span><span class="s2">, </span><span class="s1">WindowsCoordinates)</span><span class="s2">,</span>
+    <span class="s1">ctypes.POINTER(wintypes.DWORD)</span><span class="s2">,</span>
+<span class="s1">]</span>
+<span class="s1">_FillConsoleOutputCharacterW.restype = wintypes.BOOL</span>
+
+
+<span class="s2">def </span><span class="s1">FillConsoleOutputCharacter(</span>
+    <span class="s1">std_handle: wintypes.HANDLE</span><span class="s2">,</span>
+    <span class="s1">char: str</span><span class="s2">,</span>
+    <span class="s1">length: int</span><span class="s2">,</span>
+    <span class="s1">start: WindowsCoordinates</span><span class="s2">,</span>
+<span class="s1">) -&gt; int:</span>
+    <span class="s0">&quot;&quot;&quot;Writes a character to the console screen buffer a specified number of times, beginning at the specified coordinates. 
+ 
+    Args: 
+        std_handle (wintypes.HANDLE): A handle to the console input buffer or the console screen buffer. 
+        char (str): The character to write. Must be a string of length 1. 
+        length (int): The number of times to write the character. 
+        start (WindowsCoordinates): The coordinates to start writing at. 
+ 
+    Returns: 
+        int: The number of characters written. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">character = ctypes.c_char(char.encode())</span>
+    <span class="s1">num_characters = wintypes.DWORD(length)</span>
+    <span class="s1">num_written = wintypes.DWORD(</span><span class="s4">0</span><span class="s1">)</span>
+    <span class="s1">_FillConsoleOutputCharacterW(</span>
+        <span class="s1">std_handle</span><span class="s2">,</span>
+        <span class="s1">character</span><span class="s2">,</span>
+        <span class="s1">num_characters</span><span class="s2">,</span>
+        <span class="s1">start</span><span class="s2">,</span>
+        <span class="s1">byref(num_written)</span><span class="s2">,</span>
+    <span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">num_written.value</span>
+
+
+<span class="s1">_FillConsoleOutputAttribute = windll.kernel32.FillConsoleOutputAttribute</span>
+<span class="s1">_FillConsoleOutputAttribute.argtypes = [</span>
+    <span class="s1">wintypes.HANDLE</span><span class="s2">,</span>
+    <span class="s1">wintypes.WORD</span><span class="s2">,</span>
+    <span class="s1">wintypes.DWORD</span><span class="s2">,</span>
+    <span class="s1">cast(Type[COORD]</span><span class="s2">, </span><span class="s1">WindowsCoordinates)</span><span class="s2">,</span>
+    <span class="s1">ctypes.POINTER(wintypes.DWORD)</span><span class="s2">,</span>
+<span class="s1">]</span>
+<span class="s1">_FillConsoleOutputAttribute.restype = wintypes.BOOL</span>
+
+
+<span class="s2">def </span><span class="s1">FillConsoleOutputAttribute(</span>
+    <span class="s1">std_handle: wintypes.HANDLE</span><span class="s2">,</span>
+    <span class="s1">attributes: int</span><span class="s2">,</span>
+    <span class="s1">length: int</span><span class="s2">,</span>
+    <span class="s1">start: WindowsCoordinates</span><span class="s2">,</span>
+<span class="s1">) -&gt; int:</span>
+    <span class="s0">&quot;&quot;&quot;Sets the character attributes for a specified number of character cells, 
+    beginning at the specified coordinates in a screen buffer. 
+ 
+    Args: 
+        std_handle (wintypes.HANDLE): A handle to the console input buffer or the console screen buffer. 
+        attributes (int): Integer value representing the foreground and background colours of the cells. 
+        length (int): The number of cells to set the output attribute of. 
+        start (WindowsCoordinates): The coordinates of the first cell whose attributes are to be set. 
+ 
+    Returns: 
+        int: The number of cells whose attributes were actually set. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">num_cells = wintypes.DWORD(length)</span>
+    <span class="s1">style_attrs = wintypes.WORD(attributes)</span>
+    <span class="s1">num_written = wintypes.DWORD(</span><span class="s4">0</span><span class="s1">)</span>
+    <span class="s1">_FillConsoleOutputAttribute(</span>
+        <span class="s1">std_handle</span><span class="s2">, </span><span class="s1">style_attrs</span><span class="s2">, </span><span class="s1">num_cells</span><span class="s2">, </span><span class="s1">start</span><span class="s2">, </span><span class="s1">byref(num_written)</span>
+    <span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">num_written.value</span>
+
+
+<span class="s1">_SetConsoleTextAttribute = windll.kernel32.SetConsoleTextAttribute</span>
+<span class="s1">_SetConsoleTextAttribute.argtypes = [</span>
+    <span class="s1">wintypes.HANDLE</span><span class="s2">,</span>
+    <span class="s1">wintypes.WORD</span><span class="s2">,</span>
+<span class="s1">]</span>
+<span class="s1">_SetConsoleTextAttribute.restype = wintypes.BOOL</span>
+
+
+<span class="s2">def </span><span class="s1">SetConsoleTextAttribute(</span>
+    <span class="s1">std_handle: wintypes.HANDLE</span><span class="s2">, </span><span class="s1">attributes: wintypes.WORD</span>
+<span class="s1">) -&gt; bool:</span>
+    <span class="s0">&quot;&quot;&quot;Set the colour attributes for all text written after this function is called. 
+ 
+    Args: 
+        std_handle (wintypes.HANDLE): A handle to the console input buffer or the console screen buffer. 
+        attributes (int): Integer value representing the foreground and background colours. 
+ 
+ 
+    Returns: 
+        bool: True if the attribute was set successfully, otherwise False. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">bool(_SetConsoleTextAttribute(std_handle</span><span class="s2">, </span><span class="s1">attributes))</span>
+
+
+<span class="s1">_GetConsoleScreenBufferInfo = windll.kernel32.GetConsoleScreenBufferInfo</span>
+<span class="s1">_GetConsoleScreenBufferInfo.argtypes = [</span>
+    <span class="s1">wintypes.HANDLE</span><span class="s2">,</span>
+    <span class="s1">ctypes.POINTER(CONSOLE_SCREEN_BUFFER_INFO)</span><span class="s2">,</span>
+<span class="s1">]</span>
+<span class="s1">_GetConsoleScreenBufferInfo.restype = wintypes.BOOL</span>
+
+
+<span class="s2">def </span><span class="s1">GetConsoleScreenBufferInfo(</span>
+    <span class="s1">std_handle: wintypes.HANDLE</span><span class="s2">,</span>
+<span class="s1">) -&gt; CONSOLE_SCREEN_BUFFER_INFO:</span>
+    <span class="s0">&quot;&quot;&quot;Retrieves information about the specified console screen buffer. 
+ 
+    Args: 
+        std_handle (wintypes.HANDLE): A handle to the console input buffer or the console screen buffer. 
+ 
+    Returns: 
+        CONSOLE_SCREEN_BUFFER_INFO: A CONSOLE_SCREEN_BUFFER_INFO ctype struct contain information about 
+            screen size, cursor position, colour attributes, and more.&quot;&quot;&quot;</span>
+    <span class="s1">console_screen_buffer_info = CONSOLE_SCREEN_BUFFER_INFO()</span>
+    <span class="s1">_GetConsoleScreenBufferInfo(std_handle</span><span class="s2">, </span><span class="s1">byref(console_screen_buffer_info))</span>
+    <span class="s2">return </span><span class="s1">console_screen_buffer_info</span>
+
+
+<span class="s1">_SetConsoleCursorPosition = windll.kernel32.SetConsoleCursorPosition</span>
+<span class="s1">_SetConsoleCursorPosition.argtypes = [</span>
+    <span class="s1">wintypes.HANDLE</span><span class="s2">,</span>
+    <span class="s1">cast(Type[COORD]</span><span class="s2">, </span><span class="s1">WindowsCoordinates)</span><span class="s2">,</span>
+<span class="s1">]</span>
+<span class="s1">_SetConsoleCursorPosition.restype = wintypes.BOOL</span>
+
+
+<span class="s2">def </span><span class="s1">SetConsoleCursorPosition(</span>
+    <span class="s1">std_handle: wintypes.HANDLE</span><span class="s2">, </span><span class="s1">coords: WindowsCoordinates</span>
+<span class="s1">) -&gt; bool:</span>
+    <span class="s0">&quot;&quot;&quot;Set the position of the cursor in the console screen 
+ 
+    Args: 
+        std_handle (wintypes.HANDLE): A handle to the console input buffer or the console screen buffer. 
+        coords (WindowsCoordinates): The coordinates to move the cursor to. 
+ 
+    Returns: 
+        bool: True if the function succeeds, otherwise False. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">bool(_SetConsoleCursorPosition(std_handle</span><span class="s2">, </span><span class="s1">coords))</span>
+
+
+<span class="s1">_GetConsoleCursorInfo = windll.kernel32.GetConsoleCursorInfo</span>
+<span class="s1">_GetConsoleCursorInfo.argtypes = [</span>
+    <span class="s1">wintypes.HANDLE</span><span class="s2">,</span>
+    <span class="s1">ctypes.POINTER(CONSOLE_CURSOR_INFO)</span><span class="s2">,</span>
+<span class="s1">]</span>
+<span class="s1">_GetConsoleCursorInfo.restype = wintypes.BOOL</span>
+
+
+<span class="s2">def </span><span class="s1">GetConsoleCursorInfo(</span>
+    <span class="s1">std_handle: wintypes.HANDLE</span><span class="s2">, </span><span class="s1">cursor_info: CONSOLE_CURSOR_INFO</span>
+<span class="s1">) -&gt; bool:</span>
+    <span class="s0">&quot;&quot;&quot;Get the cursor info - used to get cursor visibility and width 
+ 
+    Args: 
+        std_handle (wintypes.HANDLE): A handle to the console input buffer or the console screen buffer. 
+        cursor_info (CONSOLE_CURSOR_INFO): CONSOLE_CURSOR_INFO ctype struct that receives information 
+            about the console's cursor. 
+ 
+    Returns: 
+          bool: True if the function succeeds, otherwise False. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">bool(_GetConsoleCursorInfo(std_handle</span><span class="s2">, </span><span class="s1">byref(cursor_info)))</span>
+
+
+<span class="s1">_SetConsoleCursorInfo = windll.kernel32.SetConsoleCursorInfo</span>
+<span class="s1">_SetConsoleCursorInfo.argtypes = [</span>
+    <span class="s1">wintypes.HANDLE</span><span class="s2">,</span>
+    <span class="s1">ctypes.POINTER(CONSOLE_CURSOR_INFO)</span><span class="s2">,</span>
+<span class="s1">]</span>
+<span class="s1">_SetConsoleCursorInfo.restype = wintypes.BOOL</span>
+
+
+<span class="s2">def </span><span class="s1">SetConsoleCursorInfo(</span>
+    <span class="s1">std_handle: wintypes.HANDLE</span><span class="s2">, </span><span class="s1">cursor_info: CONSOLE_CURSOR_INFO</span>
+<span class="s1">) -&gt; bool:</span>
+    <span class="s0">&quot;&quot;&quot;Set the cursor info - used for adjusting cursor visibility and width 
+ 
+    Args: 
+        std_handle (wintypes.HANDLE): A handle to the console input buffer or the console screen buffer. 
+        cursor_info (CONSOLE_CURSOR_INFO): CONSOLE_CURSOR_INFO ctype struct containing the new cursor info. 
+ 
+    Returns: 
+          bool: True if the function succeeds, otherwise False. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">bool(_SetConsoleCursorInfo(std_handle</span><span class="s2">, </span><span class="s1">byref(cursor_info)))</span>
+
+
+<span class="s1">_SetConsoleTitle = windll.kernel32.SetConsoleTitleW</span>
+<span class="s1">_SetConsoleTitle.argtypes = [wintypes.LPCWSTR]</span>
+<span class="s1">_SetConsoleTitle.restype = wintypes.BOOL</span>
+
+
+<span class="s2">def </span><span class="s1">SetConsoleTitle(title: str) -&gt; bool:</span>
+    <span class="s0">&quot;&quot;&quot;Sets the title of the current console window 
+ 
+    Args: 
+        title (str): The new title of the console window. 
+ 
+    Returns: 
+        bool: True if the function succeeds, otherwise False. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">bool(_SetConsoleTitle(title))</span>
+
+
+<span class="s2">class </span><span class="s1">LegacyWindowsTerm:</span>
+    <span class="s0">&quot;&quot;&quot;This class allows interaction with the legacy Windows Console API. It should only be used in the context 
+    of environments where virtual terminal processing is not available. However, if it is used in a Windows environment, 
+    the entire API should work. 
+ 
+    Args: 
+        file (IO[str]): The file which the Windows Console API HANDLE is retrieved from, defaults to sys.stdout. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">BRIGHT_BIT = </span><span class="s4">8</span>
+
+    <span class="s5"># Indices are ANSI color numbers, values are the corresponding Windows Console API color numbers</span>
+    <span class="s1">ANSI_TO_WINDOWS = [</span>
+        <span class="s4">0</span><span class="s2">,  </span><span class="s5"># black                      The Windows colours are defined in wincon.h as follows:</span>
+        <span class="s4">4</span><span class="s2">,  </span><span class="s5"># red                         define FOREGROUND_BLUE            0x0001 -- 0000 0001</span>
+        <span class="s4">2</span><span class="s2">,  </span><span class="s5"># green                       define FOREGROUND_GREEN           0x0002 -- 0000 0010</span>
+        <span class="s4">6</span><span class="s2">,  </span><span class="s5"># yellow                      define FOREGROUND_RED             0x0004 -- 0000 0100</span>
+        <span class="s4">1</span><span class="s2">,  </span><span class="s5"># blue                        define FOREGROUND_INTENSITY       0x0008 -- 0000 1000</span>
+        <span class="s4">5</span><span class="s2">,  </span><span class="s5"># magenta                     define BACKGROUND_BLUE            0x0010 -- 0001 0000</span>
+        <span class="s4">3</span><span class="s2">,  </span><span class="s5"># cyan                        define BACKGROUND_GREEN           0x0020 -- 0010 0000</span>
+        <span class="s4">7</span><span class="s2">,  </span><span class="s5"># white                       define BACKGROUND_RED             0x0040 -- 0100 0000</span>
+        <span class="s4">8</span><span class="s2">,  </span><span class="s5"># bright black (grey)         define BACKGROUND_INTENSITY       0x0080 -- 1000 0000</span>
+        <span class="s4">12</span><span class="s2">,  </span><span class="s5"># bright red</span>
+        <span class="s4">10</span><span class="s2">,  </span><span class="s5"># bright green</span>
+        <span class="s4">14</span><span class="s2">,  </span><span class="s5"># bright yellow</span>
+        <span class="s4">9</span><span class="s2">,  </span><span class="s5"># bright blue</span>
+        <span class="s4">13</span><span class="s2">,  </span><span class="s5"># bright magenta</span>
+        <span class="s4">11</span><span class="s2">,  </span><span class="s5"># bright cyan</span>
+        <span class="s4">15</span><span class="s2">,  </span><span class="s5"># bright white</span>
+    <span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">file: </span><span class="s3">&quot;IO[str]&quot;</span><span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">handle = GetStdHandle(STDOUT)</span>
+        <span class="s1">self._handle = handle</span>
+        <span class="s1">default_text = GetConsoleScreenBufferInfo(handle).wAttributes</span>
+        <span class="s1">self._default_text = default_text</span>
+
+        <span class="s1">self._default_fore = default_text &amp; </span><span class="s4">7</span>
+        <span class="s1">self._default_back = (default_text &gt;&gt; </span><span class="s4">4</span><span class="s1">) &amp; </span><span class="s4">7</span>
+        <span class="s1">self._default_attrs = self._default_fore | (self._default_back &lt;&lt; </span><span class="s4">4</span><span class="s1">)</span>
+
+        <span class="s1">self._file = file</span>
+        <span class="s1">self.write = file.write</span>
+        <span class="s1">self.flush = file.flush</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">cursor_position(self) -&gt; WindowsCoordinates:</span>
+        <span class="s0">&quot;&quot;&quot;Returns the current position of the cursor (0-based) 
+ 
+        Returns: 
+            WindowsCoordinates: The current cursor position. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">coord: COORD = GetConsoleScreenBufferInfo(self._handle).dwCursorPosition</span>
+        <span class="s2">return </span><span class="s1">WindowsCoordinates(row=cast(int</span><span class="s2">, </span><span class="s1">coord.Y)</span><span class="s2">, </span><span class="s1">col=cast(int</span><span class="s2">, </span><span class="s1">coord.X))</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">screen_size(self) -&gt; WindowsCoordinates:</span>
+        <span class="s0">&quot;&quot;&quot;Returns the current size of the console screen buffer, in character columns and rows 
+ 
+        Returns: 
+            WindowsCoordinates: The width and height of the screen as WindowsCoordinates. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">screen_size: COORD = GetConsoleScreenBufferInfo(self._handle).dwSize</span>
+        <span class="s2">return </span><span class="s1">WindowsCoordinates(</span>
+            <span class="s1">row=cast(int</span><span class="s2">, </span><span class="s1">screen_size.Y)</span><span class="s2">, </span><span class="s1">col=cast(int</span><span class="s2">, </span><span class="s1">screen_size.X)</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">write_text(self</span><span class="s2">, </span><span class="s1">text: str) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;Write text directly to the terminal without any modification of styles 
+ 
+        Args: 
+            text (str): The text to write to the console 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.write(text)</span>
+        <span class="s1">self.flush()</span>
+
+    <span class="s2">def </span><span class="s1">write_styled(self</span><span class="s2">, </span><span class="s1">text: str</span><span class="s2">, </span><span class="s1">style: Style) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;Write styled text to the terminal. 
+ 
+        Args: 
+            text (str): The text to write 
+            style (Style): The style of the text 
+        &quot;&quot;&quot;</span>
+        <span class="s1">color = style.color</span>
+        <span class="s1">bgcolor = style.bgcolor</span>
+        <span class="s2">if </span><span class="s1">style.reverse:</span>
+            <span class="s1">color</span><span class="s2">, </span><span class="s1">bgcolor = bgcolor</span><span class="s2">, </span><span class="s1">color</span>
+
+        <span class="s2">if </span><span class="s1">color:</span>
+            <span class="s1">fore = color.downgrade(ColorSystem.WINDOWS).number</span>
+            <span class="s1">fore = fore </span><span class="s2">if </span><span class="s1">fore </span><span class="s2">is not None else </span><span class="s4">7  </span><span class="s5"># Default to ANSI 7: White</span>
+            <span class="s2">if </span><span class="s1">style.bold:</span>
+                <span class="s1">fore = fore | self.BRIGHT_BIT</span>
+            <span class="s2">if </span><span class="s1">style.dim:</span>
+                <span class="s1">fore = fore &amp; ~self.BRIGHT_BIT</span>
+            <span class="s1">fore = self.ANSI_TO_WINDOWS[fore]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">fore = self._default_fore</span>
+
+        <span class="s2">if </span><span class="s1">bgcolor:</span>
+            <span class="s1">back = bgcolor.downgrade(ColorSystem.WINDOWS).number</span>
+            <span class="s1">back = back </span><span class="s2">if </span><span class="s1">back </span><span class="s2">is not None else </span><span class="s4">0  </span><span class="s5"># Default to ANSI 0: Black</span>
+            <span class="s1">back = self.ANSI_TO_WINDOWS[back]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">back = self._default_back</span>
+
+        <span class="s2">assert </span><span class="s1">fore </span><span class="s2">is not None</span>
+        <span class="s2">assert </span><span class="s1">back </span><span class="s2">is not None</span>
+
+        <span class="s1">SetConsoleTextAttribute(</span>
+            <span class="s1">self._handle</span><span class="s2">, </span><span class="s1">attributes=ctypes.c_ushort(fore | (back &lt;&lt; </span><span class="s4">4</span><span class="s1">))</span>
+        <span class="s1">)</span>
+        <span class="s1">self.write_text(text)</span>
+        <span class="s1">SetConsoleTextAttribute(self._handle</span><span class="s2">, </span><span class="s1">attributes=self._default_text)</span>
+
+    <span class="s2">def </span><span class="s1">move_cursor_to(self</span><span class="s2">, </span><span class="s1">new_position: WindowsCoordinates) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;Set the position of the cursor 
+ 
+        Args: 
+            new_position (WindowsCoordinates): The WindowsCoordinates representing the new position of the cursor. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">new_position.col &lt; </span><span class="s4">0 </span><span class="s2">or </span><span class="s1">new_position.row &lt; </span><span class="s4">0</span><span class="s1">:</span>
+            <span class="s2">return</span>
+        <span class="s1">SetConsoleCursorPosition(self._handle</span><span class="s2">, </span><span class="s1">coords=new_position)</span>
+
+    <span class="s2">def </span><span class="s1">erase_line(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;Erase all content on the line the cursor is currently located at&quot;&quot;&quot;</span>
+        <span class="s1">screen_size = self.screen_size</span>
+        <span class="s1">cursor_position = self.cursor_position</span>
+        <span class="s1">cells_to_erase = screen_size.col</span>
+        <span class="s1">start_coordinates = WindowsCoordinates(row=cursor_position.row</span><span class="s2">, </span><span class="s1">col=</span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s1">FillConsoleOutputCharacter(</span>
+            <span class="s1">self._handle</span><span class="s2">, </span><span class="s3">&quot; &quot;</span><span class="s2">, </span><span class="s1">length=cells_to_erase</span><span class="s2">, </span><span class="s1">start=start_coordinates</span>
+        <span class="s1">)</span>
+        <span class="s1">FillConsoleOutputAttribute(</span>
+            <span class="s1">self._handle</span><span class="s2">,</span>
+            <span class="s1">self._default_attrs</span><span class="s2">,</span>
+            <span class="s1">length=cells_to_erase</span><span class="s2">,</span>
+            <span class="s1">start=start_coordinates</span><span class="s2">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">erase_end_of_line(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;Erase all content from the cursor position to the end of that line&quot;&quot;&quot;</span>
+        <span class="s1">cursor_position = self.cursor_position</span>
+        <span class="s1">cells_to_erase = self.screen_size.col - cursor_position.col</span>
+        <span class="s1">FillConsoleOutputCharacter(</span>
+            <span class="s1">self._handle</span><span class="s2">, </span><span class="s3">&quot; &quot;</span><span class="s2">, </span><span class="s1">length=cells_to_erase</span><span class="s2">, </span><span class="s1">start=cursor_position</span>
+        <span class="s1">)</span>
+        <span class="s1">FillConsoleOutputAttribute(</span>
+            <span class="s1">self._handle</span><span class="s2">,</span>
+            <span class="s1">self._default_attrs</span><span class="s2">,</span>
+            <span class="s1">length=cells_to_erase</span><span class="s2">,</span>
+            <span class="s1">start=cursor_position</span><span class="s2">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">erase_start_of_line(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;Erase all content from the cursor position to the start of that line&quot;&quot;&quot;</span>
+        <span class="s1">row</span><span class="s2">, </span><span class="s1">col = self.cursor_position</span>
+        <span class="s1">start = WindowsCoordinates(row</span><span class="s2">, </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s1">FillConsoleOutputCharacter(self._handle</span><span class="s2">, </span><span class="s3">&quot; &quot;</span><span class="s2">, </span><span class="s1">length=col</span><span class="s2">, </span><span class="s1">start=start)</span>
+        <span class="s1">FillConsoleOutputAttribute(</span>
+            <span class="s1">self._handle</span><span class="s2">, </span><span class="s1">self._default_attrs</span><span class="s2">, </span><span class="s1">length=col</span><span class="s2">, </span><span class="s1">start=start</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">move_cursor_up(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;Move the cursor up a single cell&quot;&quot;&quot;</span>
+        <span class="s1">cursor_position = self.cursor_position</span>
+        <span class="s1">SetConsoleCursorPosition(</span>
+            <span class="s1">self._handle</span><span class="s2">,</span>
+            <span class="s1">coords=WindowsCoordinates(</span>
+                <span class="s1">row=cursor_position.row - </span><span class="s4">1</span><span class="s2">, </span><span class="s1">col=cursor_position.col</span>
+            <span class="s1">)</span><span class="s2">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">move_cursor_down(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;Move the cursor down a single cell&quot;&quot;&quot;</span>
+        <span class="s1">cursor_position = self.cursor_position</span>
+        <span class="s1">SetConsoleCursorPosition(</span>
+            <span class="s1">self._handle</span><span class="s2">,</span>
+            <span class="s1">coords=WindowsCoordinates(</span>
+                <span class="s1">row=cursor_position.row + </span><span class="s4">1</span><span class="s2">,</span>
+                <span class="s1">col=cursor_position.col</span><span class="s2">,</span>
+            <span class="s1">)</span><span class="s2">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">move_cursor_forward(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;Move the cursor forward a single cell. Wrap to the next line if required.&quot;&quot;&quot;</span>
+        <span class="s1">row</span><span class="s2">, </span><span class="s1">col = self.cursor_position</span>
+        <span class="s2">if </span><span class="s1">col == self.screen_size.col - </span><span class="s4">1</span><span class="s1">:</span>
+            <span class="s1">row += </span><span class="s4">1</span>
+            <span class="s1">col = </span><span class="s4">0</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">col += </span><span class="s4">1</span>
+        <span class="s1">SetConsoleCursorPosition(</span>
+            <span class="s1">self._handle</span><span class="s2">, </span><span class="s1">coords=WindowsCoordinates(row=row</span><span class="s2">, </span><span class="s1">col=col)</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">move_cursor_to_column(self</span><span class="s2">, </span><span class="s1">column: int) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;Move cursor to the column specified by the zero-based column index, staying on the same row 
+ 
+        Args: 
+            column (int): The zero-based column index to move the cursor to. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">row</span><span class="s2">, </span><span class="s1">_ = self.cursor_position</span>
+        <span class="s1">SetConsoleCursorPosition(self._handle</span><span class="s2">, </span><span class="s1">coords=WindowsCoordinates(row</span><span class="s2">, </span><span class="s1">column))</span>
+
+    <span class="s2">def </span><span class="s1">move_cursor_backward(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;Move the cursor backward a single cell. Wrap to the previous line if required.&quot;&quot;&quot;</span>
+        <span class="s1">row</span><span class="s2">, </span><span class="s1">col = self.cursor_position</span>
+        <span class="s2">if </span><span class="s1">col == </span><span class="s4">0</span><span class="s1">:</span>
+            <span class="s1">row -= </span><span class="s4">1</span>
+            <span class="s1">col = self.screen_size.col - </span><span class="s4">1</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">col -= </span><span class="s4">1</span>
+        <span class="s1">SetConsoleCursorPosition(</span>
+            <span class="s1">self._handle</span><span class="s2">, </span><span class="s1">coords=WindowsCoordinates(row=row</span><span class="s2">, </span><span class="s1">col=col)</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">hide_cursor(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;Hide the cursor&quot;&quot;&quot;</span>
+        <span class="s1">current_cursor_size = self._get_cursor_size()</span>
+        <span class="s1">invisible_cursor = CONSOLE_CURSOR_INFO(dwSize=current_cursor_size</span><span class="s2">, </span><span class="s1">bVisible=</span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s1">SetConsoleCursorInfo(self._handle</span><span class="s2">, </span><span class="s1">cursor_info=invisible_cursor)</span>
+
+    <span class="s2">def </span><span class="s1">show_cursor(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;Show the cursor&quot;&quot;&quot;</span>
+        <span class="s1">current_cursor_size = self._get_cursor_size()</span>
+        <span class="s1">visible_cursor = CONSOLE_CURSOR_INFO(dwSize=current_cursor_size</span><span class="s2">, </span><span class="s1">bVisible=</span><span class="s4">1</span><span class="s1">)</span>
+        <span class="s1">SetConsoleCursorInfo(self._handle</span><span class="s2">, </span><span class="s1">cursor_info=visible_cursor)</span>
+
+    <span class="s2">def </span><span class="s1">set_title(self</span><span class="s2">, </span><span class="s1">title: str) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0">&quot;&quot;&quot;Set the title of the terminal window 
+ 
+        Args: 
+            title (str): The new title of the console window 
+        &quot;&quot;&quot;</span>
+        <span class="s2">assert </span><span class="s1">len(title) &lt; </span><span class="s4">255</span><span class="s2">, </span><span class="s3">&quot;Console title must be less than 255 characters&quot;</span>
+        <span class="s1">SetConsoleTitle(title)</span>
+
+    <span class="s2">def </span><span class="s1">_get_cursor_size(self) -&gt; int:</span>
+        <span class="s0">&quot;&quot;&quot;Get the percentage of the character cell that is filled by the cursor&quot;&quot;&quot;</span>
+        <span class="s1">cursor_info = CONSOLE_CURSOR_INFO()</span>
+        <span class="s1">GetConsoleCursorInfo(self._handle</span><span class="s2">, </span><span class="s1">cursor_info=cursor_info)</span>
+        <span class="s2">return </span><span class="s1">int(cursor_info.dwSize)</span>
+
+
+<span class="s2">if </span><span class="s1">__name__ == </span><span class="s3">&quot;__main__&quot;</span><span class="s1">:</span>
+    <span class="s1">handle = GetStdHandle()</span>
+
+    <span class="s2">from </span><span class="s1">pip._vendor.rich.console </span><span class="s2">import </span><span class="s1">Console</span>
+
+    <span class="s1">console = Console()</span>
+
+    <span class="s1">term = LegacyWindowsTerm(sys.stdout)</span>
+    <span class="s1">term.set_title(</span><span class="s3">&quot;Win32 Console Examples&quot;</span><span class="s1">)</span>
+
+    <span class="s1">style = Style(color=</span><span class="s3">&quot;black&quot;</span><span class="s2">, </span><span class="s1">bgcolor=</span><span class="s3">&quot;red&quot;</span><span class="s1">)</span>
+
+    <span class="s1">heading = Style.parse(</span><span class="s3">&quot;black on green&quot;</span><span class="s1">)</span>
+
+    <span class="s5"># Check colour output</span>
+    <span class="s1">console.rule(</span><span class="s3">&quot;Checking colour output&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;[on red]on red!&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;[blue]blue!&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;[yellow]yellow!&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;[bold yellow]bold yellow!&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;[bright_yellow]bright_yellow!&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;[dim bright_yellow]dim bright_yellow!&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;[italic cyan]italic cyan!&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;[bold white on blue]bold white on blue!&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;[reverse bold white on blue]reverse bold white on blue!&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;[bold black on cyan]bold black on cyan!&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;[black on green]black on green!&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;[blue on green]blue on green!&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;[white on black]white on black!&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;[black on white]black on white!&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;[#1BB152 on #DA812D]#1BB152 on #DA812D!&quot;</span><span class="s1">)</span>
+
+    <span class="s5"># Check cursor movement</span>
+    <span class="s1">console.rule(</span><span class="s3">&quot;Checking cursor movement&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print()</span>
+    <span class="s1">term.move_cursor_backward()</span>
+    <span class="s1">term.move_cursor_backward()</span>
+    <span class="s1">term.write_text(</span><span class="s3">&quot;went back and wrapped to prev line&quot;</span><span class="s1">)</span>
+    <span class="s1">time.sleep(</span><span class="s4">1</span><span class="s1">)</span>
+    <span class="s1">term.move_cursor_up()</span>
+    <span class="s1">term.write_text(</span><span class="s3">&quot;we go up&quot;</span><span class="s1">)</span>
+    <span class="s1">time.sleep(</span><span class="s4">1</span><span class="s1">)</span>
+    <span class="s1">term.move_cursor_down()</span>
+    <span class="s1">term.write_text(</span><span class="s3">&quot;and down&quot;</span><span class="s1">)</span>
+    <span class="s1">time.sleep(</span><span class="s4">1</span><span class="s1">)</span>
+    <span class="s1">term.move_cursor_up()</span>
+    <span class="s1">term.move_cursor_backward()</span>
+    <span class="s1">term.move_cursor_backward()</span>
+    <span class="s1">term.write_text(</span><span class="s3">&quot;we went up and back 2&quot;</span><span class="s1">)</span>
+    <span class="s1">time.sleep(</span><span class="s4">1</span><span class="s1">)</span>
+    <span class="s1">term.move_cursor_down()</span>
+    <span class="s1">term.move_cursor_backward()</span>
+    <span class="s1">term.move_cursor_backward()</span>
+    <span class="s1">term.write_text(</span><span class="s3">&quot;we went down and back 2&quot;</span><span class="s1">)</span>
+    <span class="s1">time.sleep(</span><span class="s4">1</span><span class="s1">)</span>
+
+    <span class="s5"># Check erasing of lines</span>
+    <span class="s1">term.hide_cursor()</span>
+    <span class="s1">console.print()</span>
+    <span class="s1">console.rule(</span><span class="s3">&quot;Checking line erasing&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">...Deleting to the start of the line...&quot;</span><span class="s1">)</span>
+    <span class="s1">term.write_text(</span><span class="s3">&quot;The red arrow shows the cursor location, and direction of erase&quot;</span><span class="s1">)</span>
+    <span class="s1">time.sleep(</span><span class="s4">1</span><span class="s1">)</span>
+    <span class="s1">term.move_cursor_to_column(</span><span class="s4">16</span><span class="s1">)</span>
+    <span class="s1">term.write_styled(</span><span class="s3">&quot;&lt;&quot;</span><span class="s2">, </span><span class="s1">Style.parse(</span><span class="s3">&quot;black on red&quot;</span><span class="s1">))</span>
+    <span class="s1">term.move_cursor_backward()</span>
+    <span class="s1">time.sleep(</span><span class="s4">1</span><span class="s1">)</span>
+    <span class="s1">term.erase_start_of_line()</span>
+    <span class="s1">time.sleep(</span><span class="s4">1</span><span class="s1">)</span>
+
+    <span class="s1">console.print(</span><span class="s3">&quot;</span><span class="s2">\n\n</span><span class="s3">...And to the end of the line...&quot;</span><span class="s1">)</span>
+    <span class="s1">term.write_text(</span><span class="s3">&quot;The red arrow shows the cursor location, and direction of erase&quot;</span><span class="s1">)</span>
+    <span class="s1">time.sleep(</span><span class="s4">1</span><span class="s1">)</span>
+
+    <span class="s1">term.move_cursor_to_column(</span><span class="s4">16</span><span class="s1">)</span>
+    <span class="s1">term.write_styled(</span><span class="s3">&quot;&gt;&quot;</span><span class="s2">, </span><span class="s1">Style.parse(</span><span class="s3">&quot;black on red&quot;</span><span class="s1">))</span>
+    <span class="s1">time.sleep(</span><span class="s4">1</span><span class="s1">)</span>
+    <span class="s1">term.erase_end_of_line()</span>
+    <span class="s1">time.sleep(</span><span class="s4">1</span><span class="s1">)</span>
+
+    <span class="s1">console.print(</span><span class="s3">&quot;</span><span class="s2">\n\n</span><span class="s3">...Now the whole line will be erased...&quot;</span><span class="s1">)</span>
+    <span class="s1">term.write_styled(</span><span class="s3">&quot;I'm going to disappear!&quot;</span><span class="s2">, </span><span class="s1">style=Style.parse(</span><span class="s3">&quot;black on cyan&quot;</span><span class="s1">))</span>
+    <span class="s1">time.sleep(</span><span class="s4">1</span><span class="s1">)</span>
+    <span class="s1">term.erase_line()</span>
+
+    <span class="s1">term.show_cursor()</span>
+    <span class="s1">print(</span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

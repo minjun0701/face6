@@ -1,0 +1,1081 @@
+<html>
+<head>
+<title>ImageDraw.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6a8759;}
+.s4 { color: #629755; font-style: italic;}
+.s5 { color: #6897bb;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageDraw.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># drawing interface operations</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1996-04-13 fl   Created (experimental)</span>
+<span class="s0"># 1996-08-07 fl   Filled polygons, ellipses.</span>
+<span class="s0"># 1996-08-13 fl   Added text support</span>
+<span class="s0"># 1998-06-28 fl   Handle I and F images</span>
+<span class="s0"># 1998-12-29 fl   Added arc; use arc primitive to draw ellipses</span>
+<span class="s0"># 1999-01-10 fl   Added shape stuff (experimental)</span>
+<span class="s0"># 1999-02-06 fl   Added bitmap support</span>
+<span class="s0"># 1999-02-11 fl   Changed all primitives to take options</span>
+<span class="s0"># 1999-02-20 fl   Fixed backwards compatibility</span>
+<span class="s0"># 2000-10-12 fl   Copy on write, when necessary</span>
+<span class="s0"># 2001-02-18 fl   Use default ink for bitmap/text also in fill mode</span>
+<span class="s0"># 2002-10-24 fl   Added support for CSS-style color strings</span>
+<span class="s0"># 2002-12-10 fl   Added experimental support for RGBA-on-RGB drawing</span>
+<span class="s0"># 2002-12-11 fl   Refactored low-level drawing API (work in progress)</span>
+<span class="s0"># 2004-08-26 fl   Made Draw() a factory function, added getdraw() support</span>
+<span class="s0"># 2004-09-04 fl   Added width support to line primitive</span>
+<span class="s0"># 2004-09-10 fl   Added font mode handling</span>
+<span class="s0"># 2006-06-19 fl   Added font bearing support (getmask2)</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2006 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 1996-2006 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">import </span><span class="s1">math</span>
+<span class="s2">import </span><span class="s1">numbers</span>
+<span class="s2">import </span><span class="s1">warnings</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageColor</span>
+<span class="s2">from </span><span class="s1">._deprecate </span><span class="s2">import </span><span class="s1">deprecate</span>
+
+<span class="s3">&quot;&quot;&quot; 
+A simple 2D drawing interface for PIL images. 
+&lt;p&gt; 
+Application code should use the &lt;b&gt;Draw&lt;/b&gt; factory, instead of 
+directly. 
+&quot;&quot;&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">ImageDraw:</span>
+    <span class="s1">font = </span><span class="s2">None</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">im</span><span class="s2">, </span><span class="s1">mode=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Create a drawing instance. 
+ 
+        :param im: The image to draw in. 
+        :param mode: Optional mode to use for color values.  For RGB 
+           images, this argument can be RGB or RGBA (to blend the 
+           drawing into the image).  For all other modes, this argument 
+           must be the same as the image mode.  If omitted, the mode 
+           defaults to the mode of the image. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">im.load()</span>
+        <span class="s2">if </span><span class="s1">im.readonly:</span>
+            <span class="s1">im._copy()  </span><span class="s0"># make it writeable</span>
+        <span class="s1">blend = </span><span class="s5">0</span>
+        <span class="s2">if </span><span class="s1">mode </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">mode = im.mode</span>
+        <span class="s2">if </span><span class="s1">mode != im.mode:</span>
+            <span class="s2">if </span><span class="s1">mode == </span><span class="s3">&quot;RGBA&quot; </span><span class="s2">and </span><span class="s1">im.mode == </span><span class="s3">&quot;RGB&quot;</span><span class="s1">:</span>
+                <span class="s1">blend = </span><span class="s5">1</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;mode mismatch&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">mode == </span><span class="s3">&quot;P&quot;</span><span class="s1">:</span>
+            <span class="s1">self.palette = im.palette</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.palette = </span><span class="s2">None</span>
+        <span class="s1">self._image = im</span>
+        <span class="s1">self.im = im.im</span>
+        <span class="s1">self.draw = Image.core.draw(self.im</span><span class="s2">, </span><span class="s1">blend)</span>
+        <span class="s1">self.mode = mode</span>
+        <span class="s2">if </span><span class="s1">mode </span><span class="s2">in </span><span class="s1">(</span><span class="s3">&quot;I&quot;</span><span class="s2">, </span><span class="s3">&quot;F&quot;</span><span class="s1">):</span>
+            <span class="s1">self.ink = self.draw.draw_ink(</span><span class="s5">1</span><span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.ink = self.draw.draw_ink(-</span><span class="s5">1</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">mode </span><span class="s2">in </span><span class="s1">(</span><span class="s3">&quot;1&quot;</span><span class="s2">, </span><span class="s3">&quot;P&quot;</span><span class="s2">, </span><span class="s3">&quot;I&quot;</span><span class="s2">, </span><span class="s3">&quot;F&quot;</span><span class="s1">):</span>
+            <span class="s0"># FIXME: fix Fill2 to properly support matte for I+F images</span>
+            <span class="s1">self.fontmode = </span><span class="s3">&quot;1&quot;</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.fontmode = </span><span class="s3">&quot;L&quot;  </span><span class="s0"># aliasing is okay for other modes</span>
+        <span class="s1">self.fill = </span><span class="s2">False</span>
+
+    <span class="s2">def </span><span class="s1">getfont(self):</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Get the current default font. 
+ 
+        To set the default font for this ImageDraw instance:: 
+ 
+            from PIL import ImageDraw, ImageFont 
+            draw.font = ImageFont.truetype(&quot;Tests/fonts/FreeMono.ttf&quot;) 
+ 
+        To set the default font for all future ImageDraw instances:: 
+ 
+            from PIL import ImageDraw, ImageFont 
+            ImageDraw.ImageDraw.font = ImageFont.truetype(&quot;Tests/fonts/FreeMono.ttf&quot;) 
+ 
+        If the current default font is ``None``, 
+        it is initialized with ``ImageFont.load_default()``. 
+ 
+        :returns: An image font.&quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">self.font:</span>
+            <span class="s0"># FIXME: should add a font repository</span>
+            <span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">ImageFont</span>
+
+            <span class="s1">self.font = ImageFont.load_default()</span>
+        <span class="s2">return </span><span class="s1">self.font</span>
+
+    <span class="s2">def </span><span class="s1">_getink(self</span><span class="s2">, </span><span class="s1">ink</span><span class="s2">, </span><span class="s1">fill=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">ink </span><span class="s2">is None and </span><span class="s1">fill </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">self.fill:</span>
+                <span class="s1">fill = self.ink</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">ink = self.ink</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">ink </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">isinstance(ink</span><span class="s2">, </span><span class="s1">str):</span>
+                    <span class="s1">ink = ImageColor.getcolor(ink</span><span class="s2">, </span><span class="s1">self.mode)</span>
+                <span class="s2">if </span><span class="s1">self.palette </span><span class="s2">and not </span><span class="s1">isinstance(ink</span><span class="s2">, </span><span class="s1">numbers.Number):</span>
+                    <span class="s1">ink = self.palette.getcolor(ink</span><span class="s2">, </span><span class="s1">self._image)</span>
+                <span class="s1">ink = self.draw.draw_ink(ink)</span>
+            <span class="s2">if </span><span class="s1">fill </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">isinstance(fill</span><span class="s2">, </span><span class="s1">str):</span>
+                    <span class="s1">fill = ImageColor.getcolor(fill</span><span class="s2">, </span><span class="s1">self.mode)</span>
+                <span class="s2">if </span><span class="s1">self.palette </span><span class="s2">and not </span><span class="s1">isinstance(fill</span><span class="s2">, </span><span class="s1">numbers.Number):</span>
+                    <span class="s1">fill = self.palette.getcolor(fill</span><span class="s2">, </span><span class="s1">self._image)</span>
+                <span class="s1">fill = self.draw.draw_ink(fill)</span>
+        <span class="s2">return </span><span class="s1">ink</span><span class="s2">, </span><span class="s1">fill</span>
+
+    <span class="s2">def </span><span class="s1">arc(self</span><span class="s2">, </span><span class="s1">xy</span><span class="s2">, </span><span class="s1">start</span><span class="s2">, </span><span class="s1">end</span><span class="s2">, </span><span class="s1">fill=</span><span class="s2">None, </span><span class="s1">width=</span><span class="s5">1</span><span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot;Draw an arc.&quot;&quot;&quot;</span>
+        <span class="s1">ink</span><span class="s2">, </span><span class="s1">fill = self._getink(fill)</span>
+        <span class="s2">if </span><span class="s1">ink </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.draw.draw_arc(xy</span><span class="s2">, </span><span class="s1">start</span><span class="s2">, </span><span class="s1">end</span><span class="s2">, </span><span class="s1">ink</span><span class="s2">, </span><span class="s1">width)</span>
+
+    <span class="s2">def </span><span class="s1">bitmap(self</span><span class="s2">, </span><span class="s1">xy</span><span class="s2">, </span><span class="s1">bitmap</span><span class="s2">, </span><span class="s1">fill=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot;Draw a bitmap.&quot;&quot;&quot;</span>
+        <span class="s1">bitmap.load()</span>
+        <span class="s1">ink</span><span class="s2">, </span><span class="s1">fill = self._getink(fill)</span>
+        <span class="s2">if </span><span class="s1">ink </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">ink = fill</span>
+        <span class="s2">if </span><span class="s1">ink </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.draw.draw_bitmap(xy</span><span class="s2">, </span><span class="s1">bitmap.im</span><span class="s2">, </span><span class="s1">ink)</span>
+
+    <span class="s2">def </span><span class="s1">chord(self</span><span class="s2">, </span><span class="s1">xy</span><span class="s2">, </span><span class="s1">start</span><span class="s2">, </span><span class="s1">end</span><span class="s2">, </span><span class="s1">fill=</span><span class="s2">None, </span><span class="s1">outline=</span><span class="s2">None, </span><span class="s1">width=</span><span class="s5">1</span><span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot;Draw a chord.&quot;&quot;&quot;</span>
+        <span class="s1">ink</span><span class="s2">, </span><span class="s1">fill = self._getink(outline</span><span class="s2">, </span><span class="s1">fill)</span>
+        <span class="s2">if </span><span class="s1">fill </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.draw.draw_chord(xy</span><span class="s2">, </span><span class="s1">start</span><span class="s2">, </span><span class="s1">end</span><span class="s2">, </span><span class="s1">fill</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">ink </span><span class="s2">is not None and </span><span class="s1">ink != fill </span><span class="s2">and </span><span class="s1">width != </span><span class="s5">0</span><span class="s1">:</span>
+            <span class="s1">self.draw.draw_chord(xy</span><span class="s2">, </span><span class="s1">start</span><span class="s2">, </span><span class="s1">end</span><span class="s2">, </span><span class="s1">ink</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s1">width)</span>
+
+    <span class="s2">def </span><span class="s1">ellipse(self</span><span class="s2">, </span><span class="s1">xy</span><span class="s2">, </span><span class="s1">fill=</span><span class="s2">None, </span><span class="s1">outline=</span><span class="s2">None, </span><span class="s1">width=</span><span class="s5">1</span><span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot;Draw an ellipse.&quot;&quot;&quot;</span>
+        <span class="s1">ink</span><span class="s2">, </span><span class="s1">fill = self._getink(outline</span><span class="s2">, </span><span class="s1">fill)</span>
+        <span class="s2">if </span><span class="s1">fill </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.draw.draw_ellipse(xy</span><span class="s2">, </span><span class="s1">fill</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">ink </span><span class="s2">is not None and </span><span class="s1">ink != fill </span><span class="s2">and </span><span class="s1">width != </span><span class="s5">0</span><span class="s1">:</span>
+            <span class="s1">self.draw.draw_ellipse(xy</span><span class="s2">, </span><span class="s1">ink</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s1">width)</span>
+
+    <span class="s2">def </span><span class="s1">line(self</span><span class="s2">, </span><span class="s1">xy</span><span class="s2">, </span><span class="s1">fill=</span><span class="s2">None, </span><span class="s1">width=</span><span class="s5">0</span><span class="s2">, </span><span class="s1">joint=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot;Draw a line, or a connected sequence of line segments.&quot;&quot;&quot;</span>
+        <span class="s1">ink = self._getink(fill)[</span><span class="s5">0</span><span class="s1">]</span>
+        <span class="s2">if </span><span class="s1">ink </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.draw.draw_lines(xy</span><span class="s2">, </span><span class="s1">ink</span><span class="s2">, </span><span class="s1">width)</span>
+            <span class="s2">if </span><span class="s1">joint == </span><span class="s3">&quot;curve&quot; </span><span class="s2">and </span><span class="s1">width &gt; </span><span class="s5">4</span><span class="s1">:</span>
+                <span class="s2">if not </span><span class="s1">isinstance(xy[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">(list</span><span class="s2">, </span><span class="s1">tuple)):</span>
+                    <span class="s1">xy = [tuple(xy[i : i + </span><span class="s5">2</span><span class="s1">]) </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">0</span><span class="s2">, </span><span class="s1">len(xy)</span><span class="s2">, </span><span class="s5">2</span><span class="s1">)]</span>
+                <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">1</span><span class="s2">, </span><span class="s1">len(xy) - </span><span class="s5">1</span><span class="s1">):</span>
+                    <span class="s1">point = xy[i]</span>
+                    <span class="s1">angles = [</span>
+                        <span class="s1">math.degrees(math.atan2(end[</span><span class="s5">0</span><span class="s1">] - start[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">start[</span><span class="s5">1</span><span class="s1">] - end[</span><span class="s5">1</span><span class="s1">]))</span>
+                        <span class="s1">% </span><span class="s5">360</span>
+                        <span class="s2">for </span><span class="s1">start</span><span class="s2">, </span><span class="s1">end </span><span class="s2">in </span><span class="s1">((xy[i - </span><span class="s5">1</span><span class="s1">]</span><span class="s2">, </span><span class="s1">point)</span><span class="s2">, </span><span class="s1">(point</span><span class="s2">, </span><span class="s1">xy[i + </span><span class="s5">1</span><span class="s1">]))</span>
+                    <span class="s1">]</span>
+                    <span class="s2">if </span><span class="s1">angles[</span><span class="s5">0</span><span class="s1">] == angles[</span><span class="s5">1</span><span class="s1">]:</span>
+                        <span class="s0"># This is a straight line, so no joint is required</span>
+                        <span class="s2">continue</span>
+
+                    <span class="s2">def </span><span class="s1">coord_at_angle(coord</span><span class="s2">, </span><span class="s1">angle):</span>
+                        <span class="s1">x</span><span class="s2">, </span><span class="s1">y = coord</span>
+                        <span class="s1">angle -= </span><span class="s5">90</span>
+                        <span class="s1">distance = width / </span><span class="s5">2 </span><span class="s1">- </span><span class="s5">1</span>
+                        <span class="s2">return </span><span class="s1">tuple(</span>
+                            <span class="s1">p + (math.floor(p_d) </span><span class="s2">if </span><span class="s1">p_d &gt; </span><span class="s5">0 </span><span class="s2">else </span><span class="s1">math.ceil(p_d))</span>
+                            <span class="s2">for </span><span class="s1">p</span><span class="s2">, </span><span class="s1">p_d </span><span class="s2">in </span><span class="s1">(</span>
+                                <span class="s1">(x</span><span class="s2">, </span><span class="s1">distance * math.cos(math.radians(angle)))</span><span class="s2">,</span>
+                                <span class="s1">(y</span><span class="s2">, </span><span class="s1">distance * math.sin(math.radians(angle)))</span><span class="s2">,</span>
+                            <span class="s1">)</span>
+                        <span class="s1">)</span>
+
+                    <span class="s1">flipped = (</span>
+                        <span class="s1">angles[</span><span class="s5">1</span><span class="s1">] &gt; angles[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">and </span><span class="s1">angles[</span><span class="s5">1</span><span class="s1">] - </span><span class="s5">180 </span><span class="s1">&gt; angles[</span><span class="s5">0</span><span class="s1">]</span>
+                    <span class="s1">) </span><span class="s2">or </span><span class="s1">(angles[</span><span class="s5">1</span><span class="s1">] &lt; angles[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">and </span><span class="s1">angles[</span><span class="s5">1</span><span class="s1">] + </span><span class="s5">180 </span><span class="s1">&gt; angles[</span><span class="s5">0</span><span class="s1">])</span>
+                    <span class="s1">coords = [</span>
+                        <span class="s1">(point[</span><span class="s5">0</span><span class="s1">] - width / </span><span class="s5">2 </span><span class="s1">+ </span><span class="s5">1</span><span class="s2">, </span><span class="s1">point[</span><span class="s5">1</span><span class="s1">] - width / </span><span class="s5">2 </span><span class="s1">+ </span><span class="s5">1</span><span class="s1">)</span><span class="s2">,</span>
+                        <span class="s1">(point[</span><span class="s5">0</span><span class="s1">] + width / </span><span class="s5">2 </span><span class="s1">- </span><span class="s5">1</span><span class="s2">, </span><span class="s1">point[</span><span class="s5">1</span><span class="s1">] + width / </span><span class="s5">2 </span><span class="s1">- </span><span class="s5">1</span><span class="s1">)</span><span class="s2">,</span>
+                    <span class="s1">]</span>
+                    <span class="s2">if </span><span class="s1">flipped:</span>
+                        <span class="s1">start</span><span class="s2">, </span><span class="s1">end = (angles[</span><span class="s5">1</span><span class="s1">] + </span><span class="s5">90</span><span class="s2">, </span><span class="s1">angles[</span><span class="s5">0</span><span class="s1">] + </span><span class="s5">90</span><span class="s1">)</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">start</span><span class="s2">, </span><span class="s1">end = (angles[</span><span class="s5">0</span><span class="s1">] - </span><span class="s5">90</span><span class="s2">, </span><span class="s1">angles[</span><span class="s5">1</span><span class="s1">] - </span><span class="s5">90</span><span class="s1">)</span>
+                    <span class="s1">self.pieslice(coords</span><span class="s2">, </span><span class="s1">start - </span><span class="s5">90</span><span class="s2">, </span><span class="s1">end - </span><span class="s5">90</span><span class="s2">, </span><span class="s1">fill)</span>
+
+                    <span class="s2">if </span><span class="s1">width &gt; </span><span class="s5">8</span><span class="s1">:</span>
+                        <span class="s0"># Cover potential gaps between the line and the joint</span>
+                        <span class="s2">if </span><span class="s1">flipped:</span>
+                            <span class="s1">gap_coords = [</span>
+                                <span class="s1">coord_at_angle(point</span><span class="s2">, </span><span class="s1">angles[</span><span class="s5">0</span><span class="s1">] + </span><span class="s5">90</span><span class="s1">)</span><span class="s2">,</span>
+                                <span class="s1">point</span><span class="s2">,</span>
+                                <span class="s1">coord_at_angle(point</span><span class="s2">, </span><span class="s1">angles[</span><span class="s5">1</span><span class="s1">] + </span><span class="s5">90</span><span class="s1">)</span><span class="s2">,</span>
+                            <span class="s1">]</span>
+                        <span class="s2">else</span><span class="s1">:</span>
+                            <span class="s1">gap_coords = [</span>
+                                <span class="s1">coord_at_angle(point</span><span class="s2">, </span><span class="s1">angles[</span><span class="s5">0</span><span class="s1">] - </span><span class="s5">90</span><span class="s1">)</span><span class="s2">,</span>
+                                <span class="s1">point</span><span class="s2">,</span>
+                                <span class="s1">coord_at_angle(point</span><span class="s2">, </span><span class="s1">angles[</span><span class="s5">1</span><span class="s1">] - </span><span class="s5">90</span><span class="s1">)</span><span class="s2">,</span>
+                            <span class="s1">]</span>
+                        <span class="s1">self.line(gap_coords</span><span class="s2">, </span><span class="s1">fill</span><span class="s2">, </span><span class="s1">width=</span><span class="s5">3</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">shape(self</span><span class="s2">, </span><span class="s1">shape</span><span class="s2">, </span><span class="s1">fill=</span><span class="s2">None, </span><span class="s1">outline=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot;(Experimental) Draw a shape.&quot;&quot;&quot;</span>
+        <span class="s1">shape.close()</span>
+        <span class="s1">ink</span><span class="s2">, </span><span class="s1">fill = self._getink(outline</span><span class="s2">, </span><span class="s1">fill)</span>
+        <span class="s2">if </span><span class="s1">fill </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.draw.draw_outline(shape</span><span class="s2">, </span><span class="s1">fill</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">ink </span><span class="s2">is not None and </span><span class="s1">ink != fill:</span>
+            <span class="s1">self.draw.draw_outline(shape</span><span class="s2">, </span><span class="s1">ink</span><span class="s2">, </span><span class="s5">0</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">pieslice(self</span><span class="s2">, </span><span class="s1">xy</span><span class="s2">, </span><span class="s1">start</span><span class="s2">, </span><span class="s1">end</span><span class="s2">, </span><span class="s1">fill=</span><span class="s2">None, </span><span class="s1">outline=</span><span class="s2">None, </span><span class="s1">width=</span><span class="s5">1</span><span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot;Draw a pieslice.&quot;&quot;&quot;</span>
+        <span class="s1">ink</span><span class="s2">, </span><span class="s1">fill = self._getink(outline</span><span class="s2">, </span><span class="s1">fill)</span>
+        <span class="s2">if </span><span class="s1">fill </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.draw.draw_pieslice(xy</span><span class="s2">, </span><span class="s1">start</span><span class="s2">, </span><span class="s1">end</span><span class="s2">, </span><span class="s1">fill</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">ink </span><span class="s2">is not None and </span><span class="s1">ink != fill </span><span class="s2">and </span><span class="s1">width != </span><span class="s5">0</span><span class="s1">:</span>
+            <span class="s1">self.draw.draw_pieslice(xy</span><span class="s2">, </span><span class="s1">start</span><span class="s2">, </span><span class="s1">end</span><span class="s2">, </span><span class="s1">ink</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s1">width)</span>
+
+    <span class="s2">def </span><span class="s1">point(self</span><span class="s2">, </span><span class="s1">xy</span><span class="s2">, </span><span class="s1">fill=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot;Draw one or more individual pixels.&quot;&quot;&quot;</span>
+        <span class="s1">ink</span><span class="s2">, </span><span class="s1">fill = self._getink(fill)</span>
+        <span class="s2">if </span><span class="s1">ink </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.draw.draw_points(xy</span><span class="s2">, </span><span class="s1">ink)</span>
+
+    <span class="s2">def </span><span class="s1">polygon(self</span><span class="s2">, </span><span class="s1">xy</span><span class="s2">, </span><span class="s1">fill=</span><span class="s2">None, </span><span class="s1">outline=</span><span class="s2">None, </span><span class="s1">width=</span><span class="s5">1</span><span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot;Draw a polygon.&quot;&quot;&quot;</span>
+        <span class="s1">ink</span><span class="s2">, </span><span class="s1">fill = self._getink(outline</span><span class="s2">, </span><span class="s1">fill)</span>
+        <span class="s2">if </span><span class="s1">fill </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.draw.draw_polygon(xy</span><span class="s2">, </span><span class="s1">fill</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">ink </span><span class="s2">is not None and </span><span class="s1">ink != fill </span><span class="s2">and </span><span class="s1">width != </span><span class="s5">0</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">width == </span><span class="s5">1</span><span class="s1">:</span>
+                <span class="s1">self.draw.draw_polygon(xy</span><span class="s2">, </span><span class="s1">ink</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s1">width)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s0"># To avoid expanding the polygon outwards,</span>
+                <span class="s0"># use the fill as a mask</span>
+                <span class="s1">mask = Image.new(</span><span class="s3">&quot;1&quot;</span><span class="s2">, </span><span class="s1">self.im.size)</span>
+                <span class="s1">mask_ink = self._getink(</span><span class="s5">1</span><span class="s1">)[</span><span class="s5">0</span><span class="s1">]</span>
+
+                <span class="s1">fill_im = mask.copy()</span>
+                <span class="s1">draw = Draw(fill_im)</span>
+                <span class="s1">draw.draw.draw_polygon(xy</span><span class="s2">, </span><span class="s1">mask_ink</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)</span>
+
+                <span class="s1">ink_im = mask.copy()</span>
+                <span class="s1">draw = Draw(ink_im)</span>
+                <span class="s1">width = width * </span><span class="s5">2 </span><span class="s1">- </span><span class="s5">1</span>
+                <span class="s1">draw.draw.draw_polygon(xy</span><span class="s2">, </span><span class="s1">mask_ink</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s1">width)</span>
+
+                <span class="s1">mask.paste(ink_im</span><span class="s2">, </span><span class="s1">mask=fill_im)</span>
+
+                <span class="s1">im = Image.new(self.mode</span><span class="s2">, </span><span class="s1">self.im.size)</span>
+                <span class="s1">draw = Draw(im)</span>
+                <span class="s1">draw.draw.draw_polygon(xy</span><span class="s2">, </span><span class="s1">ink</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s1">width)</span>
+                <span class="s1">self.im.paste(im.im</span><span class="s2">, </span><span class="s1">(</span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s1">) + im.size</span><span class="s2">, </span><span class="s1">mask.im)</span>
+
+    <span class="s2">def </span><span class="s1">regular_polygon(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">bounding_circle</span><span class="s2">, </span><span class="s1">n_sides</span><span class="s2">, </span><span class="s1">rotation=</span><span class="s5">0</span><span class="s2">, </span><span class="s1">fill=</span><span class="s2">None, </span><span class="s1">outline=</span><span class="s2">None</span>
+    <span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot;Draw a regular polygon.&quot;&quot;&quot;</span>
+        <span class="s1">xy = _compute_regular_polygon_vertices(bounding_circle</span><span class="s2">, </span><span class="s1">n_sides</span><span class="s2">, </span><span class="s1">rotation)</span>
+        <span class="s1">self.polygon(xy</span><span class="s2">, </span><span class="s1">fill</span><span class="s2">, </span><span class="s1">outline)</span>
+
+    <span class="s2">def </span><span class="s1">rectangle(self</span><span class="s2">, </span><span class="s1">xy</span><span class="s2">, </span><span class="s1">fill=</span><span class="s2">None, </span><span class="s1">outline=</span><span class="s2">None, </span><span class="s1">width=</span><span class="s5">1</span><span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot;Draw a rectangle.&quot;&quot;&quot;</span>
+        <span class="s1">ink</span><span class="s2">, </span><span class="s1">fill = self._getink(outline</span><span class="s2">, </span><span class="s1">fill)</span>
+        <span class="s2">if </span><span class="s1">fill </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.draw.draw_rectangle(xy</span><span class="s2">, </span><span class="s1">fill</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">ink </span><span class="s2">is not None and </span><span class="s1">ink != fill </span><span class="s2">and </span><span class="s1">width != </span><span class="s5">0</span><span class="s1">:</span>
+            <span class="s1">self.draw.draw_rectangle(xy</span><span class="s2">, </span><span class="s1">ink</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s1">width)</span>
+
+    <span class="s2">def </span><span class="s1">rounded_rectangle(self</span><span class="s2">, </span><span class="s1">xy</span><span class="s2">, </span><span class="s1">radius=</span><span class="s5">0</span><span class="s2">, </span><span class="s1">fill=</span><span class="s2">None, </span><span class="s1">outline=</span><span class="s2">None, </span><span class="s1">width=</span><span class="s5">1</span><span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot;Draw a rounded rectangle.&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">isinstance(xy[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">(list</span><span class="s2">, </span><span class="s1">tuple)):</span>
+            <span class="s1">(x0</span><span class="s2">, </span><span class="s1">y0)</span><span class="s2">, </span><span class="s1">(x1</span><span class="s2">, </span><span class="s1">y1) = xy</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">x0</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x1</span><span class="s2">, </span><span class="s1">y1 = xy</span>
+
+        <span class="s1">d = radius * </span><span class="s5">2</span>
+
+        <span class="s1">full_x = d &gt;= x1 - x0</span>
+        <span class="s2">if </span><span class="s1">full_x:</span>
+            <span class="s0"># The two left and two right corners are joined</span>
+            <span class="s1">d = x1 - x0</span>
+        <span class="s1">full_y = d &gt;= y1 - y0</span>
+        <span class="s2">if </span><span class="s1">full_y:</span>
+            <span class="s0"># The two top and two bottom corners are joined</span>
+            <span class="s1">d = y1 - y0</span>
+        <span class="s2">if </span><span class="s1">full_x </span><span class="s2">and </span><span class="s1">full_y:</span>
+            <span class="s0"># If all corners are joined, that is a circle</span>
+            <span class="s2">return </span><span class="s1">self.ellipse(xy</span><span class="s2">, </span><span class="s1">fill</span><span class="s2">, </span><span class="s1">outline</span><span class="s2">, </span><span class="s1">width)</span>
+
+        <span class="s2">if </span><span class="s1">d == </span><span class="s5">0</span><span class="s1">:</span>
+            <span class="s0"># If the corners have no curve, that is a rectangle</span>
+            <span class="s2">return </span><span class="s1">self.rectangle(xy</span><span class="s2">, </span><span class="s1">fill</span><span class="s2">, </span><span class="s1">outline</span><span class="s2">, </span><span class="s1">width)</span>
+
+        <span class="s1">r = d // </span><span class="s5">2</span>
+        <span class="s1">ink</span><span class="s2">, </span><span class="s1">fill = self._getink(outline</span><span class="s2">, </span><span class="s1">fill)</span>
+
+        <span class="s2">def </span><span class="s1">draw_corners(pieslice):</span>
+            <span class="s2">if </span><span class="s1">full_x:</span>
+                <span class="s0"># Draw top and bottom halves</span>
+                <span class="s1">parts = (</span>
+                    <span class="s1">((x0</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x0 + d</span><span class="s2">, </span><span class="s1">y0 + d)</span><span class="s2">, </span><span class="s5">180</span><span class="s2">, </span><span class="s5">360</span><span class="s1">)</span><span class="s2">,</span>
+                    <span class="s1">((x0</span><span class="s2">, </span><span class="s1">y1 - d</span><span class="s2">, </span><span class="s1">x0 + d</span><span class="s2">, </span><span class="s1">y1)</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">180</span><span class="s1">)</span><span class="s2">,</span>
+                <span class="s1">)</span>
+            <span class="s2">elif </span><span class="s1">full_y:</span>
+                <span class="s0"># Draw left and right halves</span>
+                <span class="s1">parts = (</span>
+                    <span class="s1">((x0</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x0 + d</span><span class="s2">, </span><span class="s1">y0 + d)</span><span class="s2">, </span><span class="s5">90</span><span class="s2">, </span><span class="s5">270</span><span class="s1">)</span><span class="s2">,</span>
+                    <span class="s1">((x1 - d</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x1</span><span class="s2">, </span><span class="s1">y0 + d)</span><span class="s2">, </span><span class="s5">270</span><span class="s2">, </span><span class="s5">90</span><span class="s1">)</span><span class="s2">,</span>
+                <span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s0"># Draw four separate corners</span>
+                <span class="s1">parts = (</span>
+                    <span class="s1">((x1 - d</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x1</span><span class="s2">, </span><span class="s1">y0 + d)</span><span class="s2">, </span><span class="s5">270</span><span class="s2">, </span><span class="s5">360</span><span class="s1">)</span><span class="s2">,</span>
+                    <span class="s1">((x1 - d</span><span class="s2">, </span><span class="s1">y1 - d</span><span class="s2">, </span><span class="s1">x1</span><span class="s2">, </span><span class="s1">y1)</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">90</span><span class="s1">)</span><span class="s2">,</span>
+                    <span class="s1">((x0</span><span class="s2">, </span><span class="s1">y1 - d</span><span class="s2">, </span><span class="s1">x0 + d</span><span class="s2">, </span><span class="s1">y1)</span><span class="s2">, </span><span class="s5">90</span><span class="s2">, </span><span class="s5">180</span><span class="s1">)</span><span class="s2">,</span>
+                    <span class="s1">((x0</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x0 + d</span><span class="s2">, </span><span class="s1">y0 + d)</span><span class="s2">, </span><span class="s5">180</span><span class="s2">, </span><span class="s5">270</span><span class="s1">)</span><span class="s2">,</span>
+                <span class="s1">)</span>
+            <span class="s2">for </span><span class="s1">part </span><span class="s2">in </span><span class="s1">parts:</span>
+                <span class="s2">if </span><span class="s1">pieslice:</span>
+                    <span class="s1">self.draw.draw_pieslice(*(part + (fill</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)))</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">self.draw.draw_arc(*(part + (ink</span><span class="s2">, </span><span class="s1">width)))</span>
+
+        <span class="s2">if </span><span class="s1">fill </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">draw_corners(</span><span class="s2">True</span><span class="s1">)</span>
+
+            <span class="s2">if </span><span class="s1">full_x:</span>
+                <span class="s1">self.draw.draw_rectangle((x0</span><span class="s2">, </span><span class="s1">y0 + r + </span><span class="s5">1</span><span class="s2">, </span><span class="s1">x1</span><span class="s2">, </span><span class="s1">y1 - r - </span><span class="s5">1</span><span class="s1">)</span><span class="s2">, </span><span class="s1">fill</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self.draw.draw_rectangle((x0 + r + </span><span class="s5">1</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x1 - r - </span><span class="s5">1</span><span class="s2">, </span><span class="s1">y1)</span><span class="s2">, </span><span class="s1">fill</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)</span>
+            <span class="s2">if not </span><span class="s1">full_x </span><span class="s2">and not </span><span class="s1">full_y:</span>
+                <span class="s1">self.draw.draw_rectangle((x0</span><span class="s2">, </span><span class="s1">y0 + r + </span><span class="s5">1</span><span class="s2">, </span><span class="s1">x0 + r</span><span class="s2">, </span><span class="s1">y1 - r - </span><span class="s5">1</span><span class="s1">)</span><span class="s2">, </span><span class="s1">fill</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)</span>
+                <span class="s1">self.draw.draw_rectangle((x1 - r</span><span class="s2">, </span><span class="s1">y0 + r + </span><span class="s5">1</span><span class="s2">, </span><span class="s1">x1</span><span class="s2">, </span><span class="s1">y1 - r - </span><span class="s5">1</span><span class="s1">)</span><span class="s2">, </span><span class="s1">fill</span><span class="s2">, </span><span class="s5">1</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">ink </span><span class="s2">is not None and </span><span class="s1">ink != fill </span><span class="s2">and </span><span class="s1">width != </span><span class="s5">0</span><span class="s1">:</span>
+            <span class="s1">draw_corners(</span><span class="s2">False</span><span class="s1">)</span>
+
+            <span class="s2">if not </span><span class="s1">full_x:</span>
+                <span class="s1">self.draw.draw_rectangle(</span>
+                    <span class="s1">(x0 + r + </span><span class="s5">1</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x1 - r - </span><span class="s5">1</span><span class="s2">, </span><span class="s1">y0 + width - </span><span class="s5">1</span><span class="s1">)</span><span class="s2">, </span><span class="s1">ink</span><span class="s2">, </span><span class="s5">1</span>
+                <span class="s1">)</span>
+                <span class="s1">self.draw.draw_rectangle(</span>
+                    <span class="s1">(x0 + r + </span><span class="s5">1</span><span class="s2">, </span><span class="s1">y1 - width + </span><span class="s5">1</span><span class="s2">, </span><span class="s1">x1 - r - </span><span class="s5">1</span><span class="s2">, </span><span class="s1">y1)</span><span class="s2">, </span><span class="s1">ink</span><span class="s2">, </span><span class="s5">1</span>
+                <span class="s1">)</span>
+            <span class="s2">if not </span><span class="s1">full_y:</span>
+                <span class="s1">self.draw.draw_rectangle(</span>
+                    <span class="s1">(x0</span><span class="s2">, </span><span class="s1">y0 + r + </span><span class="s5">1</span><span class="s2">, </span><span class="s1">x0 + width - </span><span class="s5">1</span><span class="s2">, </span><span class="s1">y1 - r - </span><span class="s5">1</span><span class="s1">)</span><span class="s2">, </span><span class="s1">ink</span><span class="s2">, </span><span class="s5">1</span>
+                <span class="s1">)</span>
+                <span class="s1">self.draw.draw_rectangle(</span>
+                    <span class="s1">(x1 - width + </span><span class="s5">1</span><span class="s2">, </span><span class="s1">y0 + r + </span><span class="s5">1</span><span class="s2">, </span><span class="s1">x1</span><span class="s2">, </span><span class="s1">y1 - r - </span><span class="s5">1</span><span class="s1">)</span><span class="s2">, </span><span class="s1">ink</span><span class="s2">, </span><span class="s5">1</span>
+                <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_multiline_check(self</span><span class="s2">, </span><span class="s1">text):</span>
+        <span class="s4">&quot;&quot;&quot;Draw text.&quot;&quot;&quot;</span>
+        <span class="s1">split_character = </span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">&quot; </span><span class="s2">if </span><span class="s1">isinstance(text</span><span class="s2">, </span><span class="s1">str) </span><span class="s2">else </span><span class="s6">b&quot;</span><span class="s2">\n</span><span class="s6">&quot;</span>
+
+        <span class="s2">return </span><span class="s1">split_character </span><span class="s2">in </span><span class="s1">text</span>
+
+    <span class="s2">def </span><span class="s1">_multiline_split(self</span><span class="s2">, </span><span class="s1">text):</span>
+        <span class="s1">split_character = </span><span class="s3">&quot;</span><span class="s2">\n</span><span class="s3">&quot; </span><span class="s2">if </span><span class="s1">isinstance(text</span><span class="s2">, </span><span class="s1">str) </span><span class="s2">else </span><span class="s6">b&quot;</span><span class="s2">\n</span><span class="s6">&quot;</span>
+
+        <span class="s2">return </span><span class="s1">text.split(split_character)</span>
+
+    <span class="s2">def </span><span class="s1">_multiline_spacing(self</span><span class="s2">, </span><span class="s1">font</span><span class="s2">, </span><span class="s1">spacing</span><span class="s2">, </span><span class="s1">stroke_width):</span>
+        <span class="s0"># this can be replaced with self.textbbox(...)[3] when textsize is removed</span>
+        <span class="s2">with </span><span class="s1">warnings.catch_warnings():</span>
+            <span class="s1">warnings.filterwarnings(</span><span class="s3">&quot;ignore&quot;</span><span class="s2">, </span><span class="s1">category=DeprecationWarning)</span>
+            <span class="s2">return </span><span class="s1">(</span>
+                <span class="s1">self.textsize(</span>
+                    <span class="s3">&quot;A&quot;</span><span class="s2">,</span>
+                    <span class="s1">font=font</span><span class="s2">,</span>
+                    <span class="s1">stroke_width=stroke_width</span><span class="s2">,</span>
+                <span class="s1">)[</span><span class="s5">1</span><span class="s1">]</span>
+                <span class="s1">+ spacing</span>
+            <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">text(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">xy</span><span class="s2">,</span>
+        <span class="s1">text</span><span class="s2">,</span>
+        <span class="s1">fill=</span><span class="s2">None,</span>
+        <span class="s1">font=</span><span class="s2">None,</span>
+        <span class="s1">anchor=</span><span class="s2">None,</span>
+        <span class="s1">spacing=</span><span class="s5">4</span><span class="s2">,</span>
+        <span class="s1">align=</span><span class="s3">&quot;left&quot;</span><span class="s2">,</span>
+        <span class="s1">direction=</span><span class="s2">None,</span>
+        <span class="s1">features=</span><span class="s2">None,</span>
+        <span class="s1">language=</span><span class="s2">None,</span>
+        <span class="s1">stroke_width=</span><span class="s5">0</span><span class="s2">,</span>
+        <span class="s1">stroke_fill=</span><span class="s2">None,</span>
+        <span class="s1">embedded_color=</span><span class="s2">False,</span>
+        <span class="s1">*args</span><span class="s2">,</span>
+        <span class="s1">**kwargs</span><span class="s2">,</span>
+    <span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">self._multiline_check(text):</span>
+            <span class="s2">return </span><span class="s1">self.multiline_text(</span>
+                <span class="s1">xy</span><span class="s2">,</span>
+                <span class="s1">text</span><span class="s2">,</span>
+                <span class="s1">fill</span><span class="s2">,</span>
+                <span class="s1">font</span><span class="s2">,</span>
+                <span class="s1">anchor</span><span class="s2">,</span>
+                <span class="s1">spacing</span><span class="s2">,</span>
+                <span class="s1">align</span><span class="s2">,</span>
+                <span class="s1">direction</span><span class="s2">,</span>
+                <span class="s1">features</span><span class="s2">,</span>
+                <span class="s1">language</span><span class="s2">,</span>
+                <span class="s1">stroke_width</span><span class="s2">,</span>
+                <span class="s1">stroke_fill</span><span class="s2">,</span>
+                <span class="s1">embedded_color</span><span class="s2">,</span>
+            <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">embedded_color </span><span class="s2">and </span><span class="s1">self.mode </span><span class="s2">not in </span><span class="s1">(</span><span class="s3">&quot;RGB&quot;</span><span class="s2">, </span><span class="s3">&quot;RGBA&quot;</span><span class="s1">):</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Embedded color supported only in RGB and RGBA modes&quot;</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">font </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">font = self.getfont()</span>
+
+        <span class="s2">def </span><span class="s1">getink(fill):</span>
+            <span class="s1">ink</span><span class="s2">, </span><span class="s1">fill = self._getink(fill)</span>
+            <span class="s2">if </span><span class="s1">ink </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">fill</span>
+            <span class="s2">return </span><span class="s1">ink</span>
+
+        <span class="s2">def </span><span class="s1">draw_text(ink</span><span class="s2">, </span><span class="s1">stroke_width=</span><span class="s5">0</span><span class="s2">, </span><span class="s1">stroke_offset=</span><span class="s2">None</span><span class="s1">):</span>
+            <span class="s1">mode = self.fontmode</span>
+            <span class="s2">if </span><span class="s1">stroke_width == </span><span class="s5">0 </span><span class="s2">and </span><span class="s1">embedded_color:</span>
+                <span class="s1">mode = </span><span class="s3">&quot;RGBA&quot;</span>
+            <span class="s1">coord = xy</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">mask</span><span class="s2">, </span><span class="s1">offset = font.getmask2(</span>
+                    <span class="s1">text</span><span class="s2">,</span>
+                    <span class="s1">mode</span><span class="s2">,</span>
+                    <span class="s1">direction=direction</span><span class="s2">,</span>
+                    <span class="s1">features=features</span><span class="s2">,</span>
+                    <span class="s1">language=language</span><span class="s2">,</span>
+                    <span class="s1">stroke_width=stroke_width</span><span class="s2">,</span>
+                    <span class="s1">anchor=anchor</span><span class="s2">,</span>
+                    <span class="s1">ink=ink</span><span class="s2">,</span>
+                    <span class="s1">*args</span><span class="s2">,</span>
+                    <span class="s1">**kwargs</span><span class="s2">,</span>
+                <span class="s1">)</span>
+                <span class="s1">coord = coord[</span><span class="s5">0</span><span class="s1">] + offset[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">coord[</span><span class="s5">1</span><span class="s1">] + offset[</span><span class="s5">1</span><span class="s1">]</span>
+            <span class="s2">except </span><span class="s1">AttributeError:</span>
+                <span class="s2">try</span><span class="s1">:</span>
+                    <span class="s1">mask = font.getmask(</span>
+                        <span class="s1">text</span><span class="s2">,</span>
+                        <span class="s1">mode</span><span class="s2">,</span>
+                        <span class="s1">direction</span><span class="s2">,</span>
+                        <span class="s1">features</span><span class="s2">,</span>
+                        <span class="s1">language</span><span class="s2">,</span>
+                        <span class="s1">stroke_width</span><span class="s2">,</span>
+                        <span class="s1">anchor</span><span class="s2">,</span>
+                        <span class="s1">ink</span><span class="s2">,</span>
+                        <span class="s1">*args</span><span class="s2">,</span>
+                        <span class="s1">**kwargs</span><span class="s2">,</span>
+                    <span class="s1">)</span>
+                <span class="s2">except </span><span class="s1">TypeError:</span>
+                    <span class="s1">mask = font.getmask(text)</span>
+            <span class="s2">if </span><span class="s1">stroke_offset:</span>
+                <span class="s1">coord = coord[</span><span class="s5">0</span><span class="s1">] + stroke_offset[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">coord[</span><span class="s5">1</span><span class="s1">] + stroke_offset[</span><span class="s5">1</span><span class="s1">]</span>
+            <span class="s2">if </span><span class="s1">mode == </span><span class="s3">&quot;RGBA&quot;</span><span class="s1">:</span>
+                <span class="s0"># font.getmask2(mode=&quot;RGBA&quot;) returns color in RGB bands and mask in A</span>
+                <span class="s0"># extract mask and set text alpha</span>
+                <span class="s1">color</span><span class="s2">, </span><span class="s1">mask = mask</span><span class="s2">, </span><span class="s1">mask.getband(</span><span class="s5">3</span><span class="s1">)</span>
+                <span class="s1">color.fillband(</span><span class="s5">3</span><span class="s2">, </span><span class="s1">(ink &gt;&gt; </span><span class="s5">24</span><span class="s1">) &amp; </span><span class="s5">0xFF</span><span class="s1">)</span>
+                <span class="s1">x</span><span class="s2">, </span><span class="s1">y = (int(c) </span><span class="s2">for </span><span class="s1">c </span><span class="s2">in </span><span class="s1">coord)</span>
+                <span class="s1">self.im.paste(color</span><span class="s2">, </span><span class="s1">(x</span><span class="s2">, </span><span class="s1">y</span><span class="s2">, </span><span class="s1">x + mask.size[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">y + mask.size[</span><span class="s5">1</span><span class="s1">])</span><span class="s2">, </span><span class="s1">mask)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self.draw.draw_bitmap(coord</span><span class="s2">, </span><span class="s1">mask</span><span class="s2">, </span><span class="s1">ink)</span>
+
+        <span class="s1">ink = getink(fill)</span>
+        <span class="s2">if </span><span class="s1">ink </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">stroke_ink = </span><span class="s2">None</span>
+            <span class="s2">if </span><span class="s1">stroke_width:</span>
+                <span class="s1">stroke_ink = getink(stroke_fill) </span><span class="s2">if </span><span class="s1">stroke_fill </span><span class="s2">is not None else </span><span class="s1">ink</span>
+
+            <span class="s2">if </span><span class="s1">stroke_ink </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s0"># Draw stroked text</span>
+                <span class="s1">draw_text(stroke_ink</span><span class="s2">, </span><span class="s1">stroke_width)</span>
+
+                <span class="s0"># Draw normal text</span>
+                <span class="s1">draw_text(ink</span><span class="s2">, </span><span class="s5">0</span><span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s0"># Only draw normal text</span>
+                <span class="s1">draw_text(ink)</span>
+
+    <span class="s2">def </span><span class="s1">multiline_text(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">xy</span><span class="s2">,</span>
+        <span class="s1">text</span><span class="s2">,</span>
+        <span class="s1">fill=</span><span class="s2">None,</span>
+        <span class="s1">font=</span><span class="s2">None,</span>
+        <span class="s1">anchor=</span><span class="s2">None,</span>
+        <span class="s1">spacing=</span><span class="s5">4</span><span class="s2">,</span>
+        <span class="s1">align=</span><span class="s3">&quot;left&quot;</span><span class="s2">,</span>
+        <span class="s1">direction=</span><span class="s2">None,</span>
+        <span class="s1">features=</span><span class="s2">None,</span>
+        <span class="s1">language=</span><span class="s2">None,</span>
+        <span class="s1">stroke_width=</span><span class="s5">0</span><span class="s2">,</span>
+        <span class="s1">stroke_fill=</span><span class="s2">None,</span>
+        <span class="s1">embedded_color=</span><span class="s2">False,</span>
+    <span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">direction == </span><span class="s3">&quot;ttb&quot;</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;ttb direction is unsupported for multiline text&quot;</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">anchor </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">anchor = </span><span class="s3">&quot;la&quot;</span>
+        <span class="s2">elif </span><span class="s1">len(anchor) != </span><span class="s5">2</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;anchor must be a 2 character string&quot;</span><span class="s1">)</span>
+        <span class="s2">elif </span><span class="s1">anchor[</span><span class="s5">1</span><span class="s1">] </span><span class="s2">in </span><span class="s3">&quot;tb&quot;</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;anchor not supported for multiline text&quot;</span><span class="s1">)</span>
+
+        <span class="s1">widths = []</span>
+        <span class="s1">max_width = </span><span class="s5">0</span>
+        <span class="s1">lines = self._multiline_split(text)</span>
+        <span class="s1">line_spacing = self._multiline_spacing(font</span><span class="s2">, </span><span class="s1">spacing</span><span class="s2">, </span><span class="s1">stroke_width)</span>
+        <span class="s2">for </span><span class="s1">line </span><span class="s2">in </span><span class="s1">lines:</span>
+            <span class="s1">line_width = self.textlength(</span>
+                <span class="s1">line</span><span class="s2">, </span><span class="s1">font</span><span class="s2">, </span><span class="s1">direction=direction</span><span class="s2">, </span><span class="s1">features=features</span><span class="s2">, </span><span class="s1">language=language</span>
+            <span class="s1">)</span>
+            <span class="s1">widths.append(line_width)</span>
+            <span class="s1">max_width = max(max_width</span><span class="s2">, </span><span class="s1">line_width)</span>
+
+        <span class="s1">top = xy[</span><span class="s5">1</span><span class="s1">]</span>
+        <span class="s2">if </span><span class="s1">anchor[</span><span class="s5">1</span><span class="s1">] == </span><span class="s3">&quot;m&quot;</span><span class="s1">:</span>
+            <span class="s1">top -= (len(lines) - </span><span class="s5">1</span><span class="s1">) * line_spacing / </span><span class="s5">2.0</span>
+        <span class="s2">elif </span><span class="s1">anchor[</span><span class="s5">1</span><span class="s1">] == </span><span class="s3">&quot;d&quot;</span><span class="s1">:</span>
+            <span class="s1">top -= (len(lines) - </span><span class="s5">1</span><span class="s1">) * line_spacing</span>
+
+        <span class="s2">for </span><span class="s1">idx</span><span class="s2">, </span><span class="s1">line </span><span class="s2">in </span><span class="s1">enumerate(lines):</span>
+            <span class="s1">left = xy[</span><span class="s5">0</span><span class="s1">]</span>
+            <span class="s1">width_difference = max_width - widths[idx]</span>
+
+            <span class="s0"># first align left by anchor</span>
+            <span class="s2">if </span><span class="s1">anchor[</span><span class="s5">0</span><span class="s1">] == </span><span class="s3">&quot;m&quot;</span><span class="s1">:</span>
+                <span class="s1">left -= width_difference / </span><span class="s5">2.0</span>
+            <span class="s2">elif </span><span class="s1">anchor[</span><span class="s5">0</span><span class="s1">] == </span><span class="s3">&quot;r&quot;</span><span class="s1">:</span>
+                <span class="s1">left -= width_difference</span>
+
+            <span class="s0"># then align by align parameter</span>
+            <span class="s2">if </span><span class="s1">align == </span><span class="s3">&quot;left&quot;</span><span class="s1">:</span>
+                <span class="s2">pass</span>
+            <span class="s2">elif </span><span class="s1">align == </span><span class="s3">&quot;center&quot;</span><span class="s1">:</span>
+                <span class="s1">left += width_difference / </span><span class="s5">2.0</span>
+            <span class="s2">elif </span><span class="s1">align == </span><span class="s3">&quot;right&quot;</span><span class="s1">:</span>
+                <span class="s1">left += width_difference</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">'align must be &quot;left&quot;, &quot;center&quot; or &quot;right&quot;'</span><span class="s1">)</span>
+
+            <span class="s1">self.text(</span>
+                <span class="s1">(left</span><span class="s2">, </span><span class="s1">top)</span><span class="s2">,</span>
+                <span class="s1">line</span><span class="s2">,</span>
+                <span class="s1">fill</span><span class="s2">,</span>
+                <span class="s1">font</span><span class="s2">,</span>
+                <span class="s1">anchor</span><span class="s2">,</span>
+                <span class="s1">direction=direction</span><span class="s2">,</span>
+                <span class="s1">features=features</span><span class="s2">,</span>
+                <span class="s1">language=language</span><span class="s2">,</span>
+                <span class="s1">stroke_width=stroke_width</span><span class="s2">,</span>
+                <span class="s1">stroke_fill=stroke_fill</span><span class="s2">,</span>
+                <span class="s1">embedded_color=embedded_color</span><span class="s2">,</span>
+            <span class="s1">)</span>
+            <span class="s1">top += line_spacing</span>
+
+    <span class="s2">def </span><span class="s1">textsize(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">text</span><span class="s2">,</span>
+        <span class="s1">font=</span><span class="s2">None,</span>
+        <span class="s1">spacing=</span><span class="s5">4</span><span class="s2">,</span>
+        <span class="s1">direction=</span><span class="s2">None,</span>
+        <span class="s1">features=</span><span class="s2">None,</span>
+        <span class="s1">language=</span><span class="s2">None,</span>
+        <span class="s1">stroke_width=</span><span class="s5">0</span><span class="s2">,</span>
+    <span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot;Get the size of a given string, in pixels.&quot;&quot;&quot;</span>
+        <span class="s1">deprecate(</span><span class="s3">&quot;textsize&quot;</span><span class="s2">, </span><span class="s5">10</span><span class="s2">, </span><span class="s3">&quot;textbbox or textlength&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">self._multiline_check(text):</span>
+            <span class="s2">with </span><span class="s1">warnings.catch_warnings():</span>
+                <span class="s1">warnings.filterwarnings(</span><span class="s3">&quot;ignore&quot;</span><span class="s2">, </span><span class="s1">category=DeprecationWarning)</span>
+                <span class="s2">return </span><span class="s1">self.multiline_textsize(</span>
+                    <span class="s1">text</span><span class="s2">,</span>
+                    <span class="s1">font</span><span class="s2">,</span>
+                    <span class="s1">spacing</span><span class="s2">,</span>
+                    <span class="s1">direction</span><span class="s2">,</span>
+                    <span class="s1">features</span><span class="s2">,</span>
+                    <span class="s1">language</span><span class="s2">,</span>
+                    <span class="s1">stroke_width</span><span class="s2">,</span>
+                <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">font </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">font = self.getfont()</span>
+        <span class="s2">with </span><span class="s1">warnings.catch_warnings():</span>
+            <span class="s1">warnings.filterwarnings(</span><span class="s3">&quot;ignore&quot;</span><span class="s2">, </span><span class="s1">category=DeprecationWarning)</span>
+            <span class="s2">return </span><span class="s1">font.getsize(</span>
+                <span class="s1">text</span><span class="s2">,</span>
+                <span class="s1">direction</span><span class="s2">,</span>
+                <span class="s1">features</span><span class="s2">,</span>
+                <span class="s1">language</span><span class="s2">,</span>
+                <span class="s1">stroke_width</span><span class="s2">,</span>
+            <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">multiline_textsize(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">text</span><span class="s2">,</span>
+        <span class="s1">font=</span><span class="s2">None,</span>
+        <span class="s1">spacing=</span><span class="s5">4</span><span class="s2">,</span>
+        <span class="s1">direction=</span><span class="s2">None,</span>
+        <span class="s1">features=</span><span class="s2">None,</span>
+        <span class="s1">language=</span><span class="s2">None,</span>
+        <span class="s1">stroke_width=</span><span class="s5">0</span><span class="s2">,</span>
+    <span class="s1">):</span>
+        <span class="s1">deprecate(</span><span class="s3">&quot;multiline_textsize&quot;</span><span class="s2">, </span><span class="s5">10</span><span class="s2">, </span><span class="s3">&quot;multiline_textbbox&quot;</span><span class="s1">)</span>
+        <span class="s1">max_width = </span><span class="s5">0</span>
+        <span class="s1">lines = self._multiline_split(text)</span>
+        <span class="s1">line_spacing = self._multiline_spacing(font</span><span class="s2">, </span><span class="s1">spacing</span><span class="s2">, </span><span class="s1">stroke_width)</span>
+        <span class="s2">with </span><span class="s1">warnings.catch_warnings():</span>
+            <span class="s1">warnings.filterwarnings(</span><span class="s3">&quot;ignore&quot;</span><span class="s2">, </span><span class="s1">category=DeprecationWarning)</span>
+            <span class="s2">for </span><span class="s1">line </span><span class="s2">in </span><span class="s1">lines:</span>
+                <span class="s1">line_width</span><span class="s2">, </span><span class="s1">line_height = self.textsize(</span>
+                    <span class="s1">line</span><span class="s2">,</span>
+                    <span class="s1">font</span><span class="s2">,</span>
+                    <span class="s1">spacing</span><span class="s2">,</span>
+                    <span class="s1">direction</span><span class="s2">,</span>
+                    <span class="s1">features</span><span class="s2">,</span>
+                    <span class="s1">language</span><span class="s2">,</span>
+                    <span class="s1">stroke_width</span><span class="s2">,</span>
+                <span class="s1">)</span>
+                <span class="s1">max_width = max(max_width</span><span class="s2">, </span><span class="s1">line_width)</span>
+        <span class="s2">return </span><span class="s1">max_width</span><span class="s2">, </span><span class="s1">len(lines) * line_spacing - spacing</span>
+
+    <span class="s2">def </span><span class="s1">textlength(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">text</span><span class="s2">,</span>
+        <span class="s1">font=</span><span class="s2">None,</span>
+        <span class="s1">direction=</span><span class="s2">None,</span>
+        <span class="s1">features=</span><span class="s2">None,</span>
+        <span class="s1">language=</span><span class="s2">None,</span>
+        <span class="s1">embedded_color=</span><span class="s2">False,</span>
+    <span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot;Get the length of a given string, in pixels with 1/64 precision.&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">self._multiline_check(text):</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;can't measure length of multiline text&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">embedded_color </span><span class="s2">and </span><span class="s1">self.mode </span><span class="s2">not in </span><span class="s1">(</span><span class="s3">&quot;RGB&quot;</span><span class="s2">, </span><span class="s3">&quot;RGBA&quot;</span><span class="s1">):</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Embedded color supported only in RGB and RGBA modes&quot;</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">font </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">font = self.getfont()</span>
+        <span class="s1">mode = </span><span class="s3">&quot;RGBA&quot; </span><span class="s2">if </span><span class="s1">embedded_color </span><span class="s2">else </span><span class="s1">self.fontmode</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">font.getlength(text</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">direction</span><span class="s2">, </span><span class="s1">features</span><span class="s2">, </span><span class="s1">language)</span>
+        <span class="s2">except </span><span class="s1">AttributeError:</span>
+            <span class="s1">deprecate(</span><span class="s3">&quot;textlength support for fonts without getlength&quot;</span><span class="s2">, </span><span class="s5">10</span><span class="s1">)</span>
+            <span class="s2">with </span><span class="s1">warnings.catch_warnings():</span>
+                <span class="s1">warnings.filterwarnings(</span><span class="s3">&quot;ignore&quot;</span><span class="s2">, </span><span class="s1">category=DeprecationWarning)</span>
+                <span class="s1">size = self.textsize(</span>
+                    <span class="s1">text</span><span class="s2">,</span>
+                    <span class="s1">font</span><span class="s2">,</span>
+                    <span class="s1">direction=direction</span><span class="s2">,</span>
+                    <span class="s1">features=features</span><span class="s2">,</span>
+                    <span class="s1">language=language</span><span class="s2">,</span>
+                <span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">direction == </span><span class="s3">&quot;ttb&quot;</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">size[</span><span class="s5">1</span><span class="s1">]</span>
+            <span class="s2">return </span><span class="s1">size[</span><span class="s5">0</span><span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">textbbox(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">xy</span><span class="s2">,</span>
+        <span class="s1">text</span><span class="s2">,</span>
+        <span class="s1">font=</span><span class="s2">None,</span>
+        <span class="s1">anchor=</span><span class="s2">None,</span>
+        <span class="s1">spacing=</span><span class="s5">4</span><span class="s2">,</span>
+        <span class="s1">align=</span><span class="s3">&quot;left&quot;</span><span class="s2">,</span>
+        <span class="s1">direction=</span><span class="s2">None,</span>
+        <span class="s1">features=</span><span class="s2">None,</span>
+        <span class="s1">language=</span><span class="s2">None,</span>
+        <span class="s1">stroke_width=</span><span class="s5">0</span><span class="s2">,</span>
+        <span class="s1">embedded_color=</span><span class="s2">False,</span>
+    <span class="s1">):</span>
+        <span class="s4">&quot;&quot;&quot;Get the bounding box of a given string, in pixels.&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">embedded_color </span><span class="s2">and </span><span class="s1">self.mode </span><span class="s2">not in </span><span class="s1">(</span><span class="s3">&quot;RGB&quot;</span><span class="s2">, </span><span class="s3">&quot;RGBA&quot;</span><span class="s1">):</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Embedded color supported only in RGB and RGBA modes&quot;</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">self._multiline_check(text):</span>
+            <span class="s2">return </span><span class="s1">self.multiline_textbbox(</span>
+                <span class="s1">xy</span><span class="s2">,</span>
+                <span class="s1">text</span><span class="s2">,</span>
+                <span class="s1">font</span><span class="s2">,</span>
+                <span class="s1">anchor</span><span class="s2">,</span>
+                <span class="s1">spacing</span><span class="s2">,</span>
+                <span class="s1">align</span><span class="s2">,</span>
+                <span class="s1">direction</span><span class="s2">,</span>
+                <span class="s1">features</span><span class="s2">,</span>
+                <span class="s1">language</span><span class="s2">,</span>
+                <span class="s1">stroke_width</span><span class="s2">,</span>
+                <span class="s1">embedded_color</span><span class="s2">,</span>
+            <span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">font </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">font = self.getfont()</span>
+        <span class="s1">mode = </span><span class="s3">&quot;RGBA&quot; </span><span class="s2">if </span><span class="s1">embedded_color </span><span class="s2">else </span><span class="s1">self.fontmode</span>
+        <span class="s1">bbox = font.getbbox(</span>
+            <span class="s1">text</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">direction</span><span class="s2">, </span><span class="s1">features</span><span class="s2">, </span><span class="s1">language</span><span class="s2">, </span><span class="s1">stroke_width</span><span class="s2">, </span><span class="s1">anchor</span>
+        <span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">bbox[</span><span class="s5">0</span><span class="s1">] + xy[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">bbox[</span><span class="s5">1</span><span class="s1">] + xy[</span><span class="s5">1</span><span class="s1">]</span><span class="s2">, </span><span class="s1">bbox[</span><span class="s5">2</span><span class="s1">] + xy[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">bbox[</span><span class="s5">3</span><span class="s1">] + xy[</span><span class="s5">1</span><span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">multiline_textbbox(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">xy</span><span class="s2">,</span>
+        <span class="s1">text</span><span class="s2">,</span>
+        <span class="s1">font=</span><span class="s2">None,</span>
+        <span class="s1">anchor=</span><span class="s2">None,</span>
+        <span class="s1">spacing=</span><span class="s5">4</span><span class="s2">,</span>
+        <span class="s1">align=</span><span class="s3">&quot;left&quot;</span><span class="s2">,</span>
+        <span class="s1">direction=</span><span class="s2">None,</span>
+        <span class="s1">features=</span><span class="s2">None,</span>
+        <span class="s1">language=</span><span class="s2">None,</span>
+        <span class="s1">stroke_width=</span><span class="s5">0</span><span class="s2">,</span>
+        <span class="s1">embedded_color=</span><span class="s2">False,</span>
+    <span class="s1">):</span>
+        <span class="s2">if </span><span class="s1">direction == </span><span class="s3">&quot;ttb&quot;</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;ttb direction is unsupported for multiline text&quot;</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">anchor </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">anchor = </span><span class="s3">&quot;la&quot;</span>
+        <span class="s2">elif </span><span class="s1">len(anchor) != </span><span class="s5">2</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;anchor must be a 2 character string&quot;</span><span class="s1">)</span>
+        <span class="s2">elif </span><span class="s1">anchor[</span><span class="s5">1</span><span class="s1">] </span><span class="s2">in </span><span class="s3">&quot;tb&quot;</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;anchor not supported for multiline text&quot;</span><span class="s1">)</span>
+
+        <span class="s1">widths = []</span>
+        <span class="s1">max_width = </span><span class="s5">0</span>
+        <span class="s1">lines = self._multiline_split(text)</span>
+        <span class="s1">line_spacing = self._multiline_spacing(font</span><span class="s2">, </span><span class="s1">spacing</span><span class="s2">, </span><span class="s1">stroke_width)</span>
+        <span class="s2">for </span><span class="s1">line </span><span class="s2">in </span><span class="s1">lines:</span>
+            <span class="s1">line_width = self.textlength(</span>
+                <span class="s1">line</span><span class="s2">,</span>
+                <span class="s1">font</span><span class="s2">,</span>
+                <span class="s1">direction=direction</span><span class="s2">,</span>
+                <span class="s1">features=features</span><span class="s2">,</span>
+                <span class="s1">language=language</span><span class="s2">,</span>
+                <span class="s1">embedded_color=embedded_color</span><span class="s2">,</span>
+            <span class="s1">)</span>
+            <span class="s1">widths.append(line_width)</span>
+            <span class="s1">max_width = max(max_width</span><span class="s2">, </span><span class="s1">line_width)</span>
+
+        <span class="s1">top = xy[</span><span class="s5">1</span><span class="s1">]</span>
+        <span class="s2">if </span><span class="s1">anchor[</span><span class="s5">1</span><span class="s1">] == </span><span class="s3">&quot;m&quot;</span><span class="s1">:</span>
+            <span class="s1">top -= (len(lines) - </span><span class="s5">1</span><span class="s1">) * line_spacing / </span><span class="s5">2.0</span>
+        <span class="s2">elif </span><span class="s1">anchor[</span><span class="s5">1</span><span class="s1">] == </span><span class="s3">&quot;d&quot;</span><span class="s1">:</span>
+            <span class="s1">top -= (len(lines) - </span><span class="s5">1</span><span class="s1">) * line_spacing</span>
+
+        <span class="s1">bbox = </span><span class="s2">None</span>
+
+        <span class="s2">for </span><span class="s1">idx</span><span class="s2">, </span><span class="s1">line </span><span class="s2">in </span><span class="s1">enumerate(lines):</span>
+            <span class="s1">left = xy[</span><span class="s5">0</span><span class="s1">]</span>
+            <span class="s1">width_difference = max_width - widths[idx]</span>
+
+            <span class="s0"># first align left by anchor</span>
+            <span class="s2">if </span><span class="s1">anchor[</span><span class="s5">0</span><span class="s1">] == </span><span class="s3">&quot;m&quot;</span><span class="s1">:</span>
+                <span class="s1">left -= width_difference / </span><span class="s5">2.0</span>
+            <span class="s2">elif </span><span class="s1">anchor[</span><span class="s5">0</span><span class="s1">] == </span><span class="s3">&quot;r&quot;</span><span class="s1">:</span>
+                <span class="s1">left -= width_difference</span>
+
+            <span class="s0"># then align by align parameter</span>
+            <span class="s2">if </span><span class="s1">align == </span><span class="s3">&quot;left&quot;</span><span class="s1">:</span>
+                <span class="s2">pass</span>
+            <span class="s2">elif </span><span class="s1">align == </span><span class="s3">&quot;center&quot;</span><span class="s1">:</span>
+                <span class="s1">left += width_difference / </span><span class="s5">2.0</span>
+            <span class="s2">elif </span><span class="s1">align == </span><span class="s3">&quot;right&quot;</span><span class="s1">:</span>
+                <span class="s1">left += width_difference</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">'align must be &quot;left&quot;, &quot;center&quot; or &quot;right&quot;'</span><span class="s1">)</span>
+
+            <span class="s1">bbox_line = self.textbbox(</span>
+                <span class="s1">(left</span><span class="s2">, </span><span class="s1">top)</span><span class="s2">,</span>
+                <span class="s1">line</span><span class="s2">,</span>
+                <span class="s1">font</span><span class="s2">,</span>
+                <span class="s1">anchor</span><span class="s2">,</span>
+                <span class="s1">direction=direction</span><span class="s2">,</span>
+                <span class="s1">features=features</span><span class="s2">,</span>
+                <span class="s1">language=language</span><span class="s2">,</span>
+                <span class="s1">stroke_width=stroke_width</span><span class="s2">,</span>
+                <span class="s1">embedded_color=embedded_color</span><span class="s2">,</span>
+            <span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">bbox </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s1">bbox = bbox_line</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">bbox = (</span>
+                    <span class="s1">min(bbox[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">bbox_line[</span><span class="s5">0</span><span class="s1">])</span><span class="s2">,</span>
+                    <span class="s1">min(bbox[</span><span class="s5">1</span><span class="s1">]</span><span class="s2">, </span><span class="s1">bbox_line[</span><span class="s5">1</span><span class="s1">])</span><span class="s2">,</span>
+                    <span class="s1">max(bbox[</span><span class="s5">2</span><span class="s1">]</span><span class="s2">, </span><span class="s1">bbox_line[</span><span class="s5">2</span><span class="s1">])</span><span class="s2">,</span>
+                    <span class="s1">max(bbox[</span><span class="s5">3</span><span class="s1">]</span><span class="s2">, </span><span class="s1">bbox_line[</span><span class="s5">3</span><span class="s1">])</span><span class="s2">,</span>
+                <span class="s1">)</span>
+
+            <span class="s1">top += line_spacing</span>
+
+        <span class="s2">if </span><span class="s1">bbox </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">xy[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">xy[</span><span class="s5">1</span><span class="s1">]</span><span class="s2">, </span><span class="s1">xy[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">xy[</span><span class="s5">1</span><span class="s1">]</span>
+        <span class="s2">return </span><span class="s1">bbox</span>
+
+
+<span class="s2">def </span><span class="s1">Draw(im</span><span class="s2">, </span><span class="s1">mode=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    A simple 2D drawing interface for PIL images. 
+ 
+    :param im: The image to draw in. 
+    :param mode: Optional mode to use for color values.  For RGB 
+       images, this argument can be RGB or RGBA (to blend the 
+       drawing into the image).  For all other modes, this argument 
+       must be the same as the image mode.  If omitted, the mode 
+       defaults to the mode of the image. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">im.getdraw(mode)</span>
+    <span class="s2">except </span><span class="s1">AttributeError:</span>
+        <span class="s2">return </span><span class="s1">ImageDraw(im</span><span class="s2">, </span><span class="s1">mode)</span>
+
+
+<span class="s0"># experimental access to the outline API</span>
+<span class="s2">try</span><span class="s1">:</span>
+    <span class="s1">Outline = Image.core.outline</span>
+<span class="s2">except </span><span class="s1">AttributeError:</span>
+    <span class="s1">Outline = </span><span class="s2">None</span>
+
+
+<span class="s2">def </span><span class="s1">getdraw(im=</span><span class="s2">None, </span><span class="s1">hints=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    (Experimental) A more advanced 2D drawing interface for PIL images, 
+    based on the WCK interface. 
+ 
+    :param im: The image to draw in. 
+    :param hints: An optional list of hints. 
+    :returns: A (drawing context, drawing resource factory) tuple. 
+    &quot;&quot;&quot;</span>
+    <span class="s0"># FIXME: this needs more work!</span>
+    <span class="s0"># FIXME: come up with a better 'hints' scheme.</span>
+    <span class="s1">handler = </span><span class="s2">None</span>
+    <span class="s2">if not </span><span class="s1">hints </span><span class="s2">or </span><span class="s3">&quot;nicest&quot; </span><span class="s2">in </span><span class="s1">hints:</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">_imagingagg </span><span class="s2">as </span><span class="s1">handler</span>
+        <span class="s2">except </span><span class="s1">ImportError:</span>
+            <span class="s2">pass</span>
+    <span class="s2">if </span><span class="s1">handler </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">ImageDraw2 </span><span class="s2">as </span><span class="s1">handler</span>
+    <span class="s2">if </span><span class="s1">im:</span>
+        <span class="s1">im = handler.Draw(im)</span>
+    <span class="s2">return </span><span class="s1">im</span><span class="s2">, </span><span class="s1">handler</span>
+
+
+<span class="s2">def </span><span class="s1">floodfill(image</span><span class="s2">, </span><span class="s1">xy</span><span class="s2">, </span><span class="s1">value</span><span class="s2">, </span><span class="s1">border=</span><span class="s2">None, </span><span class="s1">thresh=</span><span class="s5">0</span><span class="s1">):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    (experimental) Fills a bounded region with a given color. 
+ 
+    :param image: Target image. 
+    :param xy: Seed position (a 2-item coordinate tuple). See 
+        :ref:`coordinate-system`. 
+    :param value: Fill color. 
+    :param border: Optional border value.  If given, the region consists of 
+        pixels with a color different from the border color.  If not given, 
+        the region consists of pixels having the same color as the seed 
+        pixel. 
+    :param thresh: Optional threshold value which specifies a maximum 
+        tolerable difference of a pixel value from the 'background' in 
+        order for it to be replaced. Useful for filling regions of 
+        non-homogeneous, but similar, colors. 
+    &quot;&quot;&quot;</span>
+    <span class="s0"># based on an implementation by Eric S. Raymond</span>
+    <span class="s0"># amended by yo1995 @20180806</span>
+    <span class="s1">pixel = image.load()</span>
+    <span class="s1">x</span><span class="s2">, </span><span class="s1">y = xy</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">background = pixel[x</span><span class="s2">, </span><span class="s1">y]</span>
+        <span class="s2">if </span><span class="s1">_color_diff(value</span><span class="s2">, </span><span class="s1">background) &lt;= thresh:</span>
+            <span class="s2">return  </span><span class="s0"># seed point already has fill color</span>
+        <span class="s1">pixel[x</span><span class="s2">, </span><span class="s1">y] = value</span>
+    <span class="s2">except </span><span class="s1">(ValueError</span><span class="s2">, </span><span class="s1">IndexError):</span>
+        <span class="s2">return  </span><span class="s0"># seed point outside image</span>
+    <span class="s1">edge = {(x</span><span class="s2">, </span><span class="s1">y)}</span>
+    <span class="s0"># use a set to keep record of current and previous edge pixels</span>
+    <span class="s0"># to reduce memory consumption</span>
+    <span class="s1">full_edge = set()</span>
+    <span class="s2">while </span><span class="s1">edge:</span>
+        <span class="s1">new_edge = set()</span>
+        <span class="s2">for </span><span class="s1">(x</span><span class="s2">, </span><span class="s1">y) </span><span class="s2">in </span><span class="s1">edge:  </span><span class="s0"># 4 adjacent method</span>
+            <span class="s2">for </span><span class="s1">(s</span><span class="s2">, </span><span class="s1">t) </span><span class="s2">in </span><span class="s1">((x + </span><span class="s5">1</span><span class="s2">, </span><span class="s1">y)</span><span class="s2">, </span><span class="s1">(x - </span><span class="s5">1</span><span class="s2">, </span><span class="s1">y)</span><span class="s2">, </span><span class="s1">(x</span><span class="s2">, </span><span class="s1">y + </span><span class="s5">1</span><span class="s1">)</span><span class="s2">, </span><span class="s1">(x</span><span class="s2">, </span><span class="s1">y - </span><span class="s5">1</span><span class="s1">)):</span>
+                <span class="s0"># If already processed, or if a coordinate is negative, skip</span>
+                <span class="s2">if </span><span class="s1">(s</span><span class="s2">, </span><span class="s1">t) </span><span class="s2">in </span><span class="s1">full_edge </span><span class="s2">or </span><span class="s1">s &lt; </span><span class="s5">0 </span><span class="s2">or </span><span class="s1">t &lt; </span><span class="s5">0</span><span class="s1">:</span>
+                    <span class="s2">continue</span>
+                <span class="s2">try</span><span class="s1">:</span>
+                    <span class="s1">p = pixel[s</span><span class="s2">, </span><span class="s1">t]</span>
+                <span class="s2">except </span><span class="s1">(ValueError</span><span class="s2">, </span><span class="s1">IndexError):</span>
+                    <span class="s2">pass</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">full_edge.add((s</span><span class="s2">, </span><span class="s1">t))</span>
+                    <span class="s2">if </span><span class="s1">border </span><span class="s2">is None</span><span class="s1">:</span>
+                        <span class="s1">fill = _color_diff(p</span><span class="s2">, </span><span class="s1">background) &lt;= thresh</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">fill = p != value </span><span class="s2">and </span><span class="s1">p != border</span>
+                    <span class="s2">if </span><span class="s1">fill:</span>
+                        <span class="s1">pixel[s</span><span class="s2">, </span><span class="s1">t] = value</span>
+                        <span class="s1">new_edge.add((s</span><span class="s2">, </span><span class="s1">t))</span>
+        <span class="s1">full_edge = edge  </span><span class="s0"># discard pixels processed</span>
+        <span class="s1">edge = new_edge</span>
+
+
+<span class="s2">def </span><span class="s1">_compute_regular_polygon_vertices(bounding_circle</span><span class="s2">, </span><span class="s1">n_sides</span><span class="s2">, </span><span class="s1">rotation):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Generate a list of vertices for a 2D regular polygon. 
+ 
+    :param bounding_circle: The bounding circle is a tuple defined 
+        by a point and radius. The polygon is inscribed in this circle. 
+        (e.g. ``bounding_circle=(x, y, r)`` or ``((x, y), r)``) 
+    :param n_sides: Number of sides 
+        (e.g. ``n_sides=3`` for a triangle, ``6`` for a hexagon) 
+    :param rotation: Apply an arbitrary rotation to the polygon 
+        (e.g. ``rotation=90``, applies a 90 degree rotation) 
+    :return: List of regular polygon vertices 
+        (e.g. ``[(25, 50), (50, 50), (50, 25), (25, 25)]``) 
+ 
+    How are the vertices computed? 
+    1. Compute the following variables 
+        - theta: Angle between the apothem &amp; the nearest polygon vertex 
+        - side_length: Length of each polygon edge 
+        - centroid: Center of bounding circle (1st, 2nd elements of bounding_circle) 
+        - polygon_radius: Polygon radius (last element of bounding_circle) 
+        - angles: Location of each polygon vertex in polar grid 
+            (e.g. A square with 0 degree rotation =&gt; [225.0, 315.0, 45.0, 135.0]) 
+ 
+    2. For each angle in angles, get the polygon vertex at that angle 
+        The vertex is computed using the equation below. 
+            X= xcos(φ) + ysin(φ) 
+            Y= −xsin(φ) + ycos(φ) 
+ 
+        Note: 
+            φ = angle in degrees 
+            x = 0 
+            y = polygon_radius 
+ 
+        The formula above assumes rotation around the origin. 
+        In our case, we are rotating around the centroid. 
+        To account for this, we use the formula below 
+            X = xcos(φ) + ysin(φ) + centroid_x 
+            Y = −xsin(φ) + ycos(φ) + centroid_y 
+    &quot;&quot;&quot;</span>
+    <span class="s0"># 1. Error Handling</span>
+    <span class="s0"># 1.1 Check `n_sides` has an appropriate value</span>
+    <span class="s2">if not </span><span class="s1">isinstance(n_sides</span><span class="s2">, </span><span class="s1">int):</span>
+        <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s3">&quot;n_sides should be an int&quot;</span><span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">n_sides &lt; </span><span class="s5">3</span><span class="s1">:</span>
+        <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;n_sides should be an int &gt; 2&quot;</span><span class="s1">)</span>
+
+    <span class="s0"># 1.2 Check `bounding_circle` has an appropriate value</span>
+    <span class="s2">if not </span><span class="s1">isinstance(bounding_circle</span><span class="s2">, </span><span class="s1">(list</span><span class="s2">, </span><span class="s1">tuple)):</span>
+        <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s3">&quot;bounding_circle should be a tuple&quot;</span><span class="s1">)</span>
+
+    <span class="s2">if </span><span class="s1">len(bounding_circle) == </span><span class="s5">3</span><span class="s1">:</span>
+        <span class="s1">*centroid</span><span class="s2">, </span><span class="s1">polygon_radius = bounding_circle</span>
+    <span class="s2">elif </span><span class="s1">len(bounding_circle) == </span><span class="s5">2</span><span class="s1">:</span>
+        <span class="s1">centroid</span><span class="s2">, </span><span class="s1">polygon_radius = bounding_circle</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">raise </span><span class="s1">ValueError(</span>
+            <span class="s3">&quot;bounding_circle should contain 2D coordinates &quot;</span>
+            <span class="s3">&quot;and a radius (e.g. (x, y, r) or ((x, y), r) )&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s2">if not </span><span class="s1">all(isinstance(i</span><span class="s2">, </span><span class="s1">(int</span><span class="s2">, </span><span class="s1">float)) </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">(*centroid</span><span class="s2">, </span><span class="s1">polygon_radius)):</span>
+        <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;bounding_circle should only contain numeric data&quot;</span><span class="s1">)</span>
+
+    <span class="s2">if not </span><span class="s1">len(centroid) == </span><span class="s5">2</span><span class="s1">:</span>
+        <span class="s2">raise </span><span class="s1">ValueError(</span>
+            <span class="s3">&quot;bounding_circle centre should contain 2D coordinates (e.g. (x, y))&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s2">if </span><span class="s1">polygon_radius &lt;= </span><span class="s5">0</span><span class="s1">:</span>
+        <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;bounding_circle radius should be &gt; 0&quot;</span><span class="s1">)</span>
+
+    <span class="s0"># 1.3 Check `rotation` has an appropriate value</span>
+    <span class="s2">if not </span><span class="s1">isinstance(rotation</span><span class="s2">, </span><span class="s1">(int</span><span class="s2">, </span><span class="s1">float)):</span>
+        <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;rotation should be an int or float&quot;</span><span class="s1">)</span>
+
+    <span class="s0"># 2. Define Helper Functions</span>
+    <span class="s2">def </span><span class="s1">_apply_rotation(point</span><span class="s2">, </span><span class="s1">degrees</span><span class="s2">, </span><span class="s1">centroid):</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s1">round(</span>
+                <span class="s1">point[</span><span class="s5">0</span><span class="s1">] * math.cos(math.radians(</span><span class="s5">360 </span><span class="s1">- degrees))</span>
+                <span class="s1">- point[</span><span class="s5">1</span><span class="s1">] * math.sin(math.radians(</span><span class="s5">360 </span><span class="s1">- degrees))</span>
+                <span class="s1">+ centroid[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">,</span>
+                <span class="s5">2</span><span class="s2">,</span>
+            <span class="s1">)</span><span class="s2">,</span>
+            <span class="s1">round(</span>
+                <span class="s1">point[</span><span class="s5">1</span><span class="s1">] * math.cos(math.radians(</span><span class="s5">360 </span><span class="s1">- degrees))</span>
+                <span class="s1">+ point[</span><span class="s5">0</span><span class="s1">] * math.sin(math.radians(</span><span class="s5">360 </span><span class="s1">- degrees))</span>
+                <span class="s1">+ centroid[</span><span class="s5">1</span><span class="s1">]</span><span class="s2">,</span>
+                <span class="s5">2</span><span class="s2">,</span>
+            <span class="s1">)</span><span class="s2">,</span>
+        <span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">_compute_polygon_vertex(centroid</span><span class="s2">, </span><span class="s1">polygon_radius</span><span class="s2">, </span><span class="s1">angle):</span>
+        <span class="s1">start_point = [polygon_radius</span><span class="s2">, </span><span class="s5">0</span><span class="s1">]</span>
+        <span class="s2">return </span><span class="s1">_apply_rotation(start_point</span><span class="s2">, </span><span class="s1">angle</span><span class="s2">, </span><span class="s1">centroid)</span>
+
+    <span class="s2">def </span><span class="s1">_get_angles(n_sides</span><span class="s2">, </span><span class="s1">rotation):</span>
+        <span class="s1">angles = []</span>
+        <span class="s1">degrees = </span><span class="s5">360 </span><span class="s1">/ n_sides</span>
+        <span class="s0"># Start with the bottom left polygon vertex</span>
+        <span class="s1">current_angle = (</span><span class="s5">270 </span><span class="s1">- </span><span class="s5">0.5 </span><span class="s1">* degrees) + rotation</span>
+        <span class="s2">for </span><span class="s1">_ </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">0</span><span class="s2">, </span><span class="s1">n_sides):</span>
+            <span class="s1">angles.append(current_angle)</span>
+            <span class="s1">current_angle += degrees</span>
+            <span class="s2">if </span><span class="s1">current_angle &gt; </span><span class="s5">360</span><span class="s1">:</span>
+                <span class="s1">current_angle -= </span><span class="s5">360</span>
+        <span class="s2">return </span><span class="s1">angles</span>
+
+    <span class="s0"># 3. Variable Declarations</span>
+    <span class="s1">angles = _get_angles(n_sides</span><span class="s2">, </span><span class="s1">rotation)</span>
+
+    <span class="s0"># 4. Compute Vertices</span>
+    <span class="s2">return </span><span class="s1">[</span>
+        <span class="s1">_compute_polygon_vertex(centroid</span><span class="s2">, </span><span class="s1">polygon_radius</span><span class="s2">, </span><span class="s1">angle) </span><span class="s2">for </span><span class="s1">angle </span><span class="s2">in </span><span class="s1">angles</span>
+    <span class="s1">]</span>
+
+
+<span class="s2">def </span><span class="s1">_color_diff(color1</span><span class="s2">, </span><span class="s1">color2):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Uses 1-norm distance to calculate difference between two values. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">isinstance(color2</span><span class="s2">, </span><span class="s1">tuple):</span>
+        <span class="s2">return </span><span class="s1">sum(abs(color1[i] - color2[i]) </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">0</span><span class="s2">, </span><span class="s1">len(color2)))</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">abs(color1 - color2)</span>
+</pre>
+</body>
+</html>

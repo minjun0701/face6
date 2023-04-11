@@ -1,0 +1,414 @@
+<html>
+<head>
+<title>ImageShow.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6897bb;}
+.s4 { color: #629755; font-style: italic;}
+.s5 { color: #6a8759;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageShow.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># im.show() drivers</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 2008-04-06 fl   Created</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 2008.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">shutil</span>
+<span class="s2">import </span><span class="s1">subprocess</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">from </span><span class="s1">shlex </span><span class="s2">import </span><span class="s1">quote</span>
+
+<span class="s2">from </span><span class="s1">PIL </span><span class="s2">import </span><span class="s1">Image</span>
+
+<span class="s2">from </span><span class="s1">._deprecate </span><span class="s2">import </span><span class="s1">deprecate</span>
+
+<span class="s1">_viewers = []</span>
+
+
+<span class="s2">def </span><span class="s1">register(viewer</span><span class="s2">, </span><span class="s1">order=</span><span class="s3">1</span><span class="s1">):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    The :py:func:`register` function is used to register additional viewers:: 
+ 
+        from PIL import ImageShow 
+        ImageShow.register(MyViewer())  # MyViewer will be used as a last resort 
+        ImageShow.register(MySecondViewer(), 0)  # MySecondViewer will be prioritised 
+        ImageShow.register(ImageShow.XVViewer(), 0)  # XVViewer will be prioritised 
+ 
+    :param viewer: The viewer to be registered. 
+    :param order: 
+        Zero or a negative integer to prepend this viewer to the list, 
+        a positive integer to append it. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">issubclass(viewer</span><span class="s2">, </span><span class="s1">Viewer):</span>
+            <span class="s1">viewer = viewer()</span>
+    <span class="s2">except </span><span class="s1">TypeError:</span>
+        <span class="s2">pass  </span><span class="s0"># raised if viewer wasn't a class</span>
+    <span class="s2">if </span><span class="s1">order &gt; </span><span class="s3">0</span><span class="s1">:</span>
+        <span class="s1">_viewers.append(viewer)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">_viewers.insert(</span><span class="s3">0</span><span class="s2">, </span><span class="s1">viewer)</span>
+
+
+<span class="s2">def </span><span class="s1">show(image</span><span class="s2">, </span><span class="s1">title=</span><span class="s2">None, </span><span class="s1">**options):</span>
+    <span class="s4">r&quot;&quot;&quot; 
+    Display a given image. 
+ 
+    :param image: An image object. 
+    :param title: Optional title. Not all viewers can display the title. 
+    :param \**options: Additional viewer options. 
+    :returns: ``True`` if a suitable viewer was found, ``False`` otherwise. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">for </span><span class="s1">viewer </span><span class="s2">in </span><span class="s1">_viewers:</span>
+        <span class="s2">if </span><span class="s1">viewer.show(image</span><span class="s2">, </span><span class="s1">title=title</span><span class="s2">, </span><span class="s1">**options):</span>
+            <span class="s2">return True</span>
+    <span class="s2">return False</span>
+
+
+<span class="s2">class </span><span class="s1">Viewer:</span>
+    <span class="s4">&quot;&quot;&quot;Base class for viewers.&quot;&quot;&quot;</span>
+
+    <span class="s0"># main api</span>
+
+    <span class="s2">def </span><span class="s1">show(self</span><span class="s2">, </span><span class="s1">image</span><span class="s2">, </span><span class="s1">**options):</span>
+        <span class="s4">&quot;&quot;&quot; 
+        The main function for displaying an image. 
+        Converts the given image to the target format and displays it. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s2">if not </span><span class="s1">(</span>
+            <span class="s1">image.mode </span><span class="s2">in </span><span class="s1">(</span><span class="s5">&quot;1&quot;</span><span class="s2">, </span><span class="s5">&quot;RGBA&quot;</span><span class="s1">)</span>
+            <span class="s2">or </span><span class="s1">(self.format == </span><span class="s5">&quot;PNG&quot; </span><span class="s2">and </span><span class="s1">image.mode </span><span class="s2">in </span><span class="s1">(</span><span class="s5">&quot;I;16&quot;</span><span class="s2">, </span><span class="s5">&quot;LA&quot;</span><span class="s1">))</span>
+        <span class="s1">):</span>
+            <span class="s1">base = Image.getmodebase(image.mode)</span>
+            <span class="s2">if </span><span class="s1">image.mode != base:</span>
+                <span class="s1">image = image.convert(base)</span>
+
+        <span class="s2">return </span><span class="s1">self.show_image(image</span><span class="s2">, </span><span class="s1">**options)</span>
+
+    <span class="s0"># hook methods</span>
+
+    <span class="s1">format = </span><span class="s2">None</span>
+    <span class="s5">&quot;&quot;&quot;The format to convert the image into.&quot;&quot;&quot;</span>
+    <span class="s1">options = {}</span>
+    <span class="s5">&quot;&quot;&quot;Additional options used to convert the image.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">get_format(self</span><span class="s2">, </span><span class="s1">image):</span>
+        <span class="s4">&quot;&quot;&quot;Return format name, or ``None`` to save as PGM/PPM.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self.format</span>
+
+    <span class="s2">def </span><span class="s1">get_command(self</span><span class="s2">, </span><span class="s1">file</span><span class="s2">, </span><span class="s1">**options):</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Returns the command used to display the file. 
+        Not implemented in the base class. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError</span>
+
+    <span class="s2">def </span><span class="s1">save_image(self</span><span class="s2">, </span><span class="s1">image):</span>
+        <span class="s4">&quot;&quot;&quot;Save to temporary file and return filename.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">image._dump(format=self.get_format(image)</span><span class="s2">, </span><span class="s1">**self.options)</span>
+
+    <span class="s2">def </span><span class="s1">show_image(self</span><span class="s2">, </span><span class="s1">image</span><span class="s2">, </span><span class="s1">**options):</span>
+        <span class="s4">&quot;&quot;&quot;Display the given image.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self.show_file(self.save_image(image)</span><span class="s2">, </span><span class="s1">**options)</span>
+
+    <span class="s2">def </span><span class="s1">show_file(self</span><span class="s2">, </span><span class="s1">path=</span><span class="s2">None, </span><span class="s1">**options):</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Display given file. 
+ 
+        Before Pillow 9.1.0, the first argument was ``file``. This is now deprecated, 
+        and will be removed in Pillow 10.0.0 (2023-07-01). ``path`` should be used 
+        instead. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">path </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s5">&quot;file&quot; </span><span class="s2">in </span><span class="s1">options:</span>
+                <span class="s1">deprecate(</span><span class="s5">&quot;The 'file' argument&quot;</span><span class="s2">, </span><span class="s3">10</span><span class="s2">, </span><span class="s5">&quot;'path'&quot;</span><span class="s1">)</span>
+                <span class="s1">path = options.pop(</span><span class="s5">&quot;file&quot;</span><span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s5">&quot;Missing required argument: 'path'&quot;</span><span class="s1">)</span>
+        <span class="s1">os.system(self.get_command(path</span><span class="s2">, </span><span class="s1">**options))</span>
+        <span class="s2">return </span><span class="s3">1</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+
+
+<span class="s2">class </span><span class="s1">WindowsViewer(Viewer):</span>
+    <span class="s4">&quot;&quot;&quot;The default viewer on Windows is the default system application for PNG files.&quot;&quot;&quot;</span>
+
+    <span class="s1">format = </span><span class="s5">&quot;PNG&quot;</span>
+    <span class="s1">options = {</span><span class="s5">&quot;compress_level&quot;</span><span class="s1">: </span><span class="s3">1</span><span class="s2">, </span><span class="s5">&quot;save_all&quot;</span><span class="s1">: </span><span class="s2">True</span><span class="s1">}</span>
+
+    <span class="s2">def </span><span class="s1">get_command(self</span><span class="s2">, </span><span class="s1">file</span><span class="s2">, </span><span class="s1">**options):</span>
+        <span class="s2">return </span><span class="s1">(</span>
+            <span class="s5">f'start &quot;Pillow&quot; /WAIT &quot;</span><span class="s2">{</span><span class="s1">file</span><span class="s2">}</span><span class="s5">&quot; '</span>
+            <span class="s5">&quot;&amp;&amp; ping -n 4 127.0.0.1 &gt;NUL &quot;</span>
+            <span class="s5">f'&amp;&amp; del /f &quot;</span><span class="s2">{</span><span class="s1">file</span><span class="s2">}</span><span class="s5">&quot;'</span>
+        <span class="s1">)</span>
+
+
+<span class="s2">if </span><span class="s1">sys.platform == </span><span class="s5">&quot;win32&quot;</span><span class="s1">:</span>
+    <span class="s1">register(WindowsViewer)</span>
+
+
+<span class="s2">class </span><span class="s1">MacViewer(Viewer):</span>
+    <span class="s4">&quot;&quot;&quot;The default viewer on macOS using ``Preview.app``.&quot;&quot;&quot;</span>
+
+    <span class="s1">format = </span><span class="s5">&quot;PNG&quot;</span>
+    <span class="s1">options = {</span><span class="s5">&quot;compress_level&quot;</span><span class="s1">: </span><span class="s3">1</span><span class="s2">, </span><span class="s5">&quot;save_all&quot;</span><span class="s1">: </span><span class="s2">True</span><span class="s1">}</span>
+
+    <span class="s2">def </span><span class="s1">get_command(self</span><span class="s2">, </span><span class="s1">file</span><span class="s2">, </span><span class="s1">**options):</span>
+        <span class="s0"># on darwin open returns immediately resulting in the temp</span>
+        <span class="s0"># file removal while app is opening</span>
+        <span class="s1">command = </span><span class="s5">&quot;open -a Preview.app&quot;</span>
+        <span class="s1">command = </span><span class="s5">f&quot;(</span><span class="s2">{</span><span class="s1">command</span><span class="s2">} {</span><span class="s1">quote(file)</span><span class="s2">}</span><span class="s5">; sleep 20; rm -f </span><span class="s2">{</span><span class="s1">quote(file)</span><span class="s2">}</span><span class="s5">)&amp;&quot;</span>
+        <span class="s2">return </span><span class="s1">command</span>
+
+    <span class="s2">def </span><span class="s1">show_file(self</span><span class="s2">, </span><span class="s1">path=</span><span class="s2">None, </span><span class="s1">**options):</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Display given file. 
+ 
+        Before Pillow 9.1.0, the first argument was ``file``. This is now deprecated, 
+        and will be removed in Pillow 10.0.0 (2023-07-01). ``path`` should be used 
+        instead. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">path </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s5">&quot;file&quot; </span><span class="s2">in </span><span class="s1">options:</span>
+                <span class="s1">deprecate(</span><span class="s5">&quot;The 'file' argument&quot;</span><span class="s2">, </span><span class="s3">10</span><span class="s2">, </span><span class="s5">&quot;'path'&quot;</span><span class="s1">)</span>
+                <span class="s1">path = options.pop(</span><span class="s5">&quot;file&quot;</span><span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s5">&quot;Missing required argument: 'path'&quot;</span><span class="s1">)</span>
+        <span class="s1">subprocess.call([</span><span class="s5">&quot;open&quot;</span><span class="s2">, </span><span class="s5">&quot;-a&quot;</span><span class="s2">, </span><span class="s5">&quot;Preview.app&quot;</span><span class="s2">, </span><span class="s1">path])</span>
+        <span class="s1">executable = sys.executable </span><span class="s2">or </span><span class="s1">shutil.which(</span><span class="s5">&quot;python3&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">executable:</span>
+            <span class="s1">subprocess.Popen(</span>
+                <span class="s1">[</span>
+                    <span class="s1">executable</span><span class="s2">,</span>
+                    <span class="s5">&quot;-c&quot;</span><span class="s2">,</span>
+                    <span class="s5">&quot;import os, sys, time; time.sleep(20); os.remove(sys.argv[1])&quot;</span><span class="s2">,</span>
+                    <span class="s1">path</span><span class="s2">,</span>
+                <span class="s1">]</span>
+            <span class="s1">)</span>
+        <span class="s2">return </span><span class="s3">1</span>
+
+
+<span class="s2">if </span><span class="s1">sys.platform == </span><span class="s5">&quot;darwin&quot;</span><span class="s1">:</span>
+    <span class="s1">register(MacViewer)</span>
+
+
+<span class="s2">class </span><span class="s1">UnixViewer(Viewer):</span>
+    <span class="s1">format = </span><span class="s5">&quot;PNG&quot;</span>
+    <span class="s1">options = {</span><span class="s5">&quot;compress_level&quot;</span><span class="s1">: </span><span class="s3">1</span><span class="s2">, </span><span class="s5">&quot;save_all&quot;</span><span class="s1">: </span><span class="s2">True</span><span class="s1">}</span>
+
+    <span class="s2">def </span><span class="s1">get_command(self</span><span class="s2">, </span><span class="s1">file</span><span class="s2">, </span><span class="s1">**options):</span>
+        <span class="s1">command = self.get_command_ex(file</span><span class="s2">, </span><span class="s1">**options)[</span><span class="s3">0</span><span class="s1">]</span>
+        <span class="s2">return </span><span class="s5">f&quot;(</span><span class="s2">{</span><span class="s1">command</span><span class="s2">} {</span><span class="s1">quote(file)</span><span class="s2">}</span><span class="s5">&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">XDGViewer(UnixViewer):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    The freedesktop.org ``xdg-open`` command. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">get_command_ex(self</span><span class="s2">, </span><span class="s1">file</span><span class="s2">, </span><span class="s1">**options):</span>
+        <span class="s1">command = executable = </span><span class="s5">&quot;xdg-open&quot;</span>
+        <span class="s2">return </span><span class="s1">command</span><span class="s2">, </span><span class="s1">executable</span>
+
+    <span class="s2">def </span><span class="s1">show_file(self</span><span class="s2">, </span><span class="s1">path=</span><span class="s2">None, </span><span class="s1">**options):</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Display given file. 
+ 
+        Before Pillow 9.1.0, the first argument was ``file``. This is now deprecated, 
+        and will be removed in Pillow 10.0.0 (2023-07-01). ``path`` should be used 
+        instead. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">path </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s5">&quot;file&quot; </span><span class="s2">in </span><span class="s1">options:</span>
+                <span class="s1">deprecate(</span><span class="s5">&quot;The 'file' argument&quot;</span><span class="s2">, </span><span class="s3">10</span><span class="s2">, </span><span class="s5">&quot;'path'&quot;</span><span class="s1">)</span>
+                <span class="s1">path = options.pop(</span><span class="s5">&quot;file&quot;</span><span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s5">&quot;Missing required argument: 'path'&quot;</span><span class="s1">)</span>
+        <span class="s1">subprocess.Popen([</span><span class="s5">&quot;xdg-open&quot;</span><span class="s2">, </span><span class="s1">path])</span>
+        <span class="s2">return </span><span class="s3">1</span>
+
+
+<span class="s2">class </span><span class="s1">DisplayViewer(UnixViewer):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    The ImageMagick ``display`` command. 
+    This viewer supports the ``title`` parameter. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">get_command_ex(self</span><span class="s2">, </span><span class="s1">file</span><span class="s2">, </span><span class="s1">title=</span><span class="s2">None, </span><span class="s1">**options):</span>
+        <span class="s1">command = executable = </span><span class="s5">&quot;display&quot;</span>
+        <span class="s2">if </span><span class="s1">title:</span>
+            <span class="s1">command += </span><span class="s5">f&quot; -title </span><span class="s2">{</span><span class="s1">quote(title)</span><span class="s2">}</span><span class="s5">&quot;</span>
+        <span class="s2">return </span><span class="s1">command</span><span class="s2">, </span><span class="s1">executable</span>
+
+    <span class="s2">def </span><span class="s1">show_file(self</span><span class="s2">, </span><span class="s1">path=</span><span class="s2">None, </span><span class="s1">**options):</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Display given file. 
+ 
+        Before Pillow 9.1.0, the first argument was ``file``. This is now deprecated, 
+        and ``path`` should be used instead. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">path </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s5">&quot;file&quot; </span><span class="s2">in </span><span class="s1">options:</span>
+                <span class="s1">deprecate(</span><span class="s5">&quot;The 'file' argument&quot;</span><span class="s2">, </span><span class="s3">10</span><span class="s2">, </span><span class="s5">&quot;'path'&quot;</span><span class="s1">)</span>
+                <span class="s1">path = options.pop(</span><span class="s5">&quot;file&quot;</span><span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s5">&quot;Missing required argument: 'path'&quot;</span><span class="s1">)</span>
+        <span class="s1">args = [</span><span class="s5">&quot;display&quot;</span><span class="s1">]</span>
+        <span class="s1">title = options.get(</span><span class="s5">&quot;title&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">title:</span>
+            <span class="s1">args += [</span><span class="s5">&quot;-title&quot;</span><span class="s2">, </span><span class="s1">title]</span>
+        <span class="s1">args.append(path)</span>
+
+        <span class="s1">subprocess.Popen(args)</span>
+        <span class="s2">return </span><span class="s3">1</span>
+
+
+<span class="s2">class </span><span class="s1">GmDisplayViewer(UnixViewer):</span>
+    <span class="s4">&quot;&quot;&quot;The GraphicsMagick ``gm display`` command.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">get_command_ex(self</span><span class="s2">, </span><span class="s1">file</span><span class="s2">, </span><span class="s1">**options):</span>
+        <span class="s1">executable = </span><span class="s5">&quot;gm&quot;</span>
+        <span class="s1">command = </span><span class="s5">&quot;gm display&quot;</span>
+        <span class="s2">return </span><span class="s1">command</span><span class="s2">, </span><span class="s1">executable</span>
+
+    <span class="s2">def </span><span class="s1">show_file(self</span><span class="s2">, </span><span class="s1">path=</span><span class="s2">None, </span><span class="s1">**options):</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Display given file. 
+ 
+        Before Pillow 9.1.0, the first argument was ``file``. This is now deprecated, 
+        and ``path`` should be used instead. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">path </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s5">&quot;file&quot; </span><span class="s2">in </span><span class="s1">options:</span>
+                <span class="s1">deprecate(</span><span class="s5">&quot;The 'file' argument&quot;</span><span class="s2">, </span><span class="s3">10</span><span class="s2">, </span><span class="s5">&quot;'path'&quot;</span><span class="s1">)</span>
+                <span class="s1">path = options.pop(</span><span class="s5">&quot;file&quot;</span><span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s5">&quot;Missing required argument: 'path'&quot;</span><span class="s1">)</span>
+        <span class="s1">subprocess.Popen([</span><span class="s5">&quot;gm&quot;</span><span class="s2">, </span><span class="s5">&quot;display&quot;</span><span class="s2">, </span><span class="s1">path])</span>
+        <span class="s2">return </span><span class="s3">1</span>
+
+
+<span class="s2">class </span><span class="s1">EogViewer(UnixViewer):</span>
+    <span class="s4">&quot;&quot;&quot;The GNOME Image Viewer ``eog`` command.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">get_command_ex(self</span><span class="s2">, </span><span class="s1">file</span><span class="s2">, </span><span class="s1">**options):</span>
+        <span class="s1">executable = </span><span class="s5">&quot;eog&quot;</span>
+        <span class="s1">command = </span><span class="s5">&quot;eog -n&quot;</span>
+        <span class="s2">return </span><span class="s1">command</span><span class="s2">, </span><span class="s1">executable</span>
+
+    <span class="s2">def </span><span class="s1">show_file(self</span><span class="s2">, </span><span class="s1">path=</span><span class="s2">None, </span><span class="s1">**options):</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Display given file. 
+ 
+        Before Pillow 9.1.0, the first argument was ``file``. This is now deprecated, 
+        and ``path`` should be used instead. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">path </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s5">&quot;file&quot; </span><span class="s2">in </span><span class="s1">options:</span>
+                <span class="s1">deprecate(</span><span class="s5">&quot;The 'file' argument&quot;</span><span class="s2">, </span><span class="s3">10</span><span class="s2">, </span><span class="s5">&quot;'path'&quot;</span><span class="s1">)</span>
+                <span class="s1">path = options.pop(</span><span class="s5">&quot;file&quot;</span><span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s5">&quot;Missing required argument: 'path'&quot;</span><span class="s1">)</span>
+        <span class="s1">subprocess.Popen([</span><span class="s5">&quot;eog&quot;</span><span class="s2">, </span><span class="s5">&quot;-n&quot;</span><span class="s2">, </span><span class="s1">path])</span>
+        <span class="s2">return </span><span class="s3">1</span>
+
+
+<span class="s2">class </span><span class="s1">XVViewer(UnixViewer):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    The X Viewer ``xv`` command. 
+    This viewer supports the ``title`` parameter. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">get_command_ex(self</span><span class="s2">, </span><span class="s1">file</span><span class="s2">, </span><span class="s1">title=</span><span class="s2">None, </span><span class="s1">**options):</span>
+        <span class="s0"># note: xv is pretty outdated.  most modern systems have</span>
+        <span class="s0"># imagemagick's display command instead.</span>
+        <span class="s1">command = executable = </span><span class="s5">&quot;xv&quot;</span>
+        <span class="s2">if </span><span class="s1">title:</span>
+            <span class="s1">command += </span><span class="s5">f&quot; -name </span><span class="s2">{</span><span class="s1">quote(title)</span><span class="s2">}</span><span class="s5">&quot;</span>
+        <span class="s2">return </span><span class="s1">command</span><span class="s2">, </span><span class="s1">executable</span>
+
+    <span class="s2">def </span><span class="s1">show_file(self</span><span class="s2">, </span><span class="s1">path=</span><span class="s2">None, </span><span class="s1">**options):</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Display given file. 
+ 
+        Before Pillow 9.1.0, the first argument was ``file``. This is now deprecated, 
+        and ``path`` should be used instead. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">path </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s5">&quot;file&quot; </span><span class="s2">in </span><span class="s1">options:</span>
+                <span class="s1">deprecate(</span><span class="s5">&quot;The 'file' argument&quot;</span><span class="s2">, </span><span class="s3">10</span><span class="s2">, </span><span class="s5">&quot;'path'&quot;</span><span class="s1">)</span>
+                <span class="s1">path = options.pop(</span><span class="s5">&quot;file&quot;</span><span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">TypeError(</span><span class="s5">&quot;Missing required argument: 'path'&quot;</span><span class="s1">)</span>
+        <span class="s1">args = [</span><span class="s5">&quot;xv&quot;</span><span class="s1">]</span>
+        <span class="s1">title = options.get(</span><span class="s5">&quot;title&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">title:</span>
+            <span class="s1">args += [</span><span class="s5">&quot;-name&quot;</span><span class="s2">, </span><span class="s1">title]</span>
+        <span class="s1">args.append(path)</span>
+
+        <span class="s1">subprocess.Popen(args)</span>
+        <span class="s2">return </span><span class="s3">1</span>
+
+
+<span class="s2">if </span><span class="s1">sys.platform </span><span class="s2">not in </span><span class="s1">(</span><span class="s5">&quot;win32&quot;</span><span class="s2">, </span><span class="s5">&quot;darwin&quot;</span><span class="s1">):  </span><span class="s0"># unixoids</span>
+    <span class="s2">if </span><span class="s1">shutil.which(</span><span class="s5">&quot;xdg-open&quot;</span><span class="s1">):</span>
+        <span class="s1">register(XDGViewer)</span>
+    <span class="s2">if </span><span class="s1">shutil.which(</span><span class="s5">&quot;display&quot;</span><span class="s1">):</span>
+        <span class="s1">register(DisplayViewer)</span>
+    <span class="s2">if </span><span class="s1">shutil.which(</span><span class="s5">&quot;gm&quot;</span><span class="s1">):</span>
+        <span class="s1">register(GmDisplayViewer)</span>
+    <span class="s2">if </span><span class="s1">shutil.which(</span><span class="s5">&quot;eog&quot;</span><span class="s1">):</span>
+        <span class="s1">register(EogViewer)</span>
+    <span class="s2">if </span><span class="s1">shutil.which(</span><span class="s5">&quot;xv&quot;</span><span class="s1">):</span>
+        <span class="s1">register(XVViewer)</span>
+
+
+<span class="s2">class </span><span class="s1">IPythonViewer(Viewer):</span>
+    <span class="s4">&quot;&quot;&quot;The viewer for IPython frontends.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">show_image(self</span><span class="s2">, </span><span class="s1">image</span><span class="s2">, </span><span class="s1">**options):</span>
+        <span class="s1">ipython_display(image)</span>
+        <span class="s2">return </span><span class="s3">1</span>
+
+
+<span class="s2">try</span><span class="s1">:</span>
+    <span class="s2">from </span><span class="s1">IPython.display </span><span class="s2">import </span><span class="s1">display </span><span class="s2">as </span><span class="s1">ipython_display</span>
+<span class="s2">except </span><span class="s1">ImportError:</span>
+    <span class="s2">pass</span>
+<span class="s2">else</span><span class="s1">:</span>
+    <span class="s1">register(IPythonViewer)</span>
+
+
+<span class="s2">if </span><span class="s1">__name__ == </span><span class="s5">&quot;__main__&quot;</span><span class="s1">:</span>
+
+    <span class="s2">if </span><span class="s1">len(sys.argv) &lt; </span><span class="s3">2</span><span class="s1">:</span>
+        <span class="s1">print(</span><span class="s5">&quot;Syntax: python3 ImageShow.py imagefile [title]&quot;</span><span class="s1">)</span>
+        <span class="s1">sys.exit()</span>
+
+    <span class="s2">with </span><span class="s1">Image.open(sys.argv[</span><span class="s3">1</span><span class="s1">]) </span><span class="s2">as </span><span class="s1">im:</span>
+        <span class="s1">print(show(im</span><span class="s2">, </span><span class="s1">*sys.argv[</span><span class="s3">2</span><span class="s1">:]))</span>
+</pre>
+</body>
+</html>

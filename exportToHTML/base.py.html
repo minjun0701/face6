@@ -1,0 +1,1438 @@
+<html>
+<head>
+<title>base.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6a8759;}
+.s4 { color: #629755; font-style: italic;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+base.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># need a dict to set bloody .name field</span>
+<span class="s2">from </span><span class="s1">io </span><span class="s2">import </span><span class="s1">BytesIO</span>
+<span class="s2">import </span><span class="s1">logging</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">stat</span>
+<span class="s2">import </span><span class="s1">uuid</span>
+
+<span class="s2">import </span><span class="s1">git</span>
+<span class="s2">from </span><span class="s1">git.cmd </span><span class="s2">import </span><span class="s1">Git</span>
+<span class="s2">from </span><span class="s1">git.compat </span><span class="s2">import </span><span class="s1">(</span>
+    <span class="s1">defenc</span><span class="s2">,</span>
+    <span class="s1">is_win</span><span class="s2">,</span>
+<span class="s1">)</span>
+<span class="s2">from </span><span class="s1">git.config </span><span class="s2">import </span><span class="s1">SectionConstraint</span><span class="s2">, </span><span class="s1">GitConfigParser</span><span class="s2">, </span><span class="s1">cp</span>
+<span class="s2">from </span><span class="s1">git.exc </span><span class="s2">import </span><span class="s1">(</span>
+    <span class="s1">InvalidGitRepositoryError</span><span class="s2">,</span>
+    <span class="s1">NoSuchPathError</span><span class="s2">,</span>
+    <span class="s1">RepositoryDirtyError</span><span class="s2">,</span>
+    <span class="s1">BadName</span><span class="s2">,</span>
+<span class="s1">)</span>
+<span class="s2">from </span><span class="s1">git.objects.base </span><span class="s2">import </span><span class="s1">IndexObject</span><span class="s2">, </span><span class="s1">Object</span>
+<span class="s2">from </span><span class="s1">git.objects.util </span><span class="s2">import </span><span class="s1">TraversableIterableObj</span>
+
+<span class="s2">from </span><span class="s1">git.util </span><span class="s2">import </span><span class="s1">(</span>
+    <span class="s1">join_path_native</span><span class="s2">,</span>
+    <span class="s1">to_native_path_linux</span><span class="s2">,</span>
+    <span class="s1">RemoteProgress</span><span class="s2">,</span>
+    <span class="s1">rmtree</span><span class="s2">,</span>
+    <span class="s1">unbare_repo</span><span class="s2">,</span>
+    <span class="s1">IterableList</span><span class="s2">,</span>
+<span class="s1">)</span>
+<span class="s2">from </span><span class="s1">git.util </span><span class="s2">import </span><span class="s1">HIDE_WINDOWS_KNOWN_ERRORS</span>
+
+<span class="s2">import </span><span class="s1">os.path </span><span class="s2">as </span><span class="s1">osp</span>
+
+<span class="s2">from </span><span class="s1">.util </span><span class="s2">import </span><span class="s1">(</span>
+    <span class="s1">mkhead</span><span class="s2">,</span>
+    <span class="s1">sm_name</span><span class="s2">,</span>
+    <span class="s1">sm_section</span><span class="s2">,</span>
+    <span class="s1">SubmoduleConfigParser</span><span class="s2">,</span>
+    <span class="s1">find_first_remote_branch</span><span class="s2">,</span>
+<span class="s1">)</span>
+
+
+<span class="s0"># typing ----------------------------------------------------------------------</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Callable</span><span class="s2">, </span><span class="s1">Dict</span><span class="s2">, </span><span class="s1">Mapping</span><span class="s2">, </span><span class="s1">Sequence</span><span class="s2">, </span><span class="s1">TYPE_CHECKING</span><span class="s2">, </span><span class="s1">cast</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Iterator</span><span class="s2">, </span><span class="s1">Union</span>
+
+<span class="s2">from </span><span class="s1">git.types </span><span class="s2">import </span><span class="s1">Commit_ish</span><span class="s2">, </span><span class="s1">Literal</span><span class="s2">, </span><span class="s1">PathLike</span><span class="s2">, </span><span class="s1">TBD</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">git.index </span><span class="s2">import </span><span class="s1">IndexFile</span>
+    <span class="s2">from </span><span class="s1">git.repo </span><span class="s2">import </span><span class="s1">Repo</span>
+    <span class="s2">from </span><span class="s1">git.refs </span><span class="s2">import </span><span class="s1">Head</span>
+
+
+<span class="s0"># -----------------------------------------------------------------------------</span>
+
+<span class="s1">__all__ = [</span><span class="s3">&quot;Submodule&quot;</span><span class="s2">, </span><span class="s3">&quot;UpdateProgress&quot;</span><span class="s1">]</span>
+
+
+<span class="s1">log = logging.getLogger(</span><span class="s3">&quot;git.objects.submodule.base&quot;</span><span class="s1">)</span>
+<span class="s1">log.addHandler(logging.NullHandler())</span>
+
+
+<span class="s2">class </span><span class="s1">UpdateProgress(RemoteProgress):</span>
+
+    <span class="s4">&quot;&quot;&quot;Class providing detailed progress information to the caller who should 
+    derive from it and implement the ``update(...)`` message&quot;&quot;&quot;</span>
+
+    <span class="s1">CLONE</span><span class="s2">, </span><span class="s1">FETCH</span><span class="s2">, </span><span class="s1">UPDWKTREE = [</span><span class="s5">1 </span><span class="s1">&lt;&lt; x </span><span class="s2">for </span><span class="s1">x </span><span class="s2">in </span><span class="s1">range(RemoteProgress._num_op_codes</span><span class="s2">, </span><span class="s1">RemoteProgress._num_op_codes + </span><span class="s5">3</span><span class="s1">)]</span>
+    <span class="s1">_num_op_codes: int = RemoteProgress._num_op_codes + </span><span class="s5">3</span>
+
+    <span class="s1">__slots__ = ()</span>
+
+
+<span class="s1">BEGIN = UpdateProgress.BEGIN</span>
+<span class="s1">END = UpdateProgress.END</span>
+<span class="s1">CLONE = UpdateProgress.CLONE</span>
+<span class="s1">FETCH = UpdateProgress.FETCH</span>
+<span class="s1">UPDWKTREE = UpdateProgress.UPDWKTREE</span>
+
+
+<span class="s0"># IndexObject comes via util module, its a 'hacky' fix thanks to pythons import</span>
+<span class="s0"># mechanism which cause plenty of trouble of the only reason for packages and</span>
+<span class="s0"># modules is refactoring - subpackages shouldn't depend on parent packages</span>
+<span class="s2">class </span><span class="s1">Submodule(IndexObject</span><span class="s2">, </span><span class="s1">TraversableIterableObj):</span>
+
+    <span class="s4">&quot;&quot;&quot;Implements access to a git submodule. They are special in that their sha 
+    represents a commit in the submodule's repository which is to be checked out 
+    at the path of this instance. 
+    The submodule type does not have a string type associated with it, as it exists 
+    solely as a marker in the tree and index. 
+ 
+    All methods work in bare and non-bare repositories.&quot;&quot;&quot;</span>
+
+    <span class="s1">_id_attribute_ = </span><span class="s3">&quot;name&quot;</span>
+    <span class="s1">k_modules_file = </span><span class="s3">&quot;.gitmodules&quot;</span>
+    <span class="s1">k_head_option = </span><span class="s3">&quot;branch&quot;</span>
+    <span class="s1">k_head_default = </span><span class="s3">&quot;master&quot;</span>
+    <span class="s1">k_default_mode = stat.S_IFDIR | stat.S_IFLNK  </span><span class="s0"># submodules are directories with link-status</span>
+
+    <span class="s0"># this is a bogus type for base class compatibility</span>
+    <span class="s1">type: Literal[</span><span class="s3">&quot;submodule&quot;</span><span class="s1">] = </span><span class="s3">&quot;submodule&quot;  </span><span class="s0"># type: ignore</span>
+
+    <span class="s1">__slots__ = (</span><span class="s3">&quot;_parent_commit&quot;</span><span class="s2">, </span><span class="s3">&quot;_url&quot;</span><span class="s2">, </span><span class="s3">&quot;_branch_path&quot;</span><span class="s2">, </span><span class="s3">&quot;_name&quot;</span><span class="s2">, </span><span class="s3">&quot;__weakref__&quot;</span><span class="s1">)</span>
+    <span class="s1">_cache_attrs = (</span><span class="s3">&quot;path&quot;</span><span class="s2">, </span><span class="s3">&quot;_url&quot;</span><span class="s2">, </span><span class="s3">&quot;_branch_path&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s2">,</span>
+        <span class="s1">binsha: bytes</span><span class="s2">,</span>
+        <span class="s1">mode: Union[int</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">path: Union[PathLike</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">name: Union[str</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">parent_commit: Union[Commit_ish</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">url: Union[str</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">branch_path: Union[PathLike</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+    <span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Initialize this instance with its attributes. We only document the ones 
+        that differ from ``IndexObject`` 
+ 
+        :param repo: Our parent repository 
+        :param binsha: binary sha referring to a commit in the remote repository, see url parameter 
+        :param parent_commit: see set_parent_commit() 
+        :param url: The url to the remote repository which is the submodule 
+        :param branch_path: full (relative) path to ref to checkout when cloning the remote repository&quot;&quot;&quot;</span>
+        <span class="s1">super(Submodule</span><span class="s2">, </span><span class="s1">self).__init__(repo</span><span class="s2">, </span><span class="s1">binsha</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">path)</span>
+        <span class="s1">self.size = </span><span class="s5">0</span>
+        <span class="s1">self._parent_commit = parent_commit</span>
+        <span class="s2">if </span><span class="s1">url </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self._url = url</span>
+        <span class="s2">if </span><span class="s1">branch_path </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s0"># assert isinstance(branch_path, str)</span>
+            <span class="s1">self._branch_path = branch_path</span>
+        <span class="s2">if </span><span class="s1">name </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self._name = name</span>
+
+    <span class="s2">def </span><span class="s1">_set_cache_(self</span><span class="s2">, </span><span class="s1">attr: str) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">attr </span><span class="s2">in </span><span class="s1">(</span><span class="s3">&quot;path&quot;</span><span class="s2">, </span><span class="s3">&quot;_url&quot;</span><span class="s2">, </span><span class="s3">&quot;_branch_path&quot;</span><span class="s1">):</span>
+            <span class="s1">reader: SectionConstraint = self.config_reader()</span>
+            <span class="s0"># default submodule values</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">self.path = reader.get(</span><span class="s3">&quot;path&quot;</span><span class="s1">)</span>
+            <span class="s2">except </span><span class="s1">cp.NoSectionError </span><span class="s2">as </span><span class="s1">e:</span>
+                <span class="s2">if </span><span class="s1">self.repo.working_tree_dir </span><span class="s2">is not None</span><span class="s1">:</span>
+                    <span class="s2">raise </span><span class="s1">ValueError(</span>
+                        <span class="s3">&quot;This submodule instance does not exist anymore in '%s' file&quot;</span>
+                        <span class="s1">% osp.join(self.repo.working_tree_dir</span><span class="s2">, </span><span class="s3">&quot;.gitmodules&quot;</span><span class="s1">)</span>
+                    <span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+            <span class="s0"># end</span>
+            <span class="s1">self._url = reader.get(</span><span class="s3">&quot;url&quot;</span><span class="s1">)</span>
+            <span class="s0"># git-python extension values - optional</span>
+            <span class="s1">self._branch_path = reader.get_value(self.k_head_option</span><span class="s2">, </span><span class="s1">git.Head.to_full_path(self.k_head_default))</span>
+        <span class="s2">elif </span><span class="s1">attr == </span><span class="s3">&quot;_name&quot;</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">AttributeError(</span><span class="s3">&quot;Cannot retrieve the name of a submodule if it was not set initially&quot;</span><span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">super(Submodule</span><span class="s2">, </span><span class="s1">self)._set_cache_(attr)</span>
+        <span class="s0"># END handle attribute name</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_get_intermediate_items(cls</span><span class="s2">, </span><span class="s1">item: </span><span class="s3">&quot;Submodule&quot;</span><span class="s1">) -&gt; IterableList[</span><span class="s3">&quot;Submodule&quot;</span><span class="s1">]:</span>
+        <span class="s4">&quot;&quot;&quot;:return: all the submodules of our module repository&quot;&quot;&quot;</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">cls.list_items(item.module())</span>
+        <span class="s2">except </span><span class="s1">InvalidGitRepositoryError:</span>
+            <span class="s2">return </span><span class="s1">IterableList(</span><span class="s3">&quot;&quot;</span><span class="s1">)</span>
+        <span class="s0"># END handle intermediate items</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_need_gitfile_submodules(cls</span><span class="s2">, </span><span class="s1">git: Git) -&gt; bool:</span>
+        <span class="s2">return </span><span class="s1">git.version_info[:</span><span class="s5">3</span><span class="s1">] &gt;= (</span><span class="s5">1</span><span class="s2">, </span><span class="s5">7</span><span class="s2">, </span><span class="s5">5</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">__eq__(self</span><span class="s2">, </span><span class="s1">other: Any) -&gt; bool:</span>
+        <span class="s4">&quot;&quot;&quot;Compare with another submodule&quot;&quot;&quot;</span>
+        <span class="s0"># we may only compare by name as this should be the ID they are hashed with</span>
+        <span class="s0"># Otherwise this type wouldn't be hashable</span>
+        <span class="s0"># return self.path == other.path and self.url == other.url and super(Submodule, self).__eq__(other)</span>
+        <span class="s2">return </span><span class="s1">self._name == other._name</span>
+
+    <span class="s2">def </span><span class="s1">__ne__(self</span><span class="s2">, </span><span class="s1">other: object) -&gt; bool:</span>
+        <span class="s4">&quot;&quot;&quot;Compare with another submodule for inequality&quot;&quot;&quot;</span>
+        <span class="s2">return not </span><span class="s1">(self == other)</span>
+
+    <span class="s2">def </span><span class="s1">__hash__(self) -&gt; int:</span>
+        <span class="s4">&quot;&quot;&quot;Hash this instance using its logical id, not the sha&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">hash(self._name)</span>
+
+    <span class="s2">def </span><span class="s1">__str__(self) -&gt; str:</span>
+        <span class="s2">return </span><span class="s1">self._name</span>
+
+    <span class="s2">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s2">return </span><span class="s3">&quot;git.%s(name=%s, path=%s, url=%s, branch_path=%s)&quot; </span><span class="s1">% (</span>
+            <span class="s1">type(self).__name__</span><span class="s2">,</span>
+            <span class="s1">self._name</span><span class="s2">,</span>
+            <span class="s1">self.path</span><span class="s2">,</span>
+            <span class="s1">self.url</span><span class="s2">,</span>
+            <span class="s1">self.branch_path</span><span class="s2">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_config_parser(</span>
+        <span class="s1">cls</span><span class="s2">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s2">, </span><span class="s1">parent_commit: Union[Commit_ish</span><span class="s2">, None</span><span class="s1">]</span><span class="s2">, </span><span class="s1">read_only: bool</span>
+    <span class="s1">) -&gt; SubmoduleConfigParser:</span>
+        <span class="s4">&quot;&quot;&quot;:return: Config Parser constrained to our submodule in read or write mode 
+        :raise IOError: If the .gitmodules file cannot be found, either locally or in the repository 
+            at the given parent commit. Otherwise the exception would be delayed until the first 
+            access of the config parser&quot;&quot;&quot;</span>
+        <span class="s1">parent_matches_head = </span><span class="s2">True</span>
+        <span class="s2">if </span><span class="s1">parent_commit </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">parent_matches_head = repo.head.commit == parent_commit</span>
+            <span class="s2">except </span><span class="s1">ValueError:</span>
+                <span class="s0"># We are most likely in an empty repository, so the HEAD doesn't point to a valid ref</span>
+                <span class="s2">pass</span>
+        <span class="s0"># end handle parent_commit</span>
+        <span class="s1">fp_module: Union[str</span><span class="s2">, </span><span class="s1">BytesIO]</span>
+        <span class="s2">if not </span><span class="s1">repo.bare </span><span class="s2">and </span><span class="s1">parent_matches_head </span><span class="s2">and </span><span class="s1">repo.working_tree_dir:</span>
+            <span class="s1">fp_module = osp.join(repo.working_tree_dir</span><span class="s2">, </span><span class="s1">cls.k_modules_file)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">assert </span><span class="s1">parent_commit </span><span class="s2">is not None, </span><span class="s3">&quot;need valid parent_commit in bare repositories&quot;</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">fp_module = cls._sio_modules(parent_commit)</span>
+            <span class="s2">except </span><span class="s1">KeyError </span><span class="s2">as </span><span class="s1">e:</span>
+                <span class="s2">raise </span><span class="s1">IOError(</span>
+                    <span class="s3">&quot;Could not find %s file in the tree of parent commit %s&quot; </span><span class="s1">% (cls.k_modules_file</span><span class="s2">, </span><span class="s1">parent_commit)</span>
+                <span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+            <span class="s0"># END handle exceptions</span>
+        <span class="s0"># END handle non-bare working tree</span>
+
+        <span class="s2">if not </span><span class="s1">read_only </span><span class="s2">and </span><span class="s1">(repo.bare </span><span class="s2">or not </span><span class="s1">parent_matches_head):</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Cannot write blobs of 'historical' submodule configurations&quot;</span><span class="s1">)</span>
+        <span class="s0"># END handle writes of historical submodules</span>
+
+        <span class="s2">return </span><span class="s1">SubmoduleConfigParser(fp_module</span><span class="s2">, </span><span class="s1">read_only=read_only)</span>
+
+    <span class="s2">def </span><span class="s1">_clear_cache(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0"># clear the possibly changed values</span>
+        <span class="s2">for </span><span class="s1">name </span><span class="s2">in </span><span class="s1">self._cache_attrs:</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">delattr(self</span><span class="s2">, </span><span class="s1">name)</span>
+            <span class="s2">except </span><span class="s1">AttributeError:</span>
+                <span class="s2">pass</span>
+            <span class="s0"># END try attr deletion</span>
+        <span class="s0"># END for each name to delete</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_sio_modules(cls</span><span class="s2">, </span><span class="s1">parent_commit: Commit_ish) -&gt; BytesIO:</span>
+        <span class="s4">&quot;&quot;&quot;:return: Configuration file as BytesIO - we only access it through the respective blob's data&quot;&quot;&quot;</span>
+        <span class="s1">sio = BytesIO(parent_commit.tree[cls.k_modules_file].data_stream.read())</span>
+        <span class="s1">sio.name = cls.k_modules_file</span>
+        <span class="s2">return </span><span class="s1">sio</span>
+
+    <span class="s2">def </span><span class="s1">_config_parser_constrained(self</span><span class="s2">, </span><span class="s1">read_only: bool) -&gt; SectionConstraint:</span>
+        <span class="s4">&quot;&quot;&quot;:return: Config Parser constrained to our submodule in read or write mode&quot;&quot;&quot;</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">pc: Union[</span><span class="s3">&quot;Commit_ish&quot;</span><span class="s2">, None</span><span class="s1">] = self.parent_commit</span>
+        <span class="s2">except </span><span class="s1">ValueError:</span>
+            <span class="s1">pc = </span><span class="s2">None</span>
+        <span class="s0"># end handle empty parent repository</span>
+        <span class="s1">parser = self._config_parser(self.repo</span><span class="s2">, </span><span class="s1">pc</span><span class="s2">, </span><span class="s1">read_only)</span>
+        <span class="s1">parser.set_submodule(self)</span>
+        <span class="s2">return </span><span class="s1">SectionConstraint(parser</span><span class="s2">, </span><span class="s1">sm_section(self.name))</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_module_abspath(cls</span><span class="s2">, </span><span class="s1">parent_repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s2">, </span><span class="s1">path: PathLike</span><span class="s2">, </span><span class="s1">name: str) -&gt; PathLike:</span>
+        <span class="s2">if </span><span class="s1">cls._need_gitfile_submodules(parent_repo.git):</span>
+            <span class="s2">return </span><span class="s1">osp.join(parent_repo.git_dir</span><span class="s2">, </span><span class="s3">&quot;modules&quot;</span><span class="s2">, </span><span class="s1">name)</span>
+        <span class="s2">if </span><span class="s1">parent_repo.working_tree_dir:</span>
+            <span class="s2">return </span><span class="s1">osp.join(parent_repo.working_tree_dir</span><span class="s2">, </span><span class="s1">path)</span>
+        <span class="s2">raise </span><span class="s1">NotADirectoryError()</span>
+        <span class="s0"># end</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_clone_repo(</span>
+        <span class="s1">cls</span><span class="s2">,</span>
+        <span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s2">,</span>
+        <span class="s1">url: str</span><span class="s2">,</span>
+        <span class="s1">path: PathLike</span><span class="s2">,</span>
+        <span class="s1">name: str</span><span class="s2">,</span>
+        <span class="s1">allow_unsafe_options: bool = </span><span class="s2">False,</span>
+        <span class="s1">allow_unsafe_protocols: bool = </span><span class="s2">False,</span>
+        <span class="s1">**kwargs: Any</span><span class="s2">,</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;Repo&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;:return: Repo instance of newly cloned repository 
+        :param repo: our parent repository 
+        :param url: url to clone from 
+        :param path: repository - relative path to the submodule checkout location 
+        :param name: canonical of the submodule 
+        :param allow_unsafe_protocols: Allow unsafe protocols to be used, like ext 
+        :param allow_unsafe_options: Allow unsafe options to be used, like --upload-pack 
+        :param kwargs: additional arguments given to git.clone&quot;&quot;&quot;</span>
+        <span class="s1">module_abspath = cls._module_abspath(repo</span><span class="s2">, </span><span class="s1">path</span><span class="s2">, </span><span class="s1">name)</span>
+        <span class="s1">module_checkout_path = module_abspath</span>
+        <span class="s2">if </span><span class="s1">cls._need_gitfile_submodules(repo.git):</span>
+            <span class="s1">kwargs[</span><span class="s3">&quot;separate_git_dir&quot;</span><span class="s1">] = module_abspath</span>
+            <span class="s1">module_abspath_dir = osp.dirname(module_abspath)</span>
+            <span class="s2">if not </span><span class="s1">osp.isdir(module_abspath_dir):</span>
+                <span class="s1">os.makedirs(module_abspath_dir)</span>
+            <span class="s1">module_checkout_path = osp.join(str(repo.working_tree_dir)</span><span class="s2">, </span><span class="s1">path)</span>
+        <span class="s0"># end</span>
+
+        <span class="s1">clone = git.Repo.clone_from(</span>
+            <span class="s1">url</span><span class="s2">,</span>
+            <span class="s1">module_checkout_path</span><span class="s2">,</span>
+            <span class="s1">allow_unsafe_options=allow_unsafe_options</span><span class="s2">,</span>
+            <span class="s1">allow_unsafe_protocols=allow_unsafe_protocols</span><span class="s2">,</span>
+            <span class="s1">**kwargs</span><span class="s2">,</span>
+        <span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">cls._need_gitfile_submodules(repo.git):</span>
+            <span class="s1">cls._write_git_file_and_module_config(module_checkout_path</span><span class="s2">, </span><span class="s1">module_abspath)</span>
+        <span class="s0"># end</span>
+        <span class="s2">return </span><span class="s1">clone</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_to_relative_path(cls</span><span class="s2">, </span><span class="s1">parent_repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s2">, </span><span class="s1">path: PathLike) -&gt; PathLike:</span>
+        <span class="s4">&quot;&quot;&quot;:return: a path guaranteed  to be relative to the given parent - repository 
+        :raise ValueError: if path is not contained in the parent repository's working tree&quot;&quot;&quot;</span>
+        <span class="s1">path = to_native_path_linux(path)</span>
+        <span class="s2">if </span><span class="s1">path.endswith(</span><span class="s3">&quot;/&quot;</span><span class="s1">):</span>
+            <span class="s1">path = path[:-</span><span class="s5">1</span><span class="s1">]</span>
+        <span class="s0"># END handle trailing slash</span>
+
+        <span class="s2">if </span><span class="s1">osp.isabs(path) </span><span class="s2">and </span><span class="s1">parent_repo.working_tree_dir:</span>
+            <span class="s1">working_tree_linux = to_native_path_linux(parent_repo.working_tree_dir)</span>
+            <span class="s2">if not </span><span class="s1">path.startswith(working_tree_linux):</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span>
+                    <span class="s3">&quot;Submodule checkout path '%s' needs to be within the parents repository at '%s'&quot;</span>
+                    <span class="s1">% (working_tree_linux</span><span class="s2">, </span><span class="s1">path)</span>
+                <span class="s1">)</span>
+            <span class="s1">path = path[len(working_tree_linux.rstrip(</span><span class="s3">&quot;/&quot;</span><span class="s1">)) + </span><span class="s5">1 </span><span class="s1">:]</span>
+            <span class="s2">if not </span><span class="s1">path:</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Absolute submodule path '%s' didn't yield a valid relative path&quot; </span><span class="s1">% path)</span>
+            <span class="s0"># end verify converted relative path makes sense</span>
+        <span class="s0"># end convert to a relative path</span>
+
+        <span class="s2">return </span><span class="s1">path</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">_write_git_file_and_module_config(cls</span><span class="s2">, </span><span class="s1">working_tree_dir: PathLike</span><span class="s2">, </span><span class="s1">module_abspath: PathLike) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Writes a .git file containing a(preferably) relative path to the actual git module repository. 
+        It is an error if the module_abspath cannot be made into a relative path, relative to the working_tree_dir 
+        :note: will overwrite existing files ! 
+        :note: as we rewrite both the git file as well as the module configuration, we might fail on the configuration 
+            and will not roll back changes done to the git file. This should be a non - issue, but may easily be fixed 
+            if it becomes one 
+        :param working_tree_dir: directory to write the .git file into 
+        :param module_abspath: absolute path to the bare repository 
+        &quot;&quot;&quot;</span>
+        <span class="s1">git_file = osp.join(working_tree_dir</span><span class="s2">, </span><span class="s3">&quot;.git&quot;</span><span class="s1">)</span>
+        <span class="s1">rela_path = osp.relpath(module_abspath</span><span class="s2">, </span><span class="s1">start=working_tree_dir)</span>
+        <span class="s2">if </span><span class="s1">is_win:</span>
+            <span class="s2">if </span><span class="s1">osp.isfile(git_file):</span>
+                <span class="s1">os.remove(git_file)</span>
+        <span class="s2">with </span><span class="s1">open(git_file</span><span class="s2">, </span><span class="s3">&quot;wb&quot;</span><span class="s1">) </span><span class="s2">as </span><span class="s1">fp:</span>
+            <span class="s1">fp.write((</span><span class="s3">&quot;gitdir: %s&quot; </span><span class="s1">% rela_path).encode(defenc))</span>
+
+        <span class="s2">with </span><span class="s1">GitConfigParser(osp.join(module_abspath</span><span class="s2">, </span><span class="s3">&quot;config&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s1">read_only=</span><span class="s2">False, </span><span class="s1">merge_includes=</span><span class="s2">False</span><span class="s1">) </span><span class="s2">as </span><span class="s1">writer:</span>
+            <span class="s1">writer.set_value(</span>
+                <span class="s3">&quot;core&quot;</span><span class="s2">,</span>
+                <span class="s3">&quot;worktree&quot;</span><span class="s2">,</span>
+                <span class="s1">to_native_path_linux(osp.relpath(working_tree_dir</span><span class="s2">, </span><span class="s1">start=module_abspath))</span><span class="s2">,</span>
+            <span class="s1">)</span>
+
+    <span class="s0"># { Edit Interface</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">add(</span>
+        <span class="s1">cls</span><span class="s2">,</span>
+        <span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s2">,</span>
+        <span class="s1">name: str</span><span class="s2">,</span>
+        <span class="s1">path: PathLike</span><span class="s2">,</span>
+        <span class="s1">url: Union[str</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">branch: Union[str</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">no_checkout: bool = </span><span class="s2">False,</span>
+        <span class="s1">depth: Union[int</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">env: Union[Mapping[str</span><span class="s2">, </span><span class="s1">str]</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">clone_multi_options: Union[Sequence[TBD]</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">allow_unsafe_options: bool = </span><span class="s2">False,</span>
+        <span class="s1">allow_unsafe_protocols: bool = </span><span class="s2">False,</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;Submodule&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Add a new submodule to the given repository. This will alter the index 
+        as well as the .gitmodules file, but will not create a new commit. 
+        If the submodule already exists, no matter if the configuration differs 
+        from the one provided, the existing submodule will be returned. 
+ 
+        :param repo: Repository instance which should receive the submodule 
+        :param name: The name/identifier for the submodule 
+        :param path: repository-relative or absolute path at which the submodule 
+            should be located 
+            It will be created as required during the repository initialization. 
+        :param url: git-clone compatible URL, see git-clone reference for more information 
+            If None, the repository is assumed to exist, and the url of the first 
+            remote is taken instead. This is useful if you want to make an existing 
+            repository a submodule of anotherone. 
+        :param branch: name of branch at which the submodule should (later) be checked out. 
+            The given branch must exist in the remote repository, and will be checked 
+            out locally as a tracking branch. 
+            It will only be written into the configuration if it not None, which is 
+            when the checked out branch will be the one the remote HEAD pointed to. 
+            The result you get in these situation is somewhat fuzzy, and it is recommended 
+            to specify at least 'master' here. 
+            Examples are 'master' or 'feature/new' 
+        :param no_checkout: if True, and if the repository has to be cloned manually, 
+            no checkout will be performed 
+        :param depth: Create a shallow clone with a history truncated to the 
+            specified number of commits. 
+        :param env: Optional dictionary containing the desired environment variables. 
+            Note: Provided variables will be used to update the execution 
+            environment for `git`. If some variable is not specified in `env` 
+            and is defined in `os.environ`, value from `os.environ` will be used. 
+            If you want to unset some variable, consider providing empty string 
+            as its value. 
+        :param clone_multi_options: A list of Clone options. Please see ``git.repo.base.Repo.clone`` 
+            for details. 
+        :param allow_unsafe_protocols: Allow unsafe protocols to be used, like ext 
+        :param allow_unsafe_options: Allow unsafe options to be used, like --upload-pack 
+        :return: The newly created submodule instance 
+        :note: works atomically, such that no change will be done if the repository 
+            update fails for instance&quot;&quot;&quot;</span>
+
+        <span class="s2">if </span><span class="s1">repo.bare:</span>
+            <span class="s2">raise </span><span class="s1">InvalidGitRepositoryError(</span><span class="s3">&quot;Cannot add submodules to bare repositories&quot;</span><span class="s1">)</span>
+        <span class="s0"># END handle bare repos</span>
+
+        <span class="s1">path = cls._to_relative_path(repo</span><span class="s2">, </span><span class="s1">path)</span>
+
+        <span class="s0"># assure we never put backslashes into the url, as some operating systems</span>
+        <span class="s0"># like it ...</span>
+        <span class="s2">if </span><span class="s1">url </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">url = to_native_path_linux(url)</span>
+        <span class="s0"># END assure url correctness</span>
+
+        <span class="s0"># INSTANTIATE INTERMEDIATE SM</span>
+        <span class="s1">sm = cls(</span>
+            <span class="s1">repo</span><span class="s2">,</span>
+            <span class="s1">cls.NULL_BIN_SHA</span><span class="s2">,</span>
+            <span class="s1">cls.k_default_mode</span><span class="s2">,</span>
+            <span class="s1">path</span><span class="s2">,</span>
+            <span class="s1">name</span><span class="s2">,</span>
+            <span class="s1">url=</span><span class="s3">&quot;invalid-temporary&quot;</span><span class="s2">,</span>
+        <span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">sm.exists():</span>
+            <span class="s0"># reretrieve submodule from tree</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">sm = repo.head.commit.tree[str(path)]</span>
+                <span class="s1">sm._name = name</span>
+                <span class="s2">return </span><span class="s1">sm</span>
+            <span class="s2">except </span><span class="s1">KeyError:</span>
+                <span class="s0"># could only be in index</span>
+                <span class="s1">index = repo.index</span>
+                <span class="s1">entry = index.entries[index.entry_key(path</span><span class="s2">, </span><span class="s5">0</span><span class="s1">)]</span>
+                <span class="s1">sm.binsha = entry.binsha</span>
+                <span class="s2">return </span><span class="s1">sm</span>
+            <span class="s0"># END handle exceptions</span>
+        <span class="s0"># END handle existing</span>
+
+        <span class="s0"># fake-repo - we only need the functionality on the branch instance</span>
+        <span class="s1">br = git.Head(repo</span><span class="s2">, </span><span class="s1">git.Head.to_full_path(str(branch) </span><span class="s2">or </span><span class="s1">cls.k_head_default))</span>
+        <span class="s1">has_module = sm.module_exists()</span>
+        <span class="s1">branch_is_default = branch </span><span class="s2">is None</span>
+        <span class="s2">if </span><span class="s1">has_module </span><span class="s2">and </span><span class="s1">url </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">url </span><span class="s2">not in </span><span class="s1">[r.url </span><span class="s2">for </span><span class="s1">r </span><span class="s2">in </span><span class="s1">sm.module().remotes]:</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span>
+                    <span class="s3">&quot;Specified URL '%s' does not match any remote url of the repository at '%s'&quot; </span><span class="s1">% (url</span><span class="s2">, </span><span class="s1">sm.abspath)</span>
+                <span class="s1">)</span>
+            <span class="s0"># END check url</span>
+        <span class="s0"># END verify urls match</span>
+
+        <span class="s1">mrepo: Union[Repo</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None</span>
+
+        <span class="s2">if </span><span class="s1">url </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">if not </span><span class="s1">has_module:</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;A URL was not given and a repository did not exist at %s&quot; </span><span class="s1">% path)</span>
+            <span class="s0"># END check url</span>
+            <span class="s1">mrepo = sm.module()</span>
+            <span class="s0"># assert isinstance(mrepo, git.Repo)</span>
+            <span class="s1">urls = [r.url </span><span class="s2">for </span><span class="s1">r </span><span class="s2">in </span><span class="s1">mrepo.remotes]</span>
+            <span class="s2">if not </span><span class="s1">urls:</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Didn't find any remote url in repository at %s&quot; </span><span class="s1">% sm.abspath)</span>
+            <span class="s0"># END verify we have url</span>
+            <span class="s1">url = urls[</span><span class="s5">0</span><span class="s1">]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s0"># clone new repo</span>
+            <span class="s1">kwargs: Dict[str</span><span class="s2">, </span><span class="s1">Union[bool</span><span class="s2">, </span><span class="s1">int</span><span class="s2">, </span><span class="s1">str</span><span class="s2">, </span><span class="s1">Sequence[TBD]]] = {</span><span class="s3">&quot;n&quot;</span><span class="s1">: no_checkout}</span>
+            <span class="s2">if not </span><span class="s1">branch_is_default:</span>
+                <span class="s1">kwargs[</span><span class="s3">&quot;b&quot;</span><span class="s1">] = br.name</span>
+            <span class="s0"># END setup checkout-branch</span>
+
+            <span class="s2">if </span><span class="s1">depth:</span>
+                <span class="s2">if </span><span class="s1">isinstance(depth</span><span class="s2">, </span><span class="s1">int):</span>
+                    <span class="s1">kwargs[</span><span class="s3">&quot;depth&quot;</span><span class="s1">] = depth</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;depth should be an integer&quot;</span><span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">clone_multi_options:</span>
+                <span class="s1">kwargs[</span><span class="s3">&quot;multi_options&quot;</span><span class="s1">] = clone_multi_options</span>
+
+            <span class="s0"># _clone_repo(cls, repo, url, path, name, **kwargs):</span>
+            <span class="s1">mrepo = cls._clone_repo(</span>
+                <span class="s1">repo</span><span class="s2">,</span>
+                <span class="s1">url</span><span class="s2">,</span>
+                <span class="s1">path</span><span class="s2">,</span>
+                <span class="s1">name</span><span class="s2">,</span>
+                <span class="s1">env=env</span><span class="s2">,</span>
+                <span class="s1">allow_unsafe_options=allow_unsafe_options</span><span class="s2">,</span>
+                <span class="s1">allow_unsafe_protocols=allow_unsafe_protocols</span><span class="s2">,</span>
+                <span class="s1">**kwargs</span><span class="s2">,</span>
+            <span class="s1">)</span>
+        <span class="s0"># END verify url</span>
+
+        <span class="s0">## See #525 for ensuring git urls in config-files valid under Windows.</span>
+        <span class="s1">url = Git.polish_url(url)</span>
+
+        <span class="s0"># It's important to add the URL to the parent config, to let `git submodule` know.</span>
+        <span class="s0"># otherwise there is a '-' character in front of the submodule listing</span>
+        <span class="s0">#  a38efa84daef914e4de58d1905a500d8d14aaf45 mymodule (v0.9.0-1-ga38efa8)</span>
+        <span class="s0"># -a38efa84daef914e4de58d1905a500d8d14aaf45 submodules/intermediate/one</span>
+        <span class="s1">writer: Union[GitConfigParser</span><span class="s2">, </span><span class="s1">SectionConstraint]</span>
+
+        <span class="s2">with </span><span class="s1">sm.repo.config_writer() </span><span class="s2">as </span><span class="s1">writer:</span>
+            <span class="s1">writer.set_value(sm_section(name)</span><span class="s2">, </span><span class="s3">&quot;url&quot;</span><span class="s2">, </span><span class="s1">url)</span>
+
+        <span class="s0"># update configuration and index</span>
+        <span class="s1">index = sm.repo.index</span>
+        <span class="s2">with </span><span class="s1">sm.config_writer(index=index</span><span class="s2">, </span><span class="s1">write=</span><span class="s2">False</span><span class="s1">) </span><span class="s2">as </span><span class="s1">writer:</span>
+            <span class="s1">writer.set_value(</span><span class="s3">&quot;url&quot;</span><span class="s2">, </span><span class="s1">url)</span>
+            <span class="s1">writer.set_value(</span><span class="s3">&quot;path&quot;</span><span class="s2">, </span><span class="s1">path)</span>
+
+            <span class="s1">sm._url = url</span>
+            <span class="s2">if not </span><span class="s1">branch_is_default:</span>
+                <span class="s0"># store full path</span>
+                <span class="s1">writer.set_value(cls.k_head_option</span><span class="s2">, </span><span class="s1">br.path)</span>
+                <span class="s1">sm._branch_path = br.path</span>
+
+        <span class="s0"># we deliberately assume that our head matches our index !</span>
+        <span class="s2">if </span><span class="s1">mrepo:</span>
+            <span class="s1">sm.binsha = mrepo.head.commit.binsha</span>
+        <span class="s1">index.add([sm]</span><span class="s2">, </span><span class="s1">write=</span><span class="s2">True</span><span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s1">sm</span>
+
+    <span class="s2">def </span><span class="s1">update(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">recursive: bool = </span><span class="s2">False,</span>
+        <span class="s1">init: bool = </span><span class="s2">True,</span>
+        <span class="s1">to_latest_revision: bool = </span><span class="s2">False,</span>
+        <span class="s1">progress: Union[</span><span class="s3">&quot;UpdateProgress&quot;</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">dry_run: bool = </span><span class="s2">False,</span>
+        <span class="s1">force: bool = </span><span class="s2">False,</span>
+        <span class="s1">keep_going: bool = </span><span class="s2">False,</span>
+        <span class="s1">env: Union[Mapping[str</span><span class="s2">, </span><span class="s1">str]</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">clone_multi_options: Union[Sequence[TBD]</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None,</span>
+        <span class="s1">allow_unsafe_options: bool = </span><span class="s2">False,</span>
+        <span class="s1">allow_unsafe_protocols: bool = </span><span class="s2">False,</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;Submodule&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Update the repository of this submodule to point to the checkout 
+        we point at with the binsha of this instance. 
+ 
+        :param recursive: if True, we will operate recursively and update child- 
+            modules as well. 
+        :param init: if True, the module repository will be cloned into place if necessary 
+        :param to_latest_revision: if True, the submodule's sha will be ignored during checkout. 
+            Instead, the remote will be fetched, and the local tracking branch updated. 
+            This only works if we have a local tracking branch, which is the case 
+            if the remote repository had a master branch, or of the 'branch' option 
+            was specified for this submodule and the branch existed remotely 
+        :param progress: UpdateProgress instance or None if no progress should be shown 
+        :param dry_run: if True, the operation will only be simulated, but not performed. 
+            All performed operations are read - only 
+        :param force: 
+            If True, we may reset heads even if the repository in question is dirty. Additinoally we will be allowed 
+            to set a tracking branch which is ahead of its remote branch back into the past or the location of the 
+            remote branch. This will essentially 'forget' commits. 
+            If False, local tracking branches that are in the future of their respective remote branches will simply 
+            not be moved. 
+        :param keep_going: if True, we will ignore but log all errors, and keep going recursively. 
+            Unless dry_run is set as well, keep_going could cause subsequent / inherited errors you wouldn't see 
+            otherwise. 
+            In conjunction with dry_run, it can be useful to anticipate all errors when updating submodules 
+        :param env: Optional dictionary containing the desired environment variables. 
+            Note: Provided variables will be used to update the execution 
+            environment for `git`. If some variable is not specified in `env` 
+            and is defined in `os.environ`, value from `os.environ` will be used. 
+            If you want to unset some variable, consider providing empty string 
+            as its value. 
+        :param clone_multi_options:  list of Clone options. Please see ``git.repo.base.Repo.clone`` 
+            for details. Only take effect with `init` option. 
+        :param allow_unsafe_protocols: Allow unsafe protocols to be used, like ext 
+        :param allow_unsafe_options: Allow unsafe options to be used, like --upload-pack 
+        :note: does nothing in bare repositories 
+        :note: method is definitely not atomic if recurisve is True 
+        :return: self&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">self.repo.bare:</span>
+            <span class="s2">return </span><span class="s1">self</span>
+        <span class="s0"># END pass in bare mode</span>
+
+        <span class="s2">if </span><span class="s1">progress </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">progress = UpdateProgress()</span>
+        <span class="s0"># END handle progress</span>
+        <span class="s1">prefix = </span><span class="s3">&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">dry_run:</span>
+            <span class="s1">prefix = </span><span class="s3">&quot;DRY-RUN: &quot;</span>
+        <span class="s0"># END handle prefix</span>
+
+        <span class="s0"># to keep things plausible in dry-run mode</span>
+        <span class="s2">if </span><span class="s1">dry_run:</span>
+            <span class="s1">mrepo = </span><span class="s2">None</span>
+        <span class="s0"># END init mrepo</span>
+
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s0"># ASSURE REPO IS PRESENT AND UPTODATE</span>
+            <span class="s0">#####################################</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">mrepo = self.module()</span>
+                <span class="s1">rmts = mrepo.remotes</span>
+                <span class="s1">len_rmts = len(rmts)</span>
+                <span class="s2">for </span><span class="s1">i</span><span class="s2">, </span><span class="s1">remote </span><span class="s2">in </span><span class="s1">enumerate(rmts):</span>
+                    <span class="s1">op = FETCH</span>
+                    <span class="s2">if </span><span class="s1">i == </span><span class="s5">0</span><span class="s1">:</span>
+                        <span class="s1">op |= BEGIN</span>
+                    <span class="s0"># END handle start</span>
+
+                    <span class="s1">progress.update(</span>
+                        <span class="s1">op</span><span class="s2">,</span>
+                        <span class="s1">i</span><span class="s2">,</span>
+                        <span class="s1">len_rmts</span><span class="s2">,</span>
+                        <span class="s1">prefix + </span><span class="s3">&quot;Fetching remote %s of submodule %r&quot; </span><span class="s1">% (remote</span><span class="s2">, </span><span class="s1">self.name)</span><span class="s2">,</span>
+                    <span class="s1">)</span>
+                    <span class="s0"># ===============================</span>
+                    <span class="s2">if not </span><span class="s1">dry_run:</span>
+                        <span class="s1">remote.fetch(progress=progress)</span>
+                    <span class="s0"># END handle dry-run</span>
+                    <span class="s0"># ===============================</span>
+                    <span class="s2">if </span><span class="s1">i == len_rmts - </span><span class="s5">1</span><span class="s1">:</span>
+                        <span class="s1">op |= END</span>
+                    <span class="s0"># END handle end</span>
+                    <span class="s1">progress.update(</span>
+                        <span class="s1">op</span><span class="s2">,</span>
+                        <span class="s1">i</span><span class="s2">,</span>
+                        <span class="s1">len_rmts</span><span class="s2">,</span>
+                        <span class="s1">prefix + </span><span class="s3">&quot;Done fetching remote of submodule %r&quot; </span><span class="s1">% self.name</span><span class="s2">,</span>
+                    <span class="s1">)</span>
+                <span class="s0"># END fetch new data</span>
+            <span class="s2">except </span><span class="s1">InvalidGitRepositoryError:</span>
+                <span class="s1">mrepo = </span><span class="s2">None</span>
+                <span class="s2">if not </span><span class="s1">init:</span>
+                    <span class="s2">return </span><span class="s1">self</span>
+                <span class="s0"># END early abort if init is not allowed</span>
+
+                <span class="s0"># there is no git-repository yet - but delete empty paths</span>
+                <span class="s1">checkout_module_abspath = self.abspath</span>
+                <span class="s2">if not </span><span class="s1">dry_run </span><span class="s2">and </span><span class="s1">osp.isdir(checkout_module_abspath):</span>
+                    <span class="s2">try</span><span class="s1">:</span>
+                        <span class="s1">os.rmdir(checkout_module_abspath)</span>
+                    <span class="s2">except </span><span class="s1">OSError </span><span class="s2">as </span><span class="s1">e:</span>
+                        <span class="s2">raise </span><span class="s1">OSError(</span>
+                            <span class="s3">&quot;Module directory at %r does already exist and is non-empty&quot; </span><span class="s1">% checkout_module_abspath</span>
+                        <span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+                    <span class="s0"># END handle OSError</span>
+                <span class="s0"># END handle directory removal</span>
+
+                <span class="s0"># don't check it out at first - nonetheless it will create a local</span>
+                <span class="s0"># branch according to the remote-HEAD if possible</span>
+                <span class="s1">progress.update(</span>
+                    <span class="s1">BEGIN | CLONE</span><span class="s2">,</span>
+                    <span class="s5">0</span><span class="s2">,</span>
+                    <span class="s5">1</span><span class="s2">,</span>
+                    <span class="s1">prefix</span>
+                    <span class="s1">+ </span><span class="s3">&quot;Cloning url '%s' to '%s' in submodule %r&quot; </span><span class="s1">% (self.url</span><span class="s2">, </span><span class="s1">checkout_module_abspath</span><span class="s2">, </span><span class="s1">self.name)</span><span class="s2">,</span>
+                <span class="s1">)</span>
+                <span class="s2">if not </span><span class="s1">dry_run:</span>
+                    <span class="s1">mrepo = self._clone_repo(</span>
+                        <span class="s1">self.repo</span><span class="s2">,</span>
+                        <span class="s1">self.url</span><span class="s2">,</span>
+                        <span class="s1">self.path</span><span class="s2">,</span>
+                        <span class="s1">self.name</span><span class="s2">,</span>
+                        <span class="s1">n=</span><span class="s2">True,</span>
+                        <span class="s1">env=env</span><span class="s2">,</span>
+                        <span class="s1">multi_options=clone_multi_options</span><span class="s2">,</span>
+                        <span class="s1">allow_unsafe_options=allow_unsafe_options</span><span class="s2">,</span>
+                        <span class="s1">allow_unsafe_protocols=allow_unsafe_protocols</span><span class="s2">,</span>
+                    <span class="s1">)</span>
+                <span class="s0"># END handle dry-run</span>
+                <span class="s1">progress.update(</span>
+                    <span class="s1">END | CLONE</span><span class="s2">,</span>
+                    <span class="s5">0</span><span class="s2">,</span>
+                    <span class="s5">1</span><span class="s2">,</span>
+                    <span class="s1">prefix + </span><span class="s3">&quot;Done cloning to %s&quot; </span><span class="s1">% checkout_module_abspath</span><span class="s2">,</span>
+                <span class="s1">)</span>
+
+                <span class="s2">if not </span><span class="s1">dry_run:</span>
+                    <span class="s0"># see whether we have a valid branch to checkout</span>
+                    <span class="s2">try</span><span class="s1">:</span>
+                        <span class="s1">mrepo = cast(</span><span class="s3">&quot;Repo&quot;</span><span class="s2">, </span><span class="s1">mrepo)</span>
+                        <span class="s0"># find  a remote which has our branch - we try to be flexible</span>
+                        <span class="s1">remote_branch = find_first_remote_branch(mrepo.remotes</span><span class="s2">, </span><span class="s1">self.branch_name)</span>
+                        <span class="s1">local_branch = mkhead(mrepo</span><span class="s2">, </span><span class="s1">self.branch_path)</span>
+
+                        <span class="s0"># have a valid branch, but no checkout - make sure we can figure</span>
+                        <span class="s0"># that out by marking the commit with a null_sha</span>
+                        <span class="s1">local_branch.set_object(Object(mrepo</span><span class="s2">, </span><span class="s1">self.NULL_BIN_SHA))</span>
+                        <span class="s0"># END initial checkout + branch creation</span>
+
+                        <span class="s0"># make sure HEAD is not detached</span>
+                        <span class="s1">mrepo.head.set_reference(</span>
+                            <span class="s1">local_branch</span><span class="s2">,</span>
+                            <span class="s1">logmsg=</span><span class="s3">&quot;submodule: attaching head to %s&quot; </span><span class="s1">% local_branch</span><span class="s2">,</span>
+                        <span class="s1">)</span>
+                        <span class="s1">mrepo.head.reference.set_tracking_branch(remote_branch)</span>
+                    <span class="s2">except </span><span class="s1">(IndexError</span><span class="s2">, </span><span class="s1">InvalidGitRepositoryError):</span>
+                        <span class="s1">log.warning(</span><span class="s3">&quot;Failed to checkout tracking branch %s&quot;</span><span class="s2">, </span><span class="s1">self.branch_path)</span>
+                    <span class="s0"># END handle tracking branch</span>
+
+                    <span class="s0"># NOTE: Have to write the repo config file as well, otherwise</span>
+                    <span class="s0"># the default implementation will be offended and not update the repository</span>
+                    <span class="s0"># Maybe this is a good way to assure it doesn't get into our way, but</span>
+                    <span class="s0"># we want to stay backwards compatible too ... . Its so redundant !</span>
+                    <span class="s2">with </span><span class="s1">self.repo.config_writer() </span><span class="s2">as </span><span class="s1">writer:</span>
+                        <span class="s1">writer.set_value(sm_section(self.name)</span><span class="s2">, </span><span class="s3">&quot;url&quot;</span><span class="s2">, </span><span class="s1">self.url)</span>
+                <span class="s0"># END handle dry_run</span>
+            <span class="s0"># END handle initialization</span>
+
+            <span class="s0"># DETERMINE SHAS TO CHECKOUT</span>
+            <span class="s0">############################</span>
+            <span class="s1">binsha = self.binsha</span>
+            <span class="s1">hexsha = self.hexsha</span>
+            <span class="s2">if </span><span class="s1">mrepo </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s0"># mrepo is only set if we are not in dry-run mode or if the module existed</span>
+                <span class="s1">is_detached = mrepo.head.is_detached</span>
+            <span class="s0"># END handle dry_run</span>
+
+            <span class="s2">if </span><span class="s1">mrepo </span><span class="s2">is not None and </span><span class="s1">to_latest_revision:</span>
+                <span class="s1">msg_base = </span><span class="s3">&quot;Cannot update to latest revision in repository at %r as &quot; </span><span class="s1">% mrepo.working_dir</span>
+                <span class="s2">if not </span><span class="s1">is_detached:</span>
+                    <span class="s1">rref = mrepo.head.reference.tracking_branch()</span>
+                    <span class="s2">if </span><span class="s1">rref </span><span class="s2">is not None</span><span class="s1">:</span>
+                        <span class="s1">rcommit = rref.commit</span>
+                        <span class="s1">binsha = rcommit.binsha</span>
+                        <span class="s1">hexsha = rcommit.hexsha</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">log.error(</span>
+                            <span class="s3">&quot;%s a tracking branch was not set for local branch '%s'&quot;</span><span class="s2">,</span>
+                            <span class="s1">msg_base</span><span class="s2">,</span>
+                            <span class="s1">mrepo.head.reference</span><span class="s2">,</span>
+                        <span class="s1">)</span>
+                    <span class="s0"># END handle remote ref</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">log.error(</span><span class="s3">&quot;%s there was no local tracking branch&quot;</span><span class="s2">, </span><span class="s1">msg_base)</span>
+                <span class="s0"># END handle detached head</span>
+            <span class="s0"># END handle to_latest_revision option</span>
+
+            <span class="s0"># update the working tree</span>
+            <span class="s0"># handles dry_run</span>
+            <span class="s2">if </span><span class="s1">mrepo </span><span class="s2">is not None and </span><span class="s1">mrepo.head.commit.binsha != binsha:</span>
+                <span class="s0"># We must assure that our destination sha (the one to point to) is in the future of our current head.</span>
+                <span class="s0"># Otherwise, we will reset changes that might have been done on the submodule, but were not yet pushed</span>
+                <span class="s0"># We also handle the case that history has been rewritten, leaving no merge-base. In that case</span>
+                <span class="s0"># we behave conservatively, protecting possible changes the user had done</span>
+                <span class="s1">may_reset = </span><span class="s2">True</span>
+                <span class="s2">if </span><span class="s1">mrepo.head.commit.binsha != self.NULL_BIN_SHA:</span>
+                    <span class="s1">base_commit = mrepo.merge_base(mrepo.head.commit</span><span class="s2">, </span><span class="s1">hexsha)</span>
+                    <span class="s2">if </span><span class="s1">len(base_commit) == </span><span class="s5">0 </span><span class="s2">or </span><span class="s1">(base_commit[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">is not None and </span><span class="s1">base_commit[</span><span class="s5">0</span><span class="s1">].hexsha == hexsha):</span>
+                        <span class="s2">if </span><span class="s1">force:</span>
+                            <span class="s1">msg = </span><span class="s3">&quot;Will force checkout or reset on local branch that is possibly in the future of&quot;</span>
+                            <span class="s1">msg += </span><span class="s3">&quot;the commit it will be checked out to, effectively 'forgetting' new commits&quot;</span>
+                            <span class="s1">log.debug(msg)</span>
+                        <span class="s2">else</span><span class="s1">:</span>
+                            <span class="s1">msg = </span><span class="s3">&quot;Skipping %s on branch '%s' of submodule repo '%s' as it contains un-pushed commits&quot;</span>
+                            <span class="s1">msg %= (</span>
+                                <span class="s1">is_detached </span><span class="s2">and </span><span class="s3">&quot;checkout&quot; </span><span class="s2">or </span><span class="s3">&quot;reset&quot;</span><span class="s2">,</span>
+                                <span class="s1">mrepo.head</span><span class="s2">,</span>
+                                <span class="s1">mrepo</span><span class="s2">,</span>
+                            <span class="s1">)</span>
+                            <span class="s1">log.info(msg)</span>
+                            <span class="s1">may_reset = </span><span class="s2">False</span>
+                        <span class="s0"># end handle force</span>
+                    <span class="s0"># end handle if we are in the future</span>
+
+                    <span class="s2">if </span><span class="s1">may_reset </span><span class="s2">and not </span><span class="s1">force </span><span class="s2">and </span><span class="s1">mrepo.is_dirty(index=</span><span class="s2">True, </span><span class="s1">working_tree=</span><span class="s2">True, </span><span class="s1">untracked_files=</span><span class="s2">True</span><span class="s1">):</span>
+                        <span class="s2">raise </span><span class="s1">RepositoryDirtyError(mrepo</span><span class="s2">, </span><span class="s3">&quot;Cannot reset a dirty repository&quot;</span><span class="s1">)</span>
+                    <span class="s0"># end handle force and dirty state</span>
+                <span class="s0"># end handle empty repo</span>
+
+                <span class="s0"># end verify future/past</span>
+                <span class="s1">progress.update(</span>
+                    <span class="s1">BEGIN | UPDWKTREE</span><span class="s2">,</span>
+                    <span class="s5">0</span><span class="s2">,</span>
+                    <span class="s5">1</span><span class="s2">,</span>
+                    <span class="s1">prefix</span>
+                    <span class="s1">+ </span><span class="s3">&quot;Updating working tree at %s for submodule %r to revision %s&quot; </span><span class="s1">% (self.path</span><span class="s2">, </span><span class="s1">self.name</span><span class="s2">, </span><span class="s1">hexsha)</span><span class="s2">,</span>
+                <span class="s1">)</span>
+
+                <span class="s2">if not </span><span class="s1">dry_run </span><span class="s2">and </span><span class="s1">may_reset:</span>
+                    <span class="s2">if </span><span class="s1">is_detached:</span>
+                        <span class="s0"># NOTE: for now we force, the user is no supposed to change detached</span>
+                        <span class="s0"># submodules anyway. Maybe at some point this becomes an option, to</span>
+                        <span class="s0"># properly handle user modifications - see below for future options</span>
+                        <span class="s0"># regarding rebase and merge.</span>
+                        <span class="s1">mrepo.git.checkout(hexsha</span><span class="s2">, </span><span class="s1">force=force)</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">mrepo.head.reset(hexsha</span><span class="s2">, </span><span class="s1">index=</span><span class="s2">True, </span><span class="s1">working_tree=</span><span class="s2">True</span><span class="s1">)</span>
+                    <span class="s0"># END handle checkout</span>
+                <span class="s0"># if we may reset/checkout</span>
+                <span class="s1">progress.update(</span>
+                    <span class="s1">END | UPDWKTREE</span><span class="s2">,</span>
+                    <span class="s5">0</span><span class="s2">,</span>
+                    <span class="s5">1</span><span class="s2">,</span>
+                    <span class="s1">prefix + </span><span class="s3">&quot;Done updating working tree for submodule %r&quot; </span><span class="s1">% self.name</span><span class="s2">,</span>
+                <span class="s1">)</span>
+            <span class="s0"># END update to new commit only if needed</span>
+        <span class="s2">except </span><span class="s1">Exception </span><span class="s2">as </span><span class="s1">err:</span>
+            <span class="s2">if not </span><span class="s1">keep_going:</span>
+                <span class="s2">raise</span>
+            <span class="s1">log.error(str(err))</span>
+        <span class="s0"># end handle keep_going</span>
+
+        <span class="s0"># HANDLE RECURSION</span>
+        <span class="s0">##################</span>
+        <span class="s2">if </span><span class="s1">recursive:</span>
+            <span class="s0"># in dry_run mode, the module might not exist</span>
+            <span class="s2">if </span><span class="s1">mrepo </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s2">for </span><span class="s1">submodule </span><span class="s2">in </span><span class="s1">self.iter_items(self.module()):</span>
+                    <span class="s1">submodule.update(</span>
+                        <span class="s1">recursive</span><span class="s2">,</span>
+                        <span class="s1">init</span><span class="s2">,</span>
+                        <span class="s1">to_latest_revision</span><span class="s2">,</span>
+                        <span class="s1">progress=progress</span><span class="s2">,</span>
+                        <span class="s1">dry_run=dry_run</span><span class="s2">,</span>
+                        <span class="s1">force=force</span><span class="s2">,</span>
+                        <span class="s1">keep_going=keep_going</span><span class="s2">,</span>
+                    <span class="s1">)</span>
+                <span class="s0"># END handle recursive update</span>
+            <span class="s0"># END handle dry run</span>
+        <span class="s0"># END for each submodule</span>
+
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s1">@unbare_repo</span>
+    <span class="s2">def </span><span class="s1">move(self</span><span class="s2">, </span><span class="s1">module_path: PathLike</span><span class="s2">, </span><span class="s1">configuration: bool = </span><span class="s2">True, </span><span class="s1">module: bool = </span><span class="s2">True</span><span class="s1">) -&gt; </span><span class="s3">&quot;Submodule&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Move the submodule to a another module path. This involves physically moving 
+        the repository at our current path, changing the configuration, as well as 
+        adjusting our index entry accordingly. 
+ 
+        :param module_path: the path to which to move our module in the parent repostory's working tree, 
+            given as repository - relative or absolute path. Intermediate directories will be created 
+            accordingly. If the path already exists, it must be empty. 
+            Trailing(back)slashes are removed automatically 
+        :param configuration: if True, the configuration will be adjusted to let 
+            the submodule point to the given path. 
+        :param module: if True, the repository managed by this submodule 
+            will be moved as well. If False, we don't move the submodule's checkout, which may leave 
+            the parent repository in an inconsistent state. 
+        :return: self 
+        :raise ValueError: if the module path existed and was not empty, or was a file 
+        :note: Currently the method is not atomic, and it could leave the repository 
+            in an inconsistent state if a sub - step fails for some reason 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">module + configuration &lt; </span><span class="s5">1</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;You must specify to move at least the module or the configuration of the submodule&quot;</span><span class="s1">)</span>
+        <span class="s0"># END handle input</span>
+
+        <span class="s1">module_checkout_path = self._to_relative_path(self.repo</span><span class="s2">, </span><span class="s1">module_path)</span>
+
+        <span class="s0"># VERIFY DESTINATION</span>
+        <span class="s2">if </span><span class="s1">module_checkout_path == self.path:</span>
+            <span class="s2">return </span><span class="s1">self</span>
+        <span class="s0"># END handle no change</span>
+
+        <span class="s1">module_checkout_abspath = join_path_native(str(self.repo.working_tree_dir)</span><span class="s2">, </span><span class="s1">module_checkout_path)</span>
+        <span class="s2">if </span><span class="s1">osp.isfile(module_checkout_abspath):</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Cannot move repository onto a file: %s&quot; </span><span class="s1">% module_checkout_abspath)</span>
+        <span class="s0"># END handle target files</span>
+
+        <span class="s1">index = self.repo.index</span>
+        <span class="s1">tekey = index.entry_key(module_checkout_path</span><span class="s2">, </span><span class="s5">0</span><span class="s1">)</span>
+        <span class="s0"># if the target item already exists, fail</span>
+        <span class="s2">if </span><span class="s1">configuration </span><span class="s2">and </span><span class="s1">tekey </span><span class="s2">in </span><span class="s1">index.entries:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Index entry for target path did already exist&quot;</span><span class="s1">)</span>
+        <span class="s0"># END handle index key already there</span>
+
+        <span class="s0"># remove existing destination</span>
+        <span class="s2">if </span><span class="s1">module:</span>
+            <span class="s2">if </span><span class="s1">osp.exists(module_checkout_abspath):</span>
+                <span class="s2">if </span><span class="s1">len(os.listdir(module_checkout_abspath)):</span>
+                    <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Destination module directory was not empty&quot;</span><span class="s1">)</span>
+                <span class="s0"># END handle non-emptiness</span>
+
+                <span class="s2">if </span><span class="s1">osp.islink(module_checkout_abspath):</span>
+                    <span class="s1">os.remove(module_checkout_abspath)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">os.rmdir(module_checkout_abspath)</span>
+                <span class="s0"># END handle link</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s0"># recreate parent directories</span>
+                <span class="s0"># NOTE: renames() does that now</span>
+                <span class="s2">pass</span>
+            <span class="s0"># END handle existence</span>
+        <span class="s0"># END handle module</span>
+
+        <span class="s0"># move the module into place if possible</span>
+        <span class="s1">cur_path = self.abspath</span>
+        <span class="s1">renamed_module = </span><span class="s2">False</span>
+        <span class="s2">if </span><span class="s1">module </span><span class="s2">and </span><span class="s1">osp.exists(cur_path):</span>
+            <span class="s1">os.renames(cur_path</span><span class="s2">, </span><span class="s1">module_checkout_abspath)</span>
+            <span class="s1">renamed_module = </span><span class="s2">True</span>
+
+            <span class="s2">if </span><span class="s1">osp.isfile(osp.join(module_checkout_abspath</span><span class="s2">, </span><span class="s3">&quot;.git&quot;</span><span class="s1">)):</span>
+                <span class="s1">module_abspath = self._module_abspath(self.repo</span><span class="s2">, </span><span class="s1">self.path</span><span class="s2">, </span><span class="s1">self.name)</span>
+                <span class="s1">self._write_git_file_and_module_config(module_checkout_abspath</span><span class="s2">, </span><span class="s1">module_abspath)</span>
+            <span class="s0"># end handle git file rewrite</span>
+        <span class="s0"># END move physical module</span>
+
+        <span class="s0"># rename the index entry - have to manipulate the index directly as</span>
+        <span class="s0"># git-mv cannot be used on submodules ... yeah</span>
+        <span class="s1">previous_sm_path = self.path</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">configuration:</span>
+                <span class="s2">try</span><span class="s1">:</span>
+                    <span class="s1">ekey = index.entry_key(self.path</span><span class="s2">, </span><span class="s5">0</span><span class="s1">)</span>
+                    <span class="s1">entry = index.entries[ekey]</span>
+                    <span class="s2">del </span><span class="s1">index.entries[ekey]</span>
+                    <span class="s1">nentry = git.IndexEntry(entry[:</span><span class="s5">3</span><span class="s1">] + (module_checkout_path</span><span class="s2">,</span><span class="s1">) + entry[</span><span class="s5">4</span><span class="s1">:])</span>
+                    <span class="s1">index.entries[tekey] = nentry</span>
+                <span class="s2">except </span><span class="s1">KeyError </span><span class="s2">as </span><span class="s1">e:</span>
+                    <span class="s2">raise </span><span class="s1">InvalidGitRepositoryError(</span><span class="s3">&quot;Submodule's entry at %r did not exist&quot; </span><span class="s1">% (self.path)) </span><span class="s2">from </span><span class="s1">e</span>
+                <span class="s0"># END handle submodule doesn't exist</span>
+
+                <span class="s0"># update configuration</span>
+                <span class="s2">with </span><span class="s1">self.config_writer(index=index) </span><span class="s2">as </span><span class="s1">writer:  </span><span class="s0"># auto-write</span>
+                    <span class="s1">writer.set_value(</span><span class="s3">&quot;path&quot;</span><span class="s2">, </span><span class="s1">module_checkout_path)</span>
+                    <span class="s1">self.path = module_checkout_path</span>
+            <span class="s0"># END handle configuration flag</span>
+        <span class="s2">except </span><span class="s1">Exception:</span>
+            <span class="s2">if </span><span class="s1">renamed_module:</span>
+                <span class="s1">os.renames(module_checkout_abspath</span><span class="s2">, </span><span class="s1">cur_path)</span>
+            <span class="s0"># END undo module renaming</span>
+            <span class="s2">raise</span>
+        <span class="s0"># END handle undo rename</span>
+
+        <span class="s0"># Auto-rename submodule if it's name was 'default', that is, the checkout directory</span>
+        <span class="s2">if </span><span class="s1">previous_sm_path == self.name:</span>
+            <span class="s1">self.rename(module_checkout_path)</span>
+        <span class="s0"># end</span>
+
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s1">@unbare_repo</span>
+    <span class="s2">def </span><span class="s1">remove(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">module: bool = </span><span class="s2">True,</span>
+        <span class="s1">force: bool = </span><span class="s2">False,</span>
+        <span class="s1">configuration: bool = </span><span class="s2">True,</span>
+        <span class="s1">dry_run: bool = </span><span class="s2">False,</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;Submodule&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Remove this submodule from the repository. This will remove our entry 
+        from the .gitmodules file and the entry in the .git / config file. 
+ 
+        :param module: If True, the module checkout we point to will be deleted 
+            as well. If the module is currently on a commit which is not part 
+            of any branch in the remote, if the currently checked out branch 
+            working tree, or untracked files, 
+            is ahead of its tracking branch, if you have modifications in the 
+            In case the removal of the repository fails for these reasons, the 
+            submodule status will not have been altered. 
+            If this submodule has child - modules on its own, these will be deleted 
+            prior to touching the own module. 
+        :param force: Enforces the deletion of the module even though it contains 
+            modifications. This basically enforces a brute - force file system based 
+            deletion. 
+        :param configuration: if True, the submodule is deleted from the configuration, 
+            otherwise it isn't. Although this should be enabled most of the times, 
+            this flag enables you to safely delete the repository of your submodule. 
+        :param dry_run: if True, we will not actually do anything, but throw the errors 
+            we would usually throw 
+        :return: self 
+        :note: doesn't work in bare repositories 
+        :note: doesn't work atomically, as failure to remove any part of the submodule will leave 
+            an inconsistent state 
+        :raise InvalidGitRepositoryError: thrown if the repository cannot be deleted 
+        :raise OSError: if directories or files could not be removed&quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">(module </span><span class="s2">or </span><span class="s1">configuration):</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Need to specify to delete at least the module, or the configuration&quot;</span><span class="s1">)</span>
+        <span class="s0"># END handle parameters</span>
+
+        <span class="s0"># Recursively remove children of this submodule</span>
+        <span class="s1">nc = </span><span class="s5">0</span>
+        <span class="s2">for </span><span class="s1">csm </span><span class="s2">in </span><span class="s1">self.children():</span>
+            <span class="s1">nc += </span><span class="s5">1</span>
+            <span class="s1">csm.remove(module</span><span class="s2">, </span><span class="s1">force</span><span class="s2">, </span><span class="s1">configuration</span><span class="s2">, </span><span class="s1">dry_run)</span>
+            <span class="s2">del </span><span class="s1">csm</span>
+        <span class="s0"># end</span>
+        <span class="s2">if </span><span class="s1">configuration </span><span class="s2">and not </span><span class="s1">dry_run </span><span class="s2">and </span><span class="s1">nc &gt; </span><span class="s5">0</span><span class="s1">:</span>
+            <span class="s0"># Assure we don't leave the parent repository in a dirty state, and commit our changes</span>
+            <span class="s0"># It's important for recursive, unforced, deletions to work as expected</span>
+            <span class="s1">self.module().index.commit(</span><span class="s3">&quot;Removed at least one of child-modules of '%s'&quot; </span><span class="s1">% self.name)</span>
+        <span class="s0"># end handle recursion</span>
+
+        <span class="s0"># DELETE REPOSITORY WORKING TREE</span>
+        <span class="s0">################################</span>
+        <span class="s2">if </span><span class="s1">module </span><span class="s2">and </span><span class="s1">self.module_exists():</span>
+            <span class="s1">mod = self.module()</span>
+            <span class="s1">git_dir = mod.git_dir</span>
+            <span class="s2">if </span><span class="s1">force:</span>
+                <span class="s0"># take the fast lane and just delete everything in our module path</span>
+                <span class="s0"># TODO: If we run into permission problems, we have a highly inconsistent</span>
+                <span class="s0"># state. Delete the .git folders last, start with the submodules first</span>
+                <span class="s1">mp = self.abspath</span>
+                <span class="s1">method: Union[</span><span class="s2">None, </span><span class="s1">Callable[[PathLike]</span><span class="s2">, None</span><span class="s1">]] = </span><span class="s2">None</span>
+                <span class="s2">if </span><span class="s1">osp.islink(mp):</span>
+                    <span class="s1">method = os.remove</span>
+                <span class="s2">elif </span><span class="s1">osp.isdir(mp):</span>
+                    <span class="s1">method = rmtree</span>
+                <span class="s2">elif </span><span class="s1">osp.exists(mp):</span>
+                    <span class="s2">raise </span><span class="s1">AssertionError(</span><span class="s3">&quot;Cannot forcibly delete repository as it was neither a link, nor a directory&quot;</span><span class="s1">)</span>
+                <span class="s0"># END handle brutal deletion</span>
+                <span class="s2">if not </span><span class="s1">dry_run:</span>
+                    <span class="s2">assert </span><span class="s1">method</span>
+                    <span class="s1">method(mp)</span>
+                <span class="s0"># END apply deletion method</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s0"># verify we may delete our module</span>
+                <span class="s2">if </span><span class="s1">mod.is_dirty(index=</span><span class="s2">True, </span><span class="s1">working_tree=</span><span class="s2">True, </span><span class="s1">untracked_files=</span><span class="s2">True</span><span class="s1">):</span>
+                    <span class="s2">raise </span><span class="s1">InvalidGitRepositoryError(</span>
+                        <span class="s3">&quot;Cannot delete module at %s with any modifications, unless force is specified&quot;</span>
+                        <span class="s1">% mod.working_tree_dir</span>
+                    <span class="s1">)</span>
+                <span class="s0"># END check for dirt</span>
+
+                <span class="s0"># figure out whether we have new commits compared to the remotes</span>
+                <span class="s0"># NOTE: If the user pulled all the time, the remote heads might</span>
+                <span class="s0"># not have been updated, so commits coming from the remote look</span>
+                <span class="s0"># as if they come from us. But we stay strictly read-only and</span>
+                <span class="s0"># don't fetch beforehand.</span>
+                <span class="s2">for </span><span class="s1">remote </span><span class="s2">in </span><span class="s1">mod.remotes:</span>
+                    <span class="s1">num_branches_with_new_commits = </span><span class="s5">0</span>
+                    <span class="s1">rrefs = remote.refs</span>
+                    <span class="s2">for </span><span class="s1">rref </span><span class="s2">in </span><span class="s1">rrefs:</span>
+                        <span class="s1">num_branches_with_new_commits += len(mod.git.cherry(rref)) != </span><span class="s5">0</span>
+                    <span class="s0"># END for each remote ref</span>
+                    <span class="s0"># not a single remote branch contained all our commits</span>
+                    <span class="s2">if </span><span class="s1">len(rrefs) </span><span class="s2">and </span><span class="s1">num_branches_with_new_commits == len(rrefs):</span>
+                        <span class="s2">raise </span><span class="s1">InvalidGitRepositoryError(</span>
+                            <span class="s3">&quot;Cannot delete module at %s as there are new commits&quot; </span><span class="s1">% mod.working_tree_dir</span>
+                        <span class="s1">)</span>
+                    <span class="s0"># END handle new commits</span>
+                    <span class="s0"># have to manually delete references as python's scoping is</span>
+                    <span class="s0"># not existing, they could keep handles open ( on windows this is a problem )</span>
+                    <span class="s2">if </span><span class="s1">len(rrefs):</span>
+                        <span class="s2">del </span><span class="s1">rref  </span><span class="s0"># skipcq: PYL-W0631</span>
+                    <span class="s0"># END handle remotes</span>
+                    <span class="s2">del </span><span class="s1">rrefs</span>
+                    <span class="s2">del </span><span class="s1">remote</span>
+                <span class="s0"># END for each remote</span>
+
+                <span class="s0"># finally delete our own submodule</span>
+                <span class="s2">if not </span><span class="s1">dry_run:</span>
+                    <span class="s1">self._clear_cache()</span>
+                    <span class="s1">wtd = mod.working_tree_dir</span>
+                    <span class="s2">del </span><span class="s1">mod  </span><span class="s0"># release file-handles (windows)</span>
+                    <span class="s2">import </span><span class="s1">gc</span>
+
+                    <span class="s1">gc.collect()</span>
+                    <span class="s2">try</span><span class="s1">:</span>
+                        <span class="s1">rmtree(str(wtd))</span>
+                    <span class="s2">except </span><span class="s1">Exception </span><span class="s2">as </span><span class="s1">ex:</span>
+                        <span class="s2">if </span><span class="s1">HIDE_WINDOWS_KNOWN_ERRORS:</span>
+                            <span class="s2">from </span><span class="s1">unittest </span><span class="s2">import </span><span class="s1">SkipTest</span>
+
+                            <span class="s2">raise </span><span class="s1">SkipTest(</span><span class="s3">&quot;FIXME: fails with: PermissionError</span><span class="s2">\n  </span><span class="s3">{}&quot;</span><span class="s1">.format(ex)) </span><span class="s2">from </span><span class="s1">ex</span>
+                        <span class="s2">raise</span>
+                <span class="s0"># END delete tree if possible</span>
+            <span class="s0"># END handle force</span>
+
+            <span class="s2">if not </span><span class="s1">dry_run </span><span class="s2">and </span><span class="s1">osp.isdir(git_dir):</span>
+                <span class="s1">self._clear_cache()</span>
+                <span class="s2">try</span><span class="s1">:</span>
+                    <span class="s1">rmtree(git_dir)</span>
+                <span class="s2">except </span><span class="s1">Exception </span><span class="s2">as </span><span class="s1">ex:</span>
+                    <span class="s2">if </span><span class="s1">HIDE_WINDOWS_KNOWN_ERRORS:</span>
+                        <span class="s2">from </span><span class="s1">unittest </span><span class="s2">import </span><span class="s1">SkipTest</span>
+
+                        <span class="s2">raise </span><span class="s1">SkipTest(</span><span class="s3">f&quot;FIXME: fails with: PermissionError</span><span class="s2">\n  {</span><span class="s1">ex</span><span class="s2">}</span><span class="s3">&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">ex</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s2">raise</span>
+            <span class="s0"># end handle separate bare repository</span>
+        <span class="s0"># END handle module deletion</span>
+
+        <span class="s0"># void our data not to delay invalid access</span>
+        <span class="s2">if not </span><span class="s1">dry_run:</span>
+            <span class="s1">self._clear_cache()</span>
+
+        <span class="s0"># DELETE CONFIGURATION</span>
+        <span class="s0">######################</span>
+        <span class="s2">if </span><span class="s1">configuration </span><span class="s2">and not </span><span class="s1">dry_run:</span>
+            <span class="s0"># first the index-entry</span>
+            <span class="s1">parent_index = self.repo.index</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s2">del </span><span class="s1">parent_index.entries[parent_index.entry_key(self.path</span><span class="s2">, </span><span class="s5">0</span><span class="s1">)]</span>
+            <span class="s2">except </span><span class="s1">KeyError:</span>
+                <span class="s2">pass</span>
+            <span class="s0"># END delete entry</span>
+            <span class="s1">parent_index.write()</span>
+
+            <span class="s0"># now git config - need the config intact, otherwise we can't query</span>
+            <span class="s0"># information anymore</span>
+
+            <span class="s2">with </span><span class="s1">self.repo.config_writer() </span><span class="s2">as </span><span class="s1">gcp_writer:</span>
+                <span class="s1">gcp_writer.remove_section(sm_section(self.name))</span>
+
+            <span class="s2">with </span><span class="s1">self.config_writer() </span><span class="s2">as </span><span class="s1">sc_writer:</span>
+                <span class="s1">sc_writer.remove_section()</span>
+        <span class="s0"># END delete configuration</span>
+
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">def </span><span class="s1">set_parent_commit(self</span><span class="s2">, </span><span class="s1">commit: Union[Commit_ish</span><span class="s2">, None</span><span class="s1">]</span><span class="s2">, </span><span class="s1">check: bool = </span><span class="s2">True</span><span class="s1">) -&gt; </span><span class="s3">&quot;Submodule&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Set this instance to use the given commit whose tree is supposed to 
+        contain the .gitmodules blob. 
+ 
+        :param commit: 
+            Commit'ish reference pointing at the root_tree, or None to always point to the 
+            most recent commit 
+        :param check: 
+            if True, relatively expensive checks will be performed to verify 
+            validity of the submodule. 
+        :raise ValueError: if the commit's tree didn't contain the .gitmodules blob. 
+        :raise ValueError: 
+            if the parent commit didn't store this submodule under the current path 
+        :return: self&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">commit </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">self._parent_commit = </span><span class="s2">None</span>
+            <span class="s2">return </span><span class="s1">self</span>
+        <span class="s0"># end handle None</span>
+        <span class="s1">pcommit = self.repo.commit(commit)</span>
+        <span class="s1">pctree = pcommit.tree</span>
+        <span class="s2">if </span><span class="s1">self.k_modules_file </span><span class="s2">not in </span><span class="s1">pctree:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Tree of commit %s did not contain the %s file&quot; </span><span class="s1">% (commit</span><span class="s2">, </span><span class="s1">self.k_modules_file))</span>
+        <span class="s0"># END handle exceptions</span>
+
+        <span class="s1">prev_pc = self._parent_commit</span>
+        <span class="s1">self._parent_commit = pcommit</span>
+
+        <span class="s2">if </span><span class="s1">check:</span>
+            <span class="s1">parser = self._config_parser(self.repo</span><span class="s2">, </span><span class="s1">self._parent_commit</span><span class="s2">, </span><span class="s1">read_only=</span><span class="s2">True</span><span class="s1">)</span>
+            <span class="s2">if not </span><span class="s1">parser.has_section(sm_section(self.name)):</span>
+                <span class="s1">self._parent_commit = prev_pc</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Submodule at path %r did not exist in parent commit %s&quot; </span><span class="s1">% (self.path</span><span class="s2">, </span><span class="s1">commit))</span>
+            <span class="s0"># END handle submodule did not exist</span>
+        <span class="s0"># END handle checking mode</span>
+
+        <span class="s0"># update our sha, it could have changed</span>
+        <span class="s0"># If check is False, we might see a parent-commit that doesn't even contain the submodule anymore.</span>
+        <span class="s0"># in that case, mark our sha as being NULL</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">self.binsha = pctree[str(self.path)].binsha</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s1">self.binsha = self.NULL_BIN_SHA</span>
+        <span class="s0"># end</span>
+
+        <span class="s1">self._clear_cache()</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s1">@unbare_repo</span>
+    <span class="s2">def </span><span class="s1">config_writer(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">index: Union[</span><span class="s3">&quot;IndexFile&quot;</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None, </span><span class="s1">write: bool = </span><span class="s2">True</span>
+    <span class="s1">) -&gt; SectionConstraint[</span><span class="s3">&quot;SubmoduleConfigParser&quot;</span><span class="s1">]:</span>
+        <span class="s4">&quot;&quot;&quot;:return: a config writer instance allowing you to read and write the data 
+            belonging to this submodule into the .gitmodules file. 
+ 
+        :param index: if not None, an IndexFile instance which should be written. 
+            defaults to the index of the Submodule's parent repository. 
+        :param write: if True, the index will be written each time a configuration 
+            value changes. 
+        :note: the parameters allow for a more efficient writing of the index, 
+            as you can pass in a modified index on your own, prevent automatic writing, 
+            and write yourself once the whole operation is complete 
+        :raise ValueError: if trying to get a writer on a parent_commit which does not 
+            match the current head commit 
+        :raise IOError: If the .gitmodules file/blob could not be read&quot;&quot;&quot;</span>
+        <span class="s1">writer = self._config_parser_constrained(read_only=</span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">index </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">writer.config._index = index</span>
+        <span class="s1">writer.config._auto_write = write</span>
+        <span class="s2">return </span><span class="s1">writer</span>
+
+    <span class="s1">@unbare_repo</span>
+    <span class="s2">def </span><span class="s1">rename(self</span><span class="s2">, </span><span class="s1">new_name: str) -&gt; </span><span class="s3">&quot;Submodule&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Rename this submodule 
+        :note: This method takes care of renaming the submodule in various places, such as 
+ 
+            * $parent_git_dir / config 
+            * $working_tree_dir / .gitmodules 
+            * (git &gt;= v1.8.0: move submodule repository to new name) 
+ 
+        As .gitmodules will be changed, you would need to make a commit afterwards. The changed .gitmodules file 
+        will already be added to the index 
+ 
+        :return: this submodule instance 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">self.name == new_name:</span>
+            <span class="s2">return </span><span class="s1">self</span>
+
+        <span class="s0"># .git/config</span>
+        <span class="s2">with </span><span class="s1">self.repo.config_writer() </span><span class="s2">as </span><span class="s1">pw:</span>
+            <span class="s0"># As we ourselves didn't write anything about submodules into the parent .git/config,</span>
+            <span class="s0"># we will not require it to exist, and just ignore missing entries.</span>
+            <span class="s2">if </span><span class="s1">pw.has_section(sm_section(self.name)):</span>
+                <span class="s1">pw.rename_section(sm_section(self.name)</span><span class="s2">, </span><span class="s1">sm_section(new_name))</span>
+
+        <span class="s0"># .gitmodules</span>
+        <span class="s2">with </span><span class="s1">self.config_writer(write=</span><span class="s2">True</span><span class="s1">).config </span><span class="s2">as </span><span class="s1">cw:</span>
+            <span class="s1">cw.rename_section(sm_section(self.name)</span><span class="s2">, </span><span class="s1">sm_section(new_name))</span>
+
+        <span class="s1">self._name = new_name</span>
+
+        <span class="s0"># .git/modules</span>
+        <span class="s1">mod = self.module()</span>
+        <span class="s2">if </span><span class="s1">mod.has_separate_working_tree():</span>
+            <span class="s1">destination_module_abspath = self._module_abspath(self.repo</span><span class="s2">, </span><span class="s1">self.path</span><span class="s2">, </span><span class="s1">new_name)</span>
+            <span class="s1">source_dir = mod.git_dir</span>
+            <span class="s0"># Let's be sure the submodule name is not so obviously tied to a directory</span>
+            <span class="s2">if </span><span class="s1">str(destination_module_abspath).startswith(str(mod.git_dir)):</span>
+                <span class="s1">tmp_dir = self._module_abspath(self.repo</span><span class="s2">, </span><span class="s1">self.path</span><span class="s2">, </span><span class="s1">str(uuid.uuid4()))</span>
+                <span class="s1">os.renames(source_dir</span><span class="s2">, </span><span class="s1">tmp_dir)</span>
+                <span class="s1">source_dir = tmp_dir</span>
+            <span class="s0"># end handle self-containment</span>
+            <span class="s1">os.renames(source_dir</span><span class="s2">, </span><span class="s1">destination_module_abspath)</span>
+            <span class="s2">if </span><span class="s1">mod.working_tree_dir:</span>
+                <span class="s1">self._write_git_file_and_module_config(mod.working_tree_dir</span><span class="s2">, </span><span class="s1">destination_module_abspath)</span>
+        <span class="s0"># end move separate git repository</span>
+
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s0"># } END edit interface</span>
+
+    <span class="s0"># { Query Interface</span>
+
+    <span class="s1">@unbare_repo</span>
+    <span class="s2">def </span><span class="s1">module(self) -&gt; </span><span class="s3">&quot;Repo&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;:return: Repo instance initialized from the repository at our submodule path 
+        :raise InvalidGitRepositoryError: if a repository was not available. This could 
+            also mean that it was not yet initialized&quot;&quot;&quot;</span>
+        <span class="s0"># late import to workaround circular dependencies</span>
+        <span class="s1">module_checkout_abspath = self.abspath</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">repo = git.Repo(module_checkout_abspath)</span>
+            <span class="s2">if </span><span class="s1">repo != self.repo:</span>
+                <span class="s2">return </span><span class="s1">repo</span>
+            <span class="s0"># END handle repo uninitialized</span>
+        <span class="s2">except </span><span class="s1">(InvalidGitRepositoryError</span><span class="s2">, </span><span class="s1">NoSuchPathError) </span><span class="s2">as </span><span class="s1">e:</span>
+            <span class="s2">raise </span><span class="s1">InvalidGitRepositoryError(</span><span class="s3">&quot;No valid repository at %s&quot; </span><span class="s1">% module_checkout_abspath) </span><span class="s2">from </span><span class="s1">e</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">InvalidGitRepositoryError(</span><span class="s3">&quot;Repository at %r was not yet checked out&quot; </span><span class="s1">% module_checkout_abspath)</span>
+        <span class="s0"># END handle exceptions</span>
+
+    <span class="s2">def </span><span class="s1">module_exists(self) -&gt; bool:</span>
+        <span class="s4">&quot;&quot;&quot;:return: True if our module exists and is a valid git repository. See module() method&quot;&quot;&quot;</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">self.module()</span>
+            <span class="s2">return True</span>
+        <span class="s2">except </span><span class="s1">Exception:</span>
+            <span class="s2">return False</span>
+        <span class="s0"># END handle exception</span>
+
+    <span class="s2">def </span><span class="s1">exists(self) -&gt; bool:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: True if the submodule exists, False otherwise. Please note that 
+            a submodule may exist ( in the .gitmodules file) even though its module 
+            doesn't exist on disk&quot;&quot;&quot;</span>
+        <span class="s0"># keep attributes for later, and restore them if we have no valid data</span>
+        <span class="s0"># this way we do not actually alter the state of the object</span>
+        <span class="s1">loc = locals()</span>
+        <span class="s2">for </span><span class="s1">attr </span><span class="s2">in </span><span class="s1">self._cache_attrs:</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">hasattr(self</span><span class="s2">, </span><span class="s1">attr):</span>
+                    <span class="s1">loc[attr] = getattr(self</span><span class="s2">, </span><span class="s1">attr)</span>
+                <span class="s0"># END if we have the attribute cache</span>
+            <span class="s2">except </span><span class="s1">(cp.NoSectionError</span><span class="s2">, </span><span class="s1">ValueError):</span>
+                <span class="s0"># on PY3, this can happen apparently ... don't know why this doesn't happen on PY2</span>
+                <span class="s2">pass</span>
+        <span class="s0"># END for each attr</span>
+        <span class="s1">self._clear_cache()</span>
+
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">self.path</span>
+                <span class="s2">return True</span>
+            <span class="s2">except </span><span class="s1">Exception:</span>
+                <span class="s2">return False</span>
+            <span class="s0"># END handle exceptions</span>
+        <span class="s2">finally</span><span class="s1">:</span>
+            <span class="s2">for </span><span class="s1">attr </span><span class="s2">in </span><span class="s1">self._cache_attrs:</span>
+                <span class="s2">if </span><span class="s1">attr </span><span class="s2">in </span><span class="s1">loc:</span>
+                    <span class="s1">setattr(self</span><span class="s2">, </span><span class="s1">attr</span><span class="s2">, </span><span class="s1">loc[attr])</span>
+                <span class="s0"># END if we have a cache</span>
+            <span class="s0"># END reapply each attribute</span>
+        <span class="s0"># END handle object state consistency</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">branch(self) -&gt; </span><span class="s3">&quot;Head&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;:return: The branch instance that we are to checkout 
+        :raise InvalidGitRepositoryError: if our module is not yet checked out&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">mkhead(self.module()</span><span class="s2">, </span><span class="s1">self._branch_path)</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">branch_path(self) -&gt; PathLike:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: full(relative) path as string to the branch we would checkout 
+            from the remote and track&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self._branch_path</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">branch_name(self) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot;:return: the name of the branch, which is the shortest possible branch name&quot;&quot;&quot;</span>
+        <span class="s0"># use an instance method, for this we create a temporary Head instance</span>
+        <span class="s0"># which uses a repository that is available at least ( it makes no difference )</span>
+        <span class="s2">return </span><span class="s1">git.Head(self.repo</span><span class="s2">, </span><span class="s1">self._branch_path).name</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">url(self) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot;:return: The url to the repository which our module - repository refers to&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self._url</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">parent_commit(self) -&gt; </span><span class="s3">&quot;Commit_ish&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;:return: Commit instance with the tree containing the .gitmodules file 
+        :note: will always point to the current head's commit if it was not set explicitly&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">self._parent_commit </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">self.repo.commit()</span>
+        <span class="s2">return </span><span class="s1">self._parent_commit</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">name(self) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot;:return: The name of this submodule. It is used to identify it within the 
+            .gitmodules file. 
+        :note: by default, the name is the path at which to find the submodule, but 
+            in git - python it should be a unique identifier similar to the identifiers 
+            used for remotes, which allows to change the path of the submodule 
+            easily 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self._name</span>
+
+    <span class="s2">def </span><span class="s1">config_reader(self) -&gt; SectionConstraint[SubmoduleConfigParser]:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: ConfigReader instance which allows you to qurey the configuration values 
+            of this submodule, as provided by the .gitmodules file 
+        :note: The config reader will actually read the data directly from the repository 
+            and thus does not need nor care about your working tree. 
+        :note: Should be cached by the caller and only kept as long as needed 
+        :raise IOError: If the .gitmodules file/blob could not be read&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self._config_parser_constrained(read_only=</span><span class="s2">True</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">children(self) -&gt; IterableList[</span><span class="s3">&quot;Submodule&quot;</span><span class="s1">]:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: IterableList(Submodule, ...) an iterable list of submodules instances 
+            which are children of this submodule or 0 if the submodule is not checked out&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self._get_intermediate_items(self)</span>
+
+    <span class="s0"># } END query interface</span>
+
+    <span class="s0"># { Iterable Interface</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s2">def </span><span class="s1">iter_items(</span>
+        <span class="s1">cls</span><span class="s2">,</span>
+        <span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s2">,</span>
+        <span class="s1">parent_commit: Union[Commit_ish</span><span class="s2">, </span><span class="s1">str] = </span><span class="s3">&quot;HEAD&quot;</span><span class="s2">,</span>
+        <span class="s1">*Args: Any</span><span class="s2">,</span>
+        <span class="s1">**kwargs: Any</span><span class="s2">,</span>
+    <span class="s1">) -&gt; Iterator[</span><span class="s3">&quot;Submodule&quot;</span><span class="s1">]:</span>
+        <span class="s4">&quot;&quot;&quot;:return: iterator yielding Submodule instances available in the given repository&quot;&quot;&quot;</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">pc = repo.commit(parent_commit)  </span><span class="s0"># parent commit instance</span>
+            <span class="s1">parser = cls._config_parser(repo</span><span class="s2">, </span><span class="s1">pc</span><span class="s2">, </span><span class="s1">read_only=</span><span class="s2">True</span><span class="s1">)</span>
+        <span class="s2">except </span><span class="s1">(IOError</span><span class="s2">, </span><span class="s1">BadName):</span>
+            <span class="s2">return </span><span class="s1">iter([])</span>
+        <span class="s0"># END handle empty iterator</span>
+
+        <span class="s2">for </span><span class="s1">sms </span><span class="s2">in </span><span class="s1">parser.sections():</span>
+            <span class="s1">n = sm_name(sms)</span>
+            <span class="s1">p = parser.get(sms</span><span class="s2">, </span><span class="s3">&quot;path&quot;</span><span class="s1">)</span>
+            <span class="s1">u = parser.get(sms</span><span class="s2">, </span><span class="s3">&quot;url&quot;</span><span class="s1">)</span>
+            <span class="s1">b = cls.k_head_default</span>
+            <span class="s2">if </span><span class="s1">parser.has_option(sms</span><span class="s2">, </span><span class="s1">cls.k_head_option):</span>
+                <span class="s1">b = str(parser.get(sms</span><span class="s2">, </span><span class="s1">cls.k_head_option))</span>
+            <span class="s0"># END handle optional information</span>
+
+            <span class="s0"># get the binsha</span>
+            <span class="s1">index = repo.index</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">rt = pc.tree  </span><span class="s0"># root tree</span>
+                <span class="s1">sm = rt[p]</span>
+            <span class="s2">except </span><span class="s1">KeyError:</span>
+                <span class="s0"># try the index, maybe it was just added</span>
+                <span class="s2">try</span><span class="s1">:</span>
+                    <span class="s1">entry = index.entries[index.entry_key(p</span><span class="s2">, </span><span class="s5">0</span><span class="s1">)]</span>
+                    <span class="s1">sm = Submodule(repo</span><span class="s2">, </span><span class="s1">entry.binsha</span><span class="s2">, </span><span class="s1">entry.mode</span><span class="s2">, </span><span class="s1">entry.path)</span>
+                <span class="s2">except </span><span class="s1">KeyError:</span>
+                    <span class="s0"># The submodule doesn't exist, probably it wasn't</span>
+                    <span class="s0"># removed from the .gitmodules file.</span>
+                    <span class="s2">continue</span>
+                <span class="s0"># END handle keyerror</span>
+            <span class="s0"># END handle critical error</span>
+
+            <span class="s0"># fill in remaining info - saves time as it doesn't have to be parsed again</span>
+            <span class="s1">sm._name = n</span>
+            <span class="s2">if </span><span class="s1">pc != repo.commit():</span>
+                <span class="s1">sm._parent_commit = pc</span>
+            <span class="s0"># end set only if not most recent !</span>
+            <span class="s1">sm._branch_path = git.Head.to_full_path(b)</span>
+            <span class="s1">sm._url = u</span>
+
+            <span class="s2">yield </span><span class="s1">sm</span>
+        <span class="s0"># END for each section</span>
+
+    <span class="s0"># } END iterable interface</span>
+</pre>
+</body>
+</html>

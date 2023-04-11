@@ -1,0 +1,104 @@
+<html>
+<head>
+<title>MpegImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6897bb;}
+.s4 { color: #6a8759;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+MpegImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># MPEG file handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0">#       95-09-09 fl     Created</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 1997.</span>
+<span class="s0"># Copyright (c) Fredrik Lundh 1995.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">i8</span>
+
+<span class="s0">#</span>
+<span class="s0"># Bitstream parser</span>
+
+
+<span class="s2">class </span><span class="s1">BitStream:</span>
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">fp):</span>
+        <span class="s1">self.fp = fp</span>
+        <span class="s1">self.bits = </span><span class="s3">0</span>
+        <span class="s1">self.bitbuffer = </span><span class="s3">0</span>
+
+    <span class="s2">def </span><span class="s1">next(self):</span>
+        <span class="s2">return </span><span class="s1">i8(self.fp.read(</span><span class="s3">1</span><span class="s1">))</span>
+
+    <span class="s2">def </span><span class="s1">peek(self</span><span class="s2">, </span><span class="s1">bits):</span>
+        <span class="s2">while </span><span class="s1">self.bits &lt; bits:</span>
+            <span class="s1">c = self.next()</span>
+            <span class="s2">if </span><span class="s1">c &lt; </span><span class="s3">0</span><span class="s1">:</span>
+                <span class="s1">self.bits = </span><span class="s3">0</span>
+                <span class="s2">continue</span>
+            <span class="s1">self.bitbuffer = (self.bitbuffer &lt;&lt; </span><span class="s3">8</span><span class="s1">) + c</span>
+            <span class="s1">self.bits += </span><span class="s3">8</span>
+        <span class="s2">return </span><span class="s1">self.bitbuffer &gt;&gt; (self.bits - bits) &amp; (</span><span class="s3">1 </span><span class="s1">&lt;&lt; bits) - </span><span class="s3">1</span>
+
+    <span class="s2">def </span><span class="s1">skip(self</span><span class="s2">, </span><span class="s1">bits):</span>
+        <span class="s2">while </span><span class="s1">self.bits &lt; bits:</span>
+            <span class="s1">self.bitbuffer = (self.bitbuffer &lt;&lt; </span><span class="s3">8</span><span class="s1">) + i8(self.fp.read(</span><span class="s3">1</span><span class="s1">))</span>
+            <span class="s1">self.bits += </span><span class="s3">8</span>
+        <span class="s1">self.bits = self.bits - bits</span>
+
+    <span class="s2">def </span><span class="s1">read(self</span><span class="s2">, </span><span class="s1">bits):</span>
+        <span class="s1">v = self.peek(bits)</span>
+        <span class="s1">self.bits = self.bits - bits</span>
+        <span class="s2">return </span><span class="s1">v</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for MPEG streams.  This plugin can identify a stream,</span>
+<span class="s0"># but it cannot read it.</span>
+
+
+<span class="s2">class </span><span class="s1">MpegImageFile(ImageFile.ImageFile):</span>
+
+    <span class="s1">format = </span><span class="s4">&quot;MPEG&quot;</span>
+    <span class="s1">format_description = </span><span class="s4">&quot;MPEG&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+
+        <span class="s1">s = BitStream(self.fp)</span>
+
+        <span class="s2">if </span><span class="s1">s.read(</span><span class="s3">32</span><span class="s1">) != </span><span class="s3">0x1B3</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;not an MPEG file&quot;</span><span class="s1">)</span>
+
+        <span class="s1">self.mode = </span><span class="s4">&quot;RGB&quot;</span>
+        <span class="s1">self._size = s.read(</span><span class="s3">12</span><span class="s1">)</span><span class="s2">, </span><span class="s1">s.read(</span><span class="s3">12</span><span class="s1">)</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Registry stuff</span>
+
+<span class="s1">Image.register_open(MpegImageFile.format</span><span class="s2">, </span><span class="s1">MpegImageFile)</span>
+
+<span class="s1">Image.register_extensions(MpegImageFile.format</span><span class="s2">, </span><span class="s1">[</span><span class="s4">&quot;.mpg&quot;</span><span class="s2">, </span><span class="s4">&quot;.mpeg&quot;</span><span class="s1">])</span>
+
+<span class="s1">Image.register_mime(MpegImageFile.format</span><span class="s2">, </span><span class="s4">&quot;video/mpeg&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,254 @@
+<html>
+<head>
+<title>highlighter.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #629755; font-style: italic;}
+.s3 { color: #6a8759;}
+.s4 { color: #808080;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+highlighter.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">re</span>
+<span class="s0">from </span><span class="s1">abc </span><span class="s0">import </span><span class="s1">ABC</span><span class="s0">, </span><span class="s1">abstractmethod</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">List</span><span class="s0">, </span><span class="s1">Union</span>
+
+<span class="s0">from </span><span class="s1">.text </span><span class="s0">import </span><span class="s1">Span</span><span class="s0">, </span><span class="s1">Text</span>
+
+
+<span class="s0">def </span><span class="s1">_combine_regex(*regexes: str) -&gt; str:</span>
+    <span class="s2">&quot;&quot;&quot;Combine a number of regexes in to a single regex. 
+ 
+    Returns: 
+        str: New regex with all regexes ORed together. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s3">&quot;|&quot;</span><span class="s1">.join(regexes)</span>
+
+
+<span class="s0">class </span><span class="s1">Highlighter(ABC):</span>
+    <span class="s2">&quot;&quot;&quot;Abstract base class for highlighters.&quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__call__(self</span><span class="s0">, </span><span class="s1">text: Union[str</span><span class="s0">, </span><span class="s1">Text]) -&gt; Text:</span>
+        <span class="s2">&quot;&quot;&quot;Highlight a str or Text instance. 
+ 
+        Args: 
+            text (Union[str, ~Text]): Text to highlight. 
+ 
+        Raises: 
+            TypeError: If not called with text or str. 
+ 
+        Returns: 
+            Text: A test instance with highlighting applied. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">isinstance(text</span><span class="s0">, </span><span class="s1">str):</span>
+            <span class="s1">highlight_text = Text(text)</span>
+        <span class="s0">elif </span><span class="s1">isinstance(text</span><span class="s0">, </span><span class="s1">Text):</span>
+            <span class="s1">highlight_text = text.copy()</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s0">raise </span><span class="s1">TypeError(</span><span class="s3">f&quot;str or Text instance required, not </span><span class="s0">{</span><span class="s1">text</span><span class="s0">!r}</span><span class="s3">&quot;</span><span class="s1">)</span>
+        <span class="s1">self.highlight(highlight_text)</span>
+        <span class="s0">return </span><span class="s1">highlight_text</span>
+
+    <span class="s1">@abstractmethod</span>
+    <span class="s0">def </span><span class="s1">highlight(self</span><span class="s0">, </span><span class="s1">text: Text) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Apply highlighting in place to text. 
+ 
+        Args: 
+            text (~Text): A text object highlight. 
+        &quot;&quot;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">NullHighlighter(Highlighter):</span>
+    <span class="s2">&quot;&quot;&quot;A highlighter object that doesn't highlight. 
+ 
+    May be used to disable highlighting entirely. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">highlight(self</span><span class="s0">, </span><span class="s1">text: Text) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Nothing to do&quot;&quot;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">RegexHighlighter(Highlighter):</span>
+    <span class="s2">&quot;&quot;&quot;Applies highlighting from a list of regular expressions.&quot;&quot;&quot;</span>
+
+    <span class="s1">highlights: List[str] = []</span>
+    <span class="s1">base_style: str = </span><span class="s3">&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">highlight(self</span><span class="s0">, </span><span class="s1">text: Text) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Highlight :class:`rich.text.Text` using regular expressions. 
+ 
+        Args: 
+            text (~Text): Text to highlighted. 
+ 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">highlight_regex = text.highlight_regex</span>
+        <span class="s0">for </span><span class="s1">re_highlight </span><span class="s0">in </span><span class="s1">self.highlights:</span>
+            <span class="s1">highlight_regex(re_highlight</span><span class="s0">, </span><span class="s1">style_prefix=self.base_style)</span>
+
+
+<span class="s0">class </span><span class="s1">ReprHighlighter(RegexHighlighter):</span>
+    <span class="s2">&quot;&quot;&quot;Highlights the text typically produced from ``__repr__`` methods.&quot;&quot;&quot;</span>
+
+    <span class="s1">base_style = </span><span class="s3">&quot;repr.&quot;</span>
+    <span class="s1">highlights = [</span>
+        <span class="s3">r&quot;(?P&lt;tag_start&gt;&lt;)(?P&lt;tag_name&gt;[-\w.:|]*)(?P&lt;tag_contents&gt;[\w\W]*?)(?P&lt;tag_end&gt;&gt;)&quot;</span><span class="s0">,</span>
+        <span class="s3">r'(?P&lt;attrib_name&gt;[\w_]{1,50})=(?P&lt;attrib_value&gt;&quot;?[\w_]+&quot;?)?'</span><span class="s0">,</span>
+        <span class="s3">r&quot;(?P&lt;brace&gt;[][{}()])&quot;</span><span class="s0">,</span>
+        <span class="s1">_combine_regex(</span>
+            <span class="s3">r&quot;(?P&lt;ipv4&gt;[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})&quot;</span><span class="s0">,</span>
+            <span class="s3">r&quot;(?P&lt;ipv6&gt;([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4})&quot;</span><span class="s0">,</span>
+            <span class="s3">r&quot;(?P&lt;eui64&gt;(?:[0-9A-Fa-f]{1,2}-){7}[0-9A-Fa-f]{1,2}|(?:[0-9A-Fa-f]{1,2}:){7}[0-9A-Fa-f]{1,2}|(?:[0-9A-Fa-f]{4}\.){3}[0-9A-Fa-f]{4})&quot;</span><span class="s0">,</span>
+            <span class="s3">r&quot;(?P&lt;eui48&gt;(?:[0-9A-Fa-f]{1,2}-){5}[0-9A-Fa-f]{1,2}|(?:[0-9A-Fa-f]{1,2}:){5}[0-9A-Fa-f]{1,2}|(?:[0-9A-Fa-f]{4}\.){2}[0-9A-Fa-f]{4})&quot;</span><span class="s0">,</span>
+            <span class="s3">r&quot;(?P&lt;uuid&gt;[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})&quot;</span><span class="s0">,</span>
+            <span class="s3">r&quot;(?P&lt;call&gt;[\w.]*?)\(&quot;</span><span class="s0">,</span>
+            <span class="s3">r&quot;\b(?P&lt;bool_true&gt;True)\b|\b(?P&lt;bool_false&gt;False)\b|\b(?P&lt;none&gt;None)\b&quot;</span><span class="s0">,</span>
+            <span class="s3">r&quot;(?P&lt;ellipsis&gt;\.\.\.)&quot;</span><span class="s0">,</span>
+            <span class="s3">r&quot;(?P&lt;number_complex&gt;(?&lt;!\w)(?:\-?[0-9]+\.?[0-9]*(?:e[-+]?\d+?)?)(?:[-+](?:[0-9]+\.?[0-9]*(?:e[-+]?\d+)?))?j)&quot;</span><span class="s0">,</span>
+            <span class="s3">r&quot;(?P&lt;number&gt;(?&lt;!\w)\-?[0-9]+\.?[0-9]*(e[-+]?\d+?)?\b|0x[0-9a-fA-F]*)&quot;</span><span class="s0">,</span>
+            <span class="s3">r&quot;(?P&lt;path&gt;\B(/[-\w._+]+)*\/)(?P&lt;filename&gt;[-\w._+]*)?&quot;</span><span class="s0">,</span>
+            <span class="s3">r&quot;(?&lt;![\\\w])(?P&lt;str&gt;b?'''.*?(?&lt;!\\)'''|b?'.*?(?&lt;!\\)'|b?\&quot;\&quot;\&quot;.*?(?&lt;!\\)\&quot;\&quot;\&quot;|b?\&quot;.*?(?&lt;!\\)\&quot;)&quot;</span><span class="s0">,</span>
+            <span class="s3">r&quot;(?P&lt;url&gt;(file|https|http|ws|wss)://[-0-9a-zA-Z$_+!`(),.?/;:&amp;=%#]*)&quot;</span><span class="s0">,</span>
+        <span class="s1">)</span><span class="s0">,</span>
+    <span class="s1">]</span>
+
+
+<span class="s0">class </span><span class="s1">JSONHighlighter(RegexHighlighter):</span>
+    <span class="s2">&quot;&quot;&quot;Highlights JSON&quot;&quot;&quot;</span>
+
+    <span class="s4"># Captures the start and end of JSON strings, handling escaped quotes</span>
+    <span class="s1">JSON_STR = </span><span class="s3">r&quot;(?&lt;![\\\w])(?P&lt;str&gt;b?\&quot;.*?(?&lt;!\\)\&quot;)&quot;</span>
+    <span class="s1">JSON_WHITESPACE = {</span><span class="s3">&quot; &quot;</span><span class="s0">, </span><span class="s3">&quot;</span><span class="s0">\n</span><span class="s3">&quot;</span><span class="s0">, </span><span class="s3">&quot;</span><span class="s0">\r</span><span class="s3">&quot;</span><span class="s0">, </span><span class="s3">&quot;</span><span class="s0">\t</span><span class="s3">&quot;</span><span class="s1">}</span>
+
+    <span class="s1">base_style = </span><span class="s3">&quot;json.&quot;</span>
+    <span class="s1">highlights = [</span>
+        <span class="s1">_combine_regex(</span>
+            <span class="s3">r&quot;(?P&lt;brace&gt;[\{\[\(\)\]\}])&quot;</span><span class="s0">,</span>
+            <span class="s3">r&quot;\b(?P&lt;bool_true&gt;true)\b|\b(?P&lt;bool_false&gt;false)\b|\b(?P&lt;null&gt;null)\b&quot;</span><span class="s0">,</span>
+            <span class="s3">r&quot;(?P&lt;number&gt;(?&lt;!\w)\-?[0-9]+\.?[0-9]*(e[\-\+]?\d+?)?\b|0x[0-9a-fA-F]*)&quot;</span><span class="s0">,</span>
+            <span class="s1">JSON_STR</span><span class="s0">,</span>
+        <span class="s1">)</span><span class="s0">,</span>
+    <span class="s1">]</span>
+
+    <span class="s0">def </span><span class="s1">highlight(self</span><span class="s0">, </span><span class="s1">text: Text) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">super().highlight(text)</span>
+
+        <span class="s4"># Additional work to handle highlighting JSON keys</span>
+        <span class="s1">plain = text.plain</span>
+        <span class="s1">append = text.spans.append</span>
+        <span class="s1">whitespace = self.JSON_WHITESPACE</span>
+        <span class="s0">for </span><span class="s1">match </span><span class="s0">in </span><span class="s1">re.finditer(self.JSON_STR</span><span class="s0">, </span><span class="s1">plain):</span>
+            <span class="s1">start</span><span class="s0">, </span><span class="s1">end = match.span()</span>
+            <span class="s1">cursor = end</span>
+            <span class="s0">while </span><span class="s1">cursor &lt; len(plain):</span>
+                <span class="s1">char = plain[cursor]</span>
+                <span class="s1">cursor += </span><span class="s5">1</span>
+                <span class="s0">if </span><span class="s1">char == </span><span class="s3">&quot;:&quot;</span><span class="s1">:</span>
+                    <span class="s1">append(Span(start</span><span class="s0">, </span><span class="s1">end</span><span class="s0">, </span><span class="s3">&quot;json.key&quot;</span><span class="s1">))</span>
+                <span class="s0">elif </span><span class="s1">char </span><span class="s0">in </span><span class="s1">whitespace:</span>
+                    <span class="s0">continue</span>
+                <span class="s0">break</span>
+
+
+<span class="s0">class </span><span class="s1">ISO8601Highlighter(RegexHighlighter):</span>
+    <span class="s2">&quot;&quot;&quot;Highlights the ISO8601 date time strings. 
+    Regex reference: https://www.oreilly.com/library/view/regular-expressions-cookbook/9781449327453/ch04s07.html 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">base_style = </span><span class="s3">&quot;iso8601.&quot;</span>
+    <span class="s1">highlights = [</span>
+        <span class="s4">#</span>
+        <span class="s4"># Dates</span>
+        <span class="s4">#</span>
+        <span class="s4"># Calendar month (e.g. 2008-08). The hyphen is required</span>
+        <span class="s3">r&quot;^(?P&lt;year&gt;[0-9]{4})-(?P&lt;month&gt;1[0-2]|0[1-9])$&quot;</span><span class="s0">,</span>
+        <span class="s4"># Calendar date w/o hyphens (e.g. 20080830)</span>
+        <span class="s3">r&quot;^(?P&lt;date&gt;(?P&lt;year&gt;[0-9]{4})(?P&lt;month&gt;1[0-2]|0[1-9])(?P&lt;day&gt;3[01]|0[1-9]|[12][0-9]))$&quot;</span><span class="s0">,</span>
+        <span class="s4"># Ordinal date (e.g. 2008-243). The hyphen is optional</span>
+        <span class="s3">r&quot;^(?P&lt;date&gt;(?P&lt;year&gt;[0-9]{4})-?(?P&lt;day&gt;36[0-6]|3[0-5][0-9]|[12][0-9]{2}|0[1-9][0-9]|00[1-9]))$&quot;</span><span class="s0">,</span>
+        <span class="s4">#</span>
+        <span class="s4"># Weeks</span>
+        <span class="s4">#</span>
+        <span class="s4"># Week of the year (e.g., 2008-W35). The hyphen is optional</span>
+        <span class="s3">r&quot;^(?P&lt;date&gt;(?P&lt;year&gt;[0-9]{4})-?W(?P&lt;week&gt;5[0-3]|[1-4][0-9]|0[1-9]))$&quot;</span><span class="s0">,</span>
+        <span class="s4"># Week date (e.g., 2008-W35-6). The hyphens are optional</span>
+        <span class="s3">r&quot;^(?P&lt;date&gt;(?P&lt;year&gt;[0-9]{4})-?W(?P&lt;week&gt;5[0-3]|[1-4][0-9]|0[1-9])-?(?P&lt;day&gt;[1-7]))$&quot;</span><span class="s0">,</span>
+        <span class="s4">#</span>
+        <span class="s4"># Times</span>
+        <span class="s4">#</span>
+        <span class="s4"># Hours and minutes (e.g., 17:21). The colon is optional</span>
+        <span class="s3">r&quot;^(?P&lt;time&gt;(?P&lt;hour&gt;2[0-3]|[01][0-9]):?(?P&lt;minute&gt;[0-5][0-9]))$&quot;</span><span class="s0">,</span>
+        <span class="s4"># Hours, minutes, and seconds w/o colons (e.g., 172159)</span>
+        <span class="s3">r&quot;^(?P&lt;time&gt;(?P&lt;hour&gt;2[0-3]|[01][0-9])(?P&lt;minute&gt;[0-5][0-9])(?P&lt;second&gt;[0-5][0-9]))$&quot;</span><span class="s0">,</span>
+        <span class="s4"># Time zone designator (e.g., Z, +07 or +07:00). The colons and the minutes are optional</span>
+        <span class="s3">r&quot;^(?P&lt;timezone&gt;(Z|[+-](?:2[0-3]|[01][0-9])(?::?(?:[0-5][0-9]))?))$&quot;</span><span class="s0">,</span>
+        <span class="s4"># Hours, minutes, and seconds with time zone designator (e.g., 17:21:59+07:00).</span>
+        <span class="s4"># All the colons are optional. The minutes in the time zone designator are also optional</span>
+        <span class="s3">r&quot;^(?P&lt;time&gt;(?P&lt;hour&gt;2[0-3]|[01][0-9])(?P&lt;minute&gt;[0-5][0-9])(?P&lt;second&gt;[0-5][0-9]))(?P&lt;timezone&gt;Z|[+-](?:2[0-3]|[01][0-9])(?::?(?:[0-5][0-9]))?)$&quot;</span><span class="s0">,</span>
+        <span class="s4">#</span>
+        <span class="s4"># Date and Time</span>
+        <span class="s4">#</span>
+        <span class="s4"># Calendar date with hours, minutes, and seconds (e.g., 2008-08-30 17:21:59 or 20080830 172159).</span>
+        <span class="s4"># A space is required between the date and the time. The hyphens and colons are optional.</span>
+        <span class="s4"># This regex matches dates and times that specify some hyphens or colons but omit others.</span>
+        <span class="s4"># This does not follow ISO 8601</span>
+        <span class="s3">r&quot;^(?P&lt;date&gt;(?P&lt;year&gt;[0-9]{4})(?P&lt;hyphen&gt;-)?(?P&lt;month&gt;1[0-2]|0[1-9])(?(hyphen)-)(?P&lt;day&gt;3[01]|0[1-9]|[12][0-9])) (?P&lt;time&gt;(?P&lt;hour&gt;2[0-3]|[01][0-9])(?(hyphen):)(?P&lt;minute&gt;[0-5][0-9])(?(hyphen):)(?P&lt;second&gt;[0-5][0-9]))$&quot;</span><span class="s0">,</span>
+        <span class="s4">#</span>
+        <span class="s4"># XML Schema dates and times</span>
+        <span class="s4">#</span>
+        <span class="s4"># Date, with optional time zone (e.g., 2008-08-30 or 2008-08-30+07:00).</span>
+        <span class="s4"># Hyphens are required. This is the XML Schema 'date' type</span>
+        <span class="s3">r&quot;^(?P&lt;date&gt;(?P&lt;year&gt;-?(?:[1-9][0-9]*)?[0-9]{4})-(?P&lt;month&gt;1[0-2]|0[1-9])-(?P&lt;day&gt;3[01]|0[1-9]|[12][0-9]))(?P&lt;timezone&gt;Z|[+-](?:2[0-3]|[01][0-9]):[0-5][0-9])?$&quot;</span><span class="s0">,</span>
+        <span class="s4"># Time, with optional fractional seconds and time zone (e.g., 01:45:36 or 01:45:36.123+07:00).</span>
+        <span class="s4"># There is no limit on the number of digits for the fractional seconds. This is the XML Schema 'time' type</span>
+        <span class="s3">r&quot;^(?P&lt;time&gt;(?P&lt;hour&gt;2[0-3]|[01][0-9]):(?P&lt;minute&gt;[0-5][0-9]):(?P&lt;second&gt;[0-5][0-9])(?P&lt;frac&gt;\.[0-9]+)?)(?P&lt;timezone&gt;Z|[+-](?:2[0-3]|[01][0-9]):[0-5][0-9])?$&quot;</span><span class="s0">,</span>
+        <span class="s4"># Date and time, with optional fractional seconds and time zone (e.g., 2008-08-30T01:45:36 or 2008-08-30T01:45:36.123Z).</span>
+        <span class="s4"># This is the XML Schema 'dateTime' type</span>
+        <span class="s3">r&quot;^(?P&lt;date&gt;(?P&lt;year&gt;-?(?:[1-9][0-9]*)?[0-9]{4})-(?P&lt;month&gt;1[0-2]|0[1-9])-(?P&lt;day&gt;3[01]|0[1-9]|[12][0-9]))T(?P&lt;time&gt;(?P&lt;hour&gt;2[0-3]|[01][0-9]):(?P&lt;minute&gt;[0-5][0-9]):(?P&lt;second&gt;[0-5][0-9])(?P&lt;ms&gt;\.[0-9]+)?)(?P&lt;timezone&gt;Z|[+-](?:2[0-3]|[01][0-9]):[0-5][0-9])?$&quot;</span><span class="s0">,</span>
+    <span class="s1">]</span>
+
+
+<span class="s0">if </span><span class="s1">__name__ == </span><span class="s3">&quot;__main__&quot;</span><span class="s1">:  </span><span class="s4"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">.console </span><span class="s0">import </span><span class="s1">Console</span>
+
+    <span class="s1">console = Console()</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;[bold green]hello world![/bold green]&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;'[bold green]hello world![/bold green]'&quot;</span><span class="s1">)</span>
+
+    <span class="s1">console.print(</span><span class="s3">&quot; /foo&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;/foo/&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;/foo/bar&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;foo/bar/baz&quot;</span><span class="s1">)</span>
+
+    <span class="s1">console.print(</span><span class="s3">&quot;/foo/bar/baz?foo=bar+egg&amp;egg=baz&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;/foo/bar/baz/&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;/foo/bar/baz/egg&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;/foo/bar/baz/egg.py&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;/foo/bar/baz/egg.py word&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot; /foo/bar/baz/egg.py word&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;foo /foo/bar/baz/egg.py word&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;foo /foo/bar/ba._++z/egg+.py word&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s3">&quot;https://example.org?foo=bar#header&quot;</span><span class="s1">)</span>
+
+    <span class="s1">console.print(</span><span class="s5">1234567.34</span><span class="s1">)</span>
+    <span class="s1">console.print(</span><span class="s5">1 </span><span class="s1">/ </span><span class="s5">2</span><span class="s1">)</span>
+    <span class="s1">console.print(-</span><span class="s5">1 </span><span class="s1">/ </span><span class="s5">123123123123</span><span class="s1">)</span>
+
+    <span class="s1">console.print(</span>
+        <span class="s3">&quot;127.0.1.1 bar 192.168.1.4 2001:0db8:85a3:0000:0000:8a2e:0370:7334 foo&quot;</span>
+    <span class="s1">)</span>
+    <span class="s0">import </span><span class="s1">json</span>
+
+    <span class="s1">console.print_json(json.dumps(obj={</span><span class="s3">&quot;name&quot;</span><span class="s1">: </span><span class="s3">&quot;apple&quot;</span><span class="s0">, </span><span class="s3">&quot;count&quot;</span><span class="s1">: </span><span class="s5">1</span><span class="s1">})</span><span class="s0">, </span><span class="s1">indent=</span><span class="s0">None</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

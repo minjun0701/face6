@@ -1,0 +1,290 @@
+<html>
+<head>
+<title>DdsImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #629755; font-style: italic;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #808080;}
+.s4 { color: #6897bb;}
+.s5 { color: #6a8759;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+DdsImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot; 
+A Pillow loader for .dds files (S3TC-compressed aka DXTC) 
+Jerome Leclanche &lt;jerome@leclan.ch&gt; 
+ 
+Documentation: 
+  https://web.archive.org/web/20170802060935/http://oss.sgi.com/projects/ogl-sample/registry/EXT/texture_compression_s3tc.txt 
+ 
+The contents of this file are hereby released in the public domain (CC0) 
+Full text of the CC0 license: 
+  https://creativecommons.org/publicdomain/zero/1.0/ 
+&quot;&quot;&quot;</span>
+
+<span class="s2">import </span><span class="s1">struct</span>
+<span class="s2">from </span><span class="s1">io </span><span class="s2">import </span><span class="s1">BytesIO</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">o32le </span><span class="s2">as </span><span class="s1">o32</span>
+
+<span class="s3"># Magic (&quot;DDS &quot;)</span>
+<span class="s1">DDS_MAGIC = </span><span class="s4">0x20534444</span>
+
+<span class="s3"># DDS flags</span>
+<span class="s1">DDSD_CAPS = </span><span class="s4">0x1</span>
+<span class="s1">DDSD_HEIGHT = </span><span class="s4">0x2</span>
+<span class="s1">DDSD_WIDTH = </span><span class="s4">0x4</span>
+<span class="s1">DDSD_PITCH = </span><span class="s4">0x8</span>
+<span class="s1">DDSD_PIXELFORMAT = </span><span class="s4">0x1000</span>
+<span class="s1">DDSD_MIPMAPCOUNT = </span><span class="s4">0x20000</span>
+<span class="s1">DDSD_LINEARSIZE = </span><span class="s4">0x80000</span>
+<span class="s1">DDSD_DEPTH = </span><span class="s4">0x800000</span>
+
+<span class="s3"># DDS caps</span>
+<span class="s1">DDSCAPS_COMPLEX = </span><span class="s4">0x8</span>
+<span class="s1">DDSCAPS_TEXTURE = </span><span class="s4">0x1000</span>
+<span class="s1">DDSCAPS_MIPMAP = </span><span class="s4">0x400000</span>
+
+<span class="s1">DDSCAPS2_CUBEMAP = </span><span class="s4">0x200</span>
+<span class="s1">DDSCAPS2_CUBEMAP_POSITIVEX = </span><span class="s4">0x400</span>
+<span class="s1">DDSCAPS2_CUBEMAP_NEGATIVEX = </span><span class="s4">0x800</span>
+<span class="s1">DDSCAPS2_CUBEMAP_POSITIVEY = </span><span class="s4">0x1000</span>
+<span class="s1">DDSCAPS2_CUBEMAP_NEGATIVEY = </span><span class="s4">0x2000</span>
+<span class="s1">DDSCAPS2_CUBEMAP_POSITIVEZ = </span><span class="s4">0x4000</span>
+<span class="s1">DDSCAPS2_CUBEMAP_NEGATIVEZ = </span><span class="s4">0x8000</span>
+<span class="s1">DDSCAPS2_VOLUME = </span><span class="s4">0x200000</span>
+
+<span class="s3"># Pixel Format</span>
+<span class="s1">DDPF_ALPHAPIXELS = </span><span class="s4">0x1</span>
+<span class="s1">DDPF_ALPHA = </span><span class="s4">0x2</span>
+<span class="s1">DDPF_FOURCC = </span><span class="s4">0x4</span>
+<span class="s1">DDPF_PALETTEINDEXED8 = </span><span class="s4">0x20</span>
+<span class="s1">DDPF_RGB = </span><span class="s4">0x40</span>
+<span class="s1">DDPF_LUMINANCE = </span><span class="s4">0x20000</span>
+
+
+<span class="s3"># dds.h</span>
+
+<span class="s1">DDS_FOURCC = DDPF_FOURCC</span>
+<span class="s1">DDS_RGB = DDPF_RGB</span>
+<span class="s1">DDS_RGBA = DDPF_RGB | DDPF_ALPHAPIXELS</span>
+<span class="s1">DDS_LUMINANCE = DDPF_LUMINANCE</span>
+<span class="s1">DDS_LUMINANCEA = DDPF_LUMINANCE | DDPF_ALPHAPIXELS</span>
+<span class="s1">DDS_ALPHA = DDPF_ALPHA</span>
+<span class="s1">DDS_PAL8 = DDPF_PALETTEINDEXED8</span>
+
+<span class="s1">DDS_HEADER_FLAGS_TEXTURE = DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PIXELFORMAT</span>
+<span class="s1">DDS_HEADER_FLAGS_MIPMAP = DDSD_MIPMAPCOUNT</span>
+<span class="s1">DDS_HEADER_FLAGS_VOLUME = DDSD_DEPTH</span>
+<span class="s1">DDS_HEADER_FLAGS_PITCH = DDSD_PITCH</span>
+<span class="s1">DDS_HEADER_FLAGS_LINEARSIZE = DDSD_LINEARSIZE</span>
+
+<span class="s1">DDS_HEIGHT = DDSD_HEIGHT</span>
+<span class="s1">DDS_WIDTH = DDSD_WIDTH</span>
+
+<span class="s1">DDS_SURFACE_FLAGS_TEXTURE = DDSCAPS_TEXTURE</span>
+<span class="s1">DDS_SURFACE_FLAGS_MIPMAP = DDSCAPS_COMPLEX | DDSCAPS_MIPMAP</span>
+<span class="s1">DDS_SURFACE_FLAGS_CUBEMAP = DDSCAPS_COMPLEX</span>
+
+<span class="s1">DDS_CUBEMAP_POSITIVEX = DDSCAPS2_CUBEMAP | DDSCAPS2_CUBEMAP_POSITIVEX</span>
+<span class="s1">DDS_CUBEMAP_NEGATIVEX = DDSCAPS2_CUBEMAP | DDSCAPS2_CUBEMAP_NEGATIVEX</span>
+<span class="s1">DDS_CUBEMAP_POSITIVEY = DDSCAPS2_CUBEMAP | DDSCAPS2_CUBEMAP_POSITIVEY</span>
+<span class="s1">DDS_CUBEMAP_NEGATIVEY = DDSCAPS2_CUBEMAP | DDSCAPS2_CUBEMAP_NEGATIVEY</span>
+<span class="s1">DDS_CUBEMAP_POSITIVEZ = DDSCAPS2_CUBEMAP | DDSCAPS2_CUBEMAP_POSITIVEZ</span>
+<span class="s1">DDS_CUBEMAP_NEGATIVEZ = DDSCAPS2_CUBEMAP | DDSCAPS2_CUBEMAP_NEGATIVEZ</span>
+
+
+<span class="s3"># DXT1</span>
+<span class="s1">DXT1_FOURCC = </span><span class="s4">0x31545844</span>
+
+<span class="s3"># DXT3</span>
+<span class="s1">DXT3_FOURCC = </span><span class="s4">0x33545844</span>
+
+<span class="s3"># DXT5</span>
+<span class="s1">DXT5_FOURCC = </span><span class="s4">0x35545844</span>
+
+
+<span class="s3"># dxgiformat.h</span>
+
+<span class="s1">DXGI_FORMAT_R8G8B8A8_TYPELESS = </span><span class="s4">27</span>
+<span class="s1">DXGI_FORMAT_R8G8B8A8_UNORM = </span><span class="s4">28</span>
+<span class="s1">DXGI_FORMAT_R8G8B8A8_UNORM_SRGB = </span><span class="s4">29</span>
+<span class="s1">DXGI_FORMAT_BC5_TYPELESS = </span><span class="s4">82</span>
+<span class="s1">DXGI_FORMAT_BC5_UNORM = </span><span class="s4">83</span>
+<span class="s1">DXGI_FORMAT_BC5_SNORM = </span><span class="s4">84</span>
+<span class="s1">DXGI_FORMAT_BC6H_UF16 = </span><span class="s4">95</span>
+<span class="s1">DXGI_FORMAT_BC6H_SF16 = </span><span class="s4">96</span>
+<span class="s1">DXGI_FORMAT_BC7_TYPELESS = </span><span class="s4">97</span>
+<span class="s1">DXGI_FORMAT_BC7_UNORM = </span><span class="s4">98</span>
+<span class="s1">DXGI_FORMAT_BC7_UNORM_SRGB = </span><span class="s4">99</span>
+
+
+<span class="s2">class </span><span class="s1">DdsImageFile(ImageFile.ImageFile):</span>
+    <span class="s1">format = </span><span class="s5">&quot;DDS&quot;</span>
+    <span class="s1">format_description = </span><span class="s5">&quot;DirectDraw Surface&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+        <span class="s2">if not </span><span class="s1">_accept(self.fp.read(</span><span class="s4">4</span><span class="s1">)):</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s5">&quot;not a DDS file&quot;</span><span class="s1">)</span>
+        <span class="s1">(header_size</span><span class="s2">,</span><span class="s1">) = struct.unpack(</span><span class="s5">&quot;&lt;I&quot;</span><span class="s2">, </span><span class="s1">self.fp.read(</span><span class="s4">4</span><span class="s1">))</span>
+        <span class="s2">if </span><span class="s1">header_size != </span><span class="s4">124</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">OSError(</span><span class="s5">f&quot;Unsupported header size </span><span class="s2">{</span><span class="s1">repr(header_size)</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s1">)</span>
+        <span class="s1">header_bytes = self.fp.read(header_size - </span><span class="s4">4</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">len(header_bytes) != </span><span class="s4">120</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">OSError(</span><span class="s5">f&quot;Incomplete header: </span><span class="s2">{</span><span class="s1">len(header_bytes)</span><span class="s2">} </span><span class="s5">bytes&quot;</span><span class="s1">)</span>
+        <span class="s1">header = BytesIO(header_bytes)</span>
+
+        <span class="s1">flags</span><span class="s2">, </span><span class="s1">height</span><span class="s2">, </span><span class="s1">width = struct.unpack(</span><span class="s5">&quot;&lt;3I&quot;</span><span class="s2">, </span><span class="s1">header.read(</span><span class="s4">12</span><span class="s1">))</span>
+        <span class="s1">self._size = (width</span><span class="s2">, </span><span class="s1">height)</span>
+        <span class="s1">self.mode = </span><span class="s5">&quot;RGBA&quot;</span>
+
+        <span class="s1">pitch</span><span class="s2">, </span><span class="s1">depth</span><span class="s2">, </span><span class="s1">mipmaps = struct.unpack(</span><span class="s5">&quot;&lt;3I&quot;</span><span class="s2">, </span><span class="s1">header.read(</span><span class="s4">12</span><span class="s1">))</span>
+        <span class="s1">struct.unpack(</span><span class="s5">&quot;&lt;11I&quot;</span><span class="s2">, </span><span class="s1">header.read(</span><span class="s4">44</span><span class="s1">))  </span><span class="s3"># reserved</span>
+
+        <span class="s3"># pixel format</span>
+        <span class="s1">pfsize</span><span class="s2">, </span><span class="s1">pfflags = struct.unpack(</span><span class="s5">&quot;&lt;2I&quot;</span><span class="s2">, </span><span class="s1">header.read(</span><span class="s4">8</span><span class="s1">))</span>
+        <span class="s1">fourcc = header.read(</span><span class="s4">4</span><span class="s1">)</span>
+        <span class="s1">(bitcount</span><span class="s2">,</span><span class="s1">) = struct.unpack(</span><span class="s5">&quot;&lt;I&quot;</span><span class="s2">, </span><span class="s1">header.read(</span><span class="s4">4</span><span class="s1">))</span>
+        <span class="s1">masks = struct.unpack(</span><span class="s5">&quot;&lt;4I&quot;</span><span class="s2">, </span><span class="s1">header.read(</span><span class="s4">16</span><span class="s1">))</span>
+        <span class="s2">if </span><span class="s1">pfflags &amp; DDPF_RGB:</span>
+            <span class="s3"># Texture contains uncompressed RGB data</span>
+            <span class="s1">masks = {mask: [</span><span class="s5">&quot;R&quot;</span><span class="s2">, </span><span class="s5">&quot;G&quot;</span><span class="s2">, </span><span class="s5">&quot;B&quot;</span><span class="s2">, </span><span class="s5">&quot;A&quot;</span><span class="s1">][i] </span><span class="s2">for </span><span class="s1">i</span><span class="s2">, </span><span class="s1">mask </span><span class="s2">in </span><span class="s1">enumerate(masks)}</span>
+            <span class="s1">rawmode = </span><span class="s5">&quot;&quot;</span>
+            <span class="s2">if </span><span class="s1">bitcount == </span><span class="s4">32</span><span class="s1">:</span>
+                <span class="s1">rawmode += masks[</span><span class="s4">0xFF000000</span><span class="s1">]</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self.mode = </span><span class="s5">&quot;RGB&quot;</span>
+            <span class="s1">rawmode += masks[</span><span class="s4">0xFF0000</span><span class="s1">] + masks[</span><span class="s4">0xFF00</span><span class="s1">] + masks[</span><span class="s4">0xFF</span><span class="s1">]</span>
+
+            <span class="s1">self.tile = [(</span><span class="s5">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">(rawmode[::-</span><span class="s4">1</span><span class="s1">]</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s4">1</span><span class="s1">))]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">data_start = header_size + </span><span class="s4">4</span>
+            <span class="s1">n = </span><span class="s4">0</span>
+            <span class="s2">if </span><span class="s1">fourcc == </span><span class="s6">b&quot;DXT1&quot;</span><span class="s1">:</span>
+                <span class="s1">self.pixel_format = </span><span class="s5">&quot;DXT1&quot;</span>
+                <span class="s1">n = </span><span class="s4">1</span>
+            <span class="s2">elif </span><span class="s1">fourcc == </span><span class="s6">b&quot;DXT3&quot;</span><span class="s1">:</span>
+                <span class="s1">self.pixel_format = </span><span class="s5">&quot;DXT3&quot;</span>
+                <span class="s1">n = </span><span class="s4">2</span>
+            <span class="s2">elif </span><span class="s1">fourcc == </span><span class="s6">b&quot;DXT5&quot;</span><span class="s1">:</span>
+                <span class="s1">self.pixel_format = </span><span class="s5">&quot;DXT5&quot;</span>
+                <span class="s1">n = </span><span class="s4">3</span>
+            <span class="s2">elif </span><span class="s1">fourcc == </span><span class="s6">b&quot;ATI1&quot;</span><span class="s1">:</span>
+                <span class="s1">self.pixel_format = </span><span class="s5">&quot;BC4&quot;</span>
+                <span class="s1">n = </span><span class="s4">4</span>
+                <span class="s1">self.mode = </span><span class="s5">&quot;L&quot;</span>
+            <span class="s2">elif </span><span class="s1">fourcc == </span><span class="s6">b&quot;ATI2&quot;</span><span class="s1">:</span>
+                <span class="s1">self.pixel_format = </span><span class="s5">&quot;BC5&quot;</span>
+                <span class="s1">n = </span><span class="s4">5</span>
+                <span class="s1">self.mode = </span><span class="s5">&quot;RGB&quot;</span>
+            <span class="s2">elif </span><span class="s1">fourcc == </span><span class="s6">b&quot;BC5S&quot;</span><span class="s1">:</span>
+                <span class="s1">self.pixel_format = </span><span class="s5">&quot;BC5S&quot;</span>
+                <span class="s1">n = </span><span class="s4">5</span>
+                <span class="s1">self.mode = </span><span class="s5">&quot;RGB&quot;</span>
+            <span class="s2">elif </span><span class="s1">fourcc == </span><span class="s6">b&quot;DX10&quot;</span><span class="s1">:</span>
+                <span class="s1">data_start += </span><span class="s4">20</span>
+                <span class="s3"># ignoring flags which pertain to volume textures and cubemaps</span>
+                <span class="s1">(dxgi_format</span><span class="s2">,</span><span class="s1">) = struct.unpack(</span><span class="s5">&quot;&lt;I&quot;</span><span class="s2">, </span><span class="s1">self.fp.read(</span><span class="s4">4</span><span class="s1">))</span>
+                <span class="s1">self.fp.read(</span><span class="s4">16</span><span class="s1">)</span>
+                <span class="s2">if </span><span class="s1">dxgi_format </span><span class="s2">in </span><span class="s1">(DXGI_FORMAT_BC5_TYPELESS</span><span class="s2">, </span><span class="s1">DXGI_FORMAT_BC5_UNORM):</span>
+                    <span class="s1">self.pixel_format = </span><span class="s5">&quot;BC5&quot;</span>
+                    <span class="s1">n = </span><span class="s4">5</span>
+                    <span class="s1">self.mode = </span><span class="s5">&quot;RGB&quot;</span>
+                <span class="s2">elif </span><span class="s1">dxgi_format == DXGI_FORMAT_BC5_SNORM:</span>
+                    <span class="s1">self.pixel_format = </span><span class="s5">&quot;BC5S&quot;</span>
+                    <span class="s1">n = </span><span class="s4">5</span>
+                    <span class="s1">self.mode = </span><span class="s5">&quot;RGB&quot;</span>
+                <span class="s2">elif </span><span class="s1">dxgi_format == DXGI_FORMAT_BC6H_UF16:</span>
+                    <span class="s1">self.pixel_format = </span><span class="s5">&quot;BC6H&quot;</span>
+                    <span class="s1">n = </span><span class="s4">6</span>
+                    <span class="s1">self.mode = </span><span class="s5">&quot;RGB&quot;</span>
+                <span class="s2">elif </span><span class="s1">dxgi_format == DXGI_FORMAT_BC6H_SF16:</span>
+                    <span class="s1">self.pixel_format = </span><span class="s5">&quot;BC6HS&quot;</span>
+                    <span class="s1">n = </span><span class="s4">6</span>
+                    <span class="s1">self.mode = </span><span class="s5">&quot;RGB&quot;</span>
+                <span class="s2">elif </span><span class="s1">dxgi_format </span><span class="s2">in </span><span class="s1">(DXGI_FORMAT_BC7_TYPELESS</span><span class="s2">, </span><span class="s1">DXGI_FORMAT_BC7_UNORM):</span>
+                    <span class="s1">self.pixel_format = </span><span class="s5">&quot;BC7&quot;</span>
+                    <span class="s1">n = </span><span class="s4">7</span>
+                <span class="s2">elif </span><span class="s1">dxgi_format == DXGI_FORMAT_BC7_UNORM_SRGB:</span>
+                    <span class="s1">self.pixel_format = </span><span class="s5">&quot;BC7&quot;</span>
+                    <span class="s1">self.info[</span><span class="s5">&quot;gamma&quot;</span><span class="s1">] = </span><span class="s4">1 </span><span class="s1">/ </span><span class="s4">2.2</span>
+                    <span class="s1">n = </span><span class="s4">7</span>
+                <span class="s2">elif </span><span class="s1">dxgi_format </span><span class="s2">in </span><span class="s1">(</span>
+                    <span class="s1">DXGI_FORMAT_R8G8B8A8_TYPELESS</span><span class="s2">,</span>
+                    <span class="s1">DXGI_FORMAT_R8G8B8A8_UNORM</span><span class="s2">,</span>
+                    <span class="s1">DXGI_FORMAT_R8G8B8A8_UNORM_SRGB</span><span class="s2">,</span>
+                <span class="s1">):</span>
+                    <span class="s1">self.tile = [(</span><span class="s5">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">(</span><span class="s5">&quot;RGBA&quot;</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s4">1</span><span class="s1">))]</span>
+                    <span class="s2">if </span><span class="s1">dxgi_format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:</span>
+                        <span class="s1">self.info[</span><span class="s5">&quot;gamma&quot;</span><span class="s1">] = </span><span class="s4">1 </span><span class="s1">/ </span><span class="s4">2.2</span>
+                    <span class="s2">return</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">raise </span><span class="s1">NotImplementedError(</span>
+                        <span class="s5">f&quot;Unimplemented DXGI format </span><span class="s2">{</span><span class="s1">dxgi_format</span><span class="s2">}</span><span class="s5">&quot;</span>
+                    <span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">NotImplementedError(</span><span class="s5">f&quot;Unimplemented pixel format </span><span class="s2">{</span><span class="s1">repr(fourcc)</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s1">)</span>
+
+            <span class="s1">self.tile = [</span>
+                <span class="s1">(</span><span class="s5">&quot;bcn&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s1">data_start</span><span class="s2">, </span><span class="s1">(n</span><span class="s2">, </span><span class="s1">self.pixel_format))</span>
+            <span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">load_seek(self</span><span class="s2">, </span><span class="s1">pos):</span>
+        <span class="s2">pass</span>
+
+
+<span class="s2">def </span><span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename):</span>
+    <span class="s2">if </span><span class="s1">im.mode </span><span class="s2">not in </span><span class="s1">(</span><span class="s5">&quot;RGB&quot;</span><span class="s2">, </span><span class="s5">&quot;RGBA&quot;</span><span class="s1">):</span>
+        <span class="s2">raise </span><span class="s1">OSError(</span><span class="s5">f&quot;cannot write mode </span><span class="s2">{</span><span class="s1">im.mode</span><span class="s2">} </span><span class="s5">as DDS&quot;</span><span class="s1">)</span>
+
+    <span class="s1">fp.write(</span>
+        <span class="s1">o32(DDS_MAGIC)</span>
+        <span class="s1">+ o32(</span><span class="s4">124</span><span class="s1">)  </span><span class="s3"># header size</span>
+        <span class="s1">+ o32(</span>
+            <span class="s1">DDSD_CAPS | DDSD_HEIGHT | DDSD_WIDTH | DDSD_PITCH | DDSD_PIXELFORMAT</span>
+        <span class="s1">)  </span><span class="s3"># flags</span>
+        <span class="s1">+ o32(im.height)</span>
+        <span class="s1">+ o32(im.width)</span>
+        <span class="s1">+ o32((im.width * (</span><span class="s4">32 </span><span class="s2">if </span><span class="s1">im.mode == </span><span class="s5">&quot;RGBA&quot; </span><span class="s2">else </span><span class="s4">24</span><span class="s1">) + </span><span class="s4">7</span><span class="s1">) // </span><span class="s4">8</span><span class="s1">)  </span><span class="s3"># pitch</span>
+        <span class="s1">+ o32(</span><span class="s4">0</span><span class="s1">)  </span><span class="s3"># depth</span>
+        <span class="s1">+ o32(</span><span class="s4">0</span><span class="s1">)  </span><span class="s3"># mipmaps</span>
+        <span class="s1">+ o32(</span><span class="s4">0</span><span class="s1">) * </span><span class="s4">11  </span><span class="s3"># reserved</span>
+        <span class="s1">+ o32(</span><span class="s4">32</span><span class="s1">)  </span><span class="s3"># pfsize</span>
+        <span class="s1">+ o32(DDS_RGBA </span><span class="s2">if </span><span class="s1">im.mode == </span><span class="s5">&quot;RGBA&quot; </span><span class="s2">else </span><span class="s1">DDPF_RGB)  </span><span class="s3"># pfflags</span>
+        <span class="s1">+ o32(</span><span class="s4">0</span><span class="s1">)  </span><span class="s3"># fourcc</span>
+        <span class="s1">+ o32(</span><span class="s4">32 </span><span class="s2">if </span><span class="s1">im.mode == </span><span class="s5">&quot;RGBA&quot; </span><span class="s2">else </span><span class="s4">24</span><span class="s1">)  </span><span class="s3"># bitcount</span>
+        <span class="s1">+ o32(</span><span class="s4">0xFF0000</span><span class="s1">)  </span><span class="s3"># rbitmask</span>
+        <span class="s1">+ o32(</span><span class="s4">0xFF00</span><span class="s1">)  </span><span class="s3"># gbitmask</span>
+        <span class="s1">+ o32(</span><span class="s4">0xFF</span><span class="s1">)  </span><span class="s3"># bbitmask</span>
+        <span class="s1">+ o32(</span><span class="s4">0xFF000000 </span><span class="s2">if </span><span class="s1">im.mode == </span><span class="s5">&quot;RGBA&quot; </span><span class="s2">else </span><span class="s4">0</span><span class="s1">)  </span><span class="s3"># abitmask</span>
+        <span class="s1">+ o32(DDSCAPS_TEXTURE)  </span><span class="s3"># dwCaps</span>
+        <span class="s1">+ o32(</span><span class="s4">0</span><span class="s1">)  </span><span class="s3"># dwCaps2</span>
+        <span class="s1">+ o32(</span><span class="s4">0</span><span class="s1">)  </span><span class="s3"># dwCaps3</span>
+        <span class="s1">+ o32(</span><span class="s4">0</span><span class="s1">)  </span><span class="s3"># dwCaps4</span>
+        <span class="s1">+ o32(</span><span class="s4">0</span><span class="s1">)  </span><span class="s3"># dwReserved2</span>
+    <span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">im.mode == </span><span class="s5">&quot;RGBA&quot;</span><span class="s1">:</span>
+        <span class="s1">r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b</span><span class="s2">, </span><span class="s1">a = im.split()</span>
+        <span class="s1">im = Image.merge(</span><span class="s5">&quot;RGBA&quot;</span><span class="s2">, </span><span class="s1">(a</span><span class="s2">, </span><span class="s1">r</span><span class="s2">, </span><span class="s1">g</span><span class="s2">, </span><span class="s1">b))</span>
+    <span class="s1">ImageFile._save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">[(</span><span class="s5">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + im.size</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">(im.mode[::-</span><span class="s4">1</span><span class="s1">]</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s4">1</span><span class="s1">))])</span>
+
+
+<span class="s2">def </span><span class="s1">_accept(prefix):</span>
+    <span class="s2">return </span><span class="s1">prefix[:</span><span class="s4">4</span><span class="s1">] == </span><span class="s6">b&quot;DDS &quot;</span>
+
+
+<span class="s1">Image.register_open(DdsImageFile.format</span><span class="s2">, </span><span class="s1">DdsImageFile</span><span class="s2">, </span><span class="s1">_accept)</span>
+<span class="s1">Image.register_save(DdsImageFile.format</span><span class="s2">, </span><span class="s1">_save)</span>
+<span class="s1">Image.register_extension(DdsImageFile.format</span><span class="s2">, </span><span class="s5">&quot;.dds&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

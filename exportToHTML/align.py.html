@@ -1,0 +1,333 @@
+<html>
+<head>
+<title>align.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #6897bb;}
+.s3 { color: #808080;}
+.s4 { color: #6a8759;}
+.s5 { color: #629755; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+align.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">from </span><span class="s1">itertools </span><span class="s0">import </span><span class="s1">chain</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">TYPE_CHECKING</span><span class="s0">, </span><span class="s1">Iterable</span><span class="s0">, </span><span class="s1">Optional</span>
+
+<span class="s0">if </span><span class="s1">sys.version_info &gt;= (</span><span class="s2">3</span><span class="s0">, </span><span class="s2">8</span><span class="s1">):</span>
+    <span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Literal</span>
+<span class="s0">else</span><span class="s1">:</span>
+    <span class="s0">from </span><span class="s1">pip._vendor.typing_extensions </span><span class="s0">import </span><span class="s1">Literal  </span><span class="s3"># pragma: no cover</span>
+
+<span class="s0">from </span><span class="s1">.constrain </span><span class="s0">import </span><span class="s1">Constrain</span>
+<span class="s0">from </span><span class="s1">.jupyter </span><span class="s0">import </span><span class="s1">JupyterMixin</span>
+<span class="s0">from </span><span class="s1">.measure </span><span class="s0">import </span><span class="s1">Measurement</span>
+<span class="s0">from </span><span class="s1">.segment </span><span class="s0">import </span><span class="s1">Segment</span>
+<span class="s0">from </span><span class="s1">.style </span><span class="s0">import </span><span class="s1">StyleType</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s0">from </span><span class="s1">.console </span><span class="s0">import </span><span class="s1">Console</span><span class="s0">, </span><span class="s1">ConsoleOptions</span><span class="s0">, </span><span class="s1">RenderableType</span><span class="s0">, </span><span class="s1">RenderResult</span>
+
+<span class="s1">AlignMethod = Literal[</span><span class="s4">&quot;left&quot;</span><span class="s0">, </span><span class="s4">&quot;center&quot;</span><span class="s0">, </span><span class="s4">&quot;right&quot;</span><span class="s1">]</span>
+<span class="s1">VerticalAlignMethod = Literal[</span><span class="s4">&quot;top&quot;</span><span class="s0">, </span><span class="s4">&quot;middle&quot;</span><span class="s0">, </span><span class="s4">&quot;bottom&quot;</span><span class="s1">]</span>
+
+
+<span class="s0">class </span><span class="s1">Align(JupyterMixin):</span>
+    <span class="s5">&quot;&quot;&quot;Align a renderable by adding spaces if necessary. 
+ 
+    Args: 
+        renderable (RenderableType): A console renderable. 
+        align (AlignMethod): One of &quot;left&quot;, &quot;center&quot;, or &quot;right&quot;&quot; 
+        style (StyleType, optional): An optional style to apply to the background. 
+        vertical (Optional[VerticalAlginMethod], optional): Optional vertical align, one of &quot;top&quot;, &quot;middle&quot;, or &quot;bottom&quot;. Defaults to None. 
+        pad (bool, optional): Pad the right with spaces. Defaults to True. 
+        width (int, optional): Restrict contents to given width, or None to use default width. Defaults to None. 
+        height (int, optional): Set height of align renderable, or None to fit to contents. Defaults to None. 
+ 
+    Raises: 
+        ValueError: if ``align`` is not one of the expected values. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">renderable: </span><span class="s4">&quot;RenderableType&quot;</span><span class="s0">,</span>
+        <span class="s1">align: AlignMethod = </span><span class="s4">&quot;left&quot;</span><span class="s0">,</span>
+        <span class="s1">style: Optional[StyleType] = </span><span class="s0">None,</span>
+        <span class="s1">*</span><span class="s0">,</span>
+        <span class="s1">vertical: Optional[VerticalAlignMethod] = </span><span class="s0">None,</span>
+        <span class="s1">pad: bool = </span><span class="s0">True,</span>
+        <span class="s1">width: Optional[int] = </span><span class="s0">None,</span>
+        <span class="s1">height: Optional[int] = </span><span class="s0">None,</span>
+    <span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s0">if </span><span class="s1">align </span><span class="s0">not in </span><span class="s1">(</span><span class="s4">&quot;left&quot;</span><span class="s0">, </span><span class="s4">&quot;center&quot;</span><span class="s0">, </span><span class="s4">&quot;right&quot;</span><span class="s1">):</span>
+            <span class="s0">raise </span><span class="s1">ValueError(</span>
+                <span class="s4">f'invalid value for align, expected &quot;left&quot;, &quot;center&quot;, or &quot;right&quot; (not </span><span class="s0">{</span><span class="s1">align</span><span class="s0">!r}</span><span class="s4">)'</span>
+            <span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">vertical </span><span class="s0">is not None and </span><span class="s1">vertical </span><span class="s0">not in </span><span class="s1">(</span><span class="s4">&quot;top&quot;</span><span class="s0">, </span><span class="s4">&quot;middle&quot;</span><span class="s0">, </span><span class="s4">&quot;bottom&quot;</span><span class="s1">):</span>
+            <span class="s0">raise </span><span class="s1">ValueError(</span>
+                <span class="s4">f'invalid value for vertical, expected &quot;top&quot;, &quot;middle&quot;, or &quot;bottom&quot; (not </span><span class="s0">{</span><span class="s1">vertical</span><span class="s0">!r}</span><span class="s4">)'</span>
+            <span class="s1">)</span>
+        <span class="s1">self.renderable = renderable</span>
+        <span class="s1">self.align = align</span>
+        <span class="s1">self.style = style</span>
+        <span class="s1">self.vertical = vertical</span>
+        <span class="s1">self.pad = pad</span>
+        <span class="s1">self.width = width</span>
+        <span class="s1">self.height = height</span>
+
+    <span class="s0">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s0">return </span><span class="s4">f&quot;Align(</span><span class="s0">{</span><span class="s1">self.renderable</span><span class="s0">!r}</span><span class="s4">, </span><span class="s0">{</span><span class="s1">self.align</span><span class="s0">!r}</span><span class="s4">)&quot;</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">left(</span>
+        <span class="s1">cls</span><span class="s0">,</span>
+        <span class="s1">renderable: </span><span class="s4">&quot;RenderableType&quot;</span><span class="s0">,</span>
+        <span class="s1">style: Optional[StyleType] = </span><span class="s0">None,</span>
+        <span class="s1">*</span><span class="s0">,</span>
+        <span class="s1">vertical: Optional[VerticalAlignMethod] = </span><span class="s0">None,</span>
+        <span class="s1">pad: bool = </span><span class="s0">True,</span>
+        <span class="s1">width: Optional[int] = </span><span class="s0">None,</span>
+        <span class="s1">height: Optional[int] = </span><span class="s0">None,</span>
+    <span class="s1">) -&gt; </span><span class="s4">&quot;Align&quot;</span><span class="s1">:</span>
+        <span class="s5">&quot;&quot;&quot;Align a renderable to the left.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">cls(</span>
+            <span class="s1">renderable</span><span class="s0">,</span>
+            <span class="s4">&quot;left&quot;</span><span class="s0">,</span>
+            <span class="s1">style=style</span><span class="s0">,</span>
+            <span class="s1">vertical=vertical</span><span class="s0">,</span>
+            <span class="s1">pad=pad</span><span class="s0">,</span>
+            <span class="s1">width=width</span><span class="s0">,</span>
+            <span class="s1">height=height</span><span class="s0">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">center(</span>
+        <span class="s1">cls</span><span class="s0">,</span>
+        <span class="s1">renderable: </span><span class="s4">&quot;RenderableType&quot;</span><span class="s0">,</span>
+        <span class="s1">style: Optional[StyleType] = </span><span class="s0">None,</span>
+        <span class="s1">*</span><span class="s0">,</span>
+        <span class="s1">vertical: Optional[VerticalAlignMethod] = </span><span class="s0">None,</span>
+        <span class="s1">pad: bool = </span><span class="s0">True,</span>
+        <span class="s1">width: Optional[int] = </span><span class="s0">None,</span>
+        <span class="s1">height: Optional[int] = </span><span class="s0">None,</span>
+    <span class="s1">) -&gt; </span><span class="s4">&quot;Align&quot;</span><span class="s1">:</span>
+        <span class="s5">&quot;&quot;&quot;Align a renderable to the center.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">cls(</span>
+            <span class="s1">renderable</span><span class="s0">,</span>
+            <span class="s4">&quot;center&quot;</span><span class="s0">,</span>
+            <span class="s1">style=style</span><span class="s0">,</span>
+            <span class="s1">vertical=vertical</span><span class="s0">,</span>
+            <span class="s1">pad=pad</span><span class="s0">,</span>
+            <span class="s1">width=width</span><span class="s0">,</span>
+            <span class="s1">height=height</span><span class="s0">,</span>
+        <span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">right(</span>
+        <span class="s1">cls</span><span class="s0">,</span>
+        <span class="s1">renderable: </span><span class="s4">&quot;RenderableType&quot;</span><span class="s0">,</span>
+        <span class="s1">style: Optional[StyleType] = </span><span class="s0">None,</span>
+        <span class="s1">*</span><span class="s0">,</span>
+        <span class="s1">vertical: Optional[VerticalAlignMethod] = </span><span class="s0">None,</span>
+        <span class="s1">pad: bool = </span><span class="s0">True,</span>
+        <span class="s1">width: Optional[int] = </span><span class="s0">None,</span>
+        <span class="s1">height: Optional[int] = </span><span class="s0">None,</span>
+    <span class="s1">) -&gt; </span><span class="s4">&quot;Align&quot;</span><span class="s1">:</span>
+        <span class="s5">&quot;&quot;&quot;Align a renderable to the right.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">cls(</span>
+            <span class="s1">renderable</span><span class="s0">,</span>
+            <span class="s4">&quot;right&quot;</span><span class="s0">,</span>
+            <span class="s1">style=style</span><span class="s0">,</span>
+            <span class="s1">vertical=vertical</span><span class="s0">,</span>
+            <span class="s1">pad=pad</span><span class="s0">,</span>
+            <span class="s1">width=width</span><span class="s0">,</span>
+            <span class="s1">height=height</span><span class="s0">,</span>
+        <span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">__rich_console__(</span>
+        <span class="s1">self</span><span class="s0">, </span><span class="s1">console: </span><span class="s4">&quot;Console&quot;</span><span class="s0">, </span><span class="s1">options: </span><span class="s4">&quot;ConsoleOptions&quot;</span>
+    <span class="s1">) -&gt; </span><span class="s4">&quot;RenderResult&quot;</span><span class="s1">:</span>
+        <span class="s1">align = self.align</span>
+        <span class="s1">width = console.measure(self.renderable</span><span class="s0">, </span><span class="s1">options=options).maximum</span>
+        <span class="s1">rendered = console.render(</span>
+            <span class="s1">Constrain(</span>
+                <span class="s1">self.renderable</span><span class="s0">, </span><span class="s1">width </span><span class="s0">if </span><span class="s1">self.width </span><span class="s0">is None else </span><span class="s1">min(width</span><span class="s0">, </span><span class="s1">self.width)</span>
+            <span class="s1">)</span><span class="s0">,</span>
+            <span class="s1">options.update(height=</span><span class="s0">None</span><span class="s1">)</span><span class="s0">,</span>
+        <span class="s1">)</span>
+        <span class="s1">lines = list(Segment.split_lines(rendered))</span>
+        <span class="s1">width</span><span class="s0">, </span><span class="s1">height = Segment.get_shape(lines)</span>
+        <span class="s1">lines = Segment.set_shape(lines</span><span class="s0">, </span><span class="s1">width</span><span class="s0">, </span><span class="s1">height)</span>
+        <span class="s1">new_line = Segment.line()</span>
+        <span class="s1">excess_space = options.max_width - width</span>
+        <span class="s1">style = console.get_style(self.style) </span><span class="s0">if </span><span class="s1">self.style </span><span class="s0">is not None else None</span>
+
+        <span class="s0">def </span><span class="s1">generate_segments() -&gt; Iterable[Segment]:</span>
+            <span class="s0">if </span><span class="s1">excess_space &lt;= </span><span class="s2">0</span><span class="s1">:</span>
+                <span class="s3"># Exact fit</span>
+                <span class="s0">for </span><span class="s1">line </span><span class="s0">in </span><span class="s1">lines:</span>
+                    <span class="s0">yield from </span><span class="s1">line</span>
+                    <span class="s0">yield </span><span class="s1">new_line</span>
+
+            <span class="s0">elif </span><span class="s1">align == </span><span class="s4">&quot;left&quot;</span><span class="s1">:</span>
+                <span class="s3"># Pad on the right</span>
+                <span class="s1">pad = Segment(</span><span class="s4">&quot; &quot; </span><span class="s1">* excess_space</span><span class="s0">, </span><span class="s1">style) </span><span class="s0">if </span><span class="s1">self.pad </span><span class="s0">else None</span>
+                <span class="s0">for </span><span class="s1">line </span><span class="s0">in </span><span class="s1">lines:</span>
+                    <span class="s0">yield from </span><span class="s1">line</span>
+                    <span class="s0">if </span><span class="s1">pad:</span>
+                        <span class="s0">yield </span><span class="s1">pad</span>
+                    <span class="s0">yield </span><span class="s1">new_line</span>
+
+            <span class="s0">elif </span><span class="s1">align == </span><span class="s4">&quot;center&quot;</span><span class="s1">:</span>
+                <span class="s3"># Pad left and right</span>
+                <span class="s1">left = excess_space // </span><span class="s2">2</span>
+                <span class="s1">pad = Segment(</span><span class="s4">&quot; &quot; </span><span class="s1">* left</span><span class="s0">, </span><span class="s1">style)</span>
+                <span class="s1">pad_right = (</span>
+                    <span class="s1">Segment(</span><span class="s4">&quot; &quot; </span><span class="s1">* (excess_space - left)</span><span class="s0">, </span><span class="s1">style) </span><span class="s0">if </span><span class="s1">self.pad </span><span class="s0">else None</span>
+                <span class="s1">)</span>
+                <span class="s0">for </span><span class="s1">line </span><span class="s0">in </span><span class="s1">lines:</span>
+                    <span class="s0">if </span><span class="s1">left:</span>
+                        <span class="s0">yield </span><span class="s1">pad</span>
+                    <span class="s0">yield from </span><span class="s1">line</span>
+                    <span class="s0">if </span><span class="s1">pad_right:</span>
+                        <span class="s0">yield </span><span class="s1">pad_right</span>
+                    <span class="s0">yield </span><span class="s1">new_line</span>
+
+            <span class="s0">elif </span><span class="s1">align == </span><span class="s4">&quot;right&quot;</span><span class="s1">:</span>
+                <span class="s3"># Padding on left</span>
+                <span class="s1">pad = Segment(</span><span class="s4">&quot; &quot; </span><span class="s1">* excess_space</span><span class="s0">, </span><span class="s1">style)</span>
+                <span class="s0">for </span><span class="s1">line </span><span class="s0">in </span><span class="s1">lines:</span>
+                    <span class="s0">yield </span><span class="s1">pad</span>
+                    <span class="s0">yield from </span><span class="s1">line</span>
+                    <span class="s0">yield </span><span class="s1">new_line</span>
+
+        <span class="s1">blank_line = (</span>
+            <span class="s1">Segment(</span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s4">' ' </span><span class="s1">* (self.width </span><span class="s0">or </span><span class="s1">options.max_width)</span><span class="s0">}\n</span><span class="s4">&quot;</span><span class="s0">, </span><span class="s1">style)</span>
+            <span class="s0">if </span><span class="s1">self.pad</span>
+            <span class="s0">else </span><span class="s1">Segment(</span><span class="s4">&quot;</span><span class="s0">\n</span><span class="s4">&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+
+        <span class="s0">def </span><span class="s1">blank_lines(count: int) -&gt; Iterable[Segment]:</span>
+            <span class="s0">if </span><span class="s1">count &gt; </span><span class="s2">0</span><span class="s1">:</span>
+                <span class="s0">for </span><span class="s1">_ </span><span class="s0">in </span><span class="s1">range(count):</span>
+                    <span class="s0">yield </span><span class="s1">blank_line</span>
+
+        <span class="s1">vertical_height = self.height </span><span class="s0">or </span><span class="s1">options.height</span>
+        <span class="s1">iter_segments: Iterable[Segment]</span>
+        <span class="s0">if </span><span class="s1">self.vertical </span><span class="s0">and </span><span class="s1">vertical_height </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s0">if </span><span class="s1">self.vertical == </span><span class="s4">&quot;top&quot;</span><span class="s1">:</span>
+                <span class="s1">bottom_space = vertical_height - height</span>
+                <span class="s1">iter_segments = chain(generate_segments()</span><span class="s0">, </span><span class="s1">blank_lines(bottom_space))</span>
+            <span class="s0">elif </span><span class="s1">self.vertical == </span><span class="s4">&quot;middle&quot;</span><span class="s1">:</span>
+                <span class="s1">top_space = (vertical_height - height) // </span><span class="s2">2</span>
+                <span class="s1">bottom_space = vertical_height - top_space - height</span>
+                <span class="s1">iter_segments = chain(</span>
+                    <span class="s1">blank_lines(top_space)</span><span class="s0">,</span>
+                    <span class="s1">generate_segments()</span><span class="s0">,</span>
+                    <span class="s1">blank_lines(bottom_space)</span><span class="s0">,</span>
+                <span class="s1">)</span>
+            <span class="s0">else</span><span class="s1">:  </span><span class="s3">#  self.vertical == &quot;bottom&quot;:</span>
+                <span class="s1">top_space = vertical_height - height</span>
+                <span class="s1">iter_segments = chain(blank_lines(top_space)</span><span class="s0">, </span><span class="s1">generate_segments())</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">iter_segments = generate_segments()</span>
+        <span class="s0">if </span><span class="s1">self.style:</span>
+            <span class="s1">style = console.get_style(self.style)</span>
+            <span class="s1">iter_segments = Segment.apply_style(iter_segments</span><span class="s0">, </span><span class="s1">style)</span>
+        <span class="s0">yield from </span><span class="s1">iter_segments</span>
+
+    <span class="s0">def </span><span class="s1">__rich_measure__(</span>
+        <span class="s1">self</span><span class="s0">, </span><span class="s1">console: </span><span class="s4">&quot;Console&quot;</span><span class="s0">, </span><span class="s1">options: </span><span class="s4">&quot;ConsoleOptions&quot;</span>
+    <span class="s1">) -&gt; Measurement:</span>
+        <span class="s1">measurement = Measurement.get(console</span><span class="s0">, </span><span class="s1">options</span><span class="s0">, </span><span class="s1">self.renderable)</span>
+        <span class="s0">return </span><span class="s1">measurement</span>
+
+
+<span class="s0">class </span><span class="s1">VerticalCenter(JupyterMixin):</span>
+    <span class="s5">&quot;&quot;&quot;Vertically aligns a renderable. 
+ 
+    Warn: 
+        This class is deprecated and may be removed in a future version. Use Align class with 
+        `vertical=&quot;middle&quot;`. 
+ 
+    Args: 
+        renderable (RenderableType): A renderable object. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">renderable: </span><span class="s4">&quot;RenderableType&quot;</span><span class="s0">,</span>
+        <span class="s1">style: Optional[StyleType] = </span><span class="s0">None,</span>
+    <span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">self.renderable = renderable</span>
+        <span class="s1">self.style = style</span>
+
+    <span class="s0">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s0">return </span><span class="s4">f&quot;VerticalCenter(</span><span class="s0">{</span><span class="s1">self.renderable</span><span class="s0">!r}</span><span class="s4">)&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__rich_console__(</span>
+        <span class="s1">self</span><span class="s0">, </span><span class="s1">console: </span><span class="s4">&quot;Console&quot;</span><span class="s0">, </span><span class="s1">options: </span><span class="s4">&quot;ConsoleOptions&quot;</span>
+    <span class="s1">) -&gt; </span><span class="s4">&quot;RenderResult&quot;</span><span class="s1">:</span>
+        <span class="s1">style = console.get_style(self.style) </span><span class="s0">if </span><span class="s1">self.style </span><span class="s0">is not None else None</span>
+        <span class="s1">lines = console.render_lines(</span>
+            <span class="s1">self.renderable</span><span class="s0">, </span><span class="s1">options.update(height=</span><span class="s0">None</span><span class="s1">)</span><span class="s0">, </span><span class="s1">pad=</span><span class="s0">False</span>
+        <span class="s1">)</span>
+        <span class="s1">width</span><span class="s0">, </span><span class="s1">_height = Segment.get_shape(lines)</span>
+        <span class="s1">new_line = Segment.line()</span>
+        <span class="s1">height = options.height </span><span class="s0">or </span><span class="s1">options.size.height</span>
+        <span class="s1">top_space = (height - len(lines)) // </span><span class="s2">2</span>
+        <span class="s1">bottom_space = height - top_space - len(lines)</span>
+        <span class="s1">blank_line = Segment(</span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s4">' ' </span><span class="s1">* width</span><span class="s0">}</span><span class="s4">&quot;</span><span class="s0">, </span><span class="s1">style)</span>
+
+        <span class="s0">def </span><span class="s1">blank_lines(count: int) -&gt; Iterable[Segment]:</span>
+            <span class="s0">for </span><span class="s1">_ </span><span class="s0">in </span><span class="s1">range(count):</span>
+                <span class="s0">yield </span><span class="s1">blank_line</span>
+                <span class="s0">yield </span><span class="s1">new_line</span>
+
+        <span class="s0">if </span><span class="s1">top_space &gt; </span><span class="s2">0</span><span class="s1">:</span>
+            <span class="s0">yield from </span><span class="s1">blank_lines(top_space)</span>
+        <span class="s0">for </span><span class="s1">line </span><span class="s0">in </span><span class="s1">lines:</span>
+            <span class="s0">yield from </span><span class="s1">line</span>
+            <span class="s0">yield </span><span class="s1">new_line</span>
+        <span class="s0">if </span><span class="s1">bottom_space &gt; </span><span class="s2">0</span><span class="s1">:</span>
+            <span class="s0">yield from </span><span class="s1">blank_lines(bottom_space)</span>
+
+    <span class="s0">def </span><span class="s1">__rich_measure__(</span>
+        <span class="s1">self</span><span class="s0">, </span><span class="s1">console: </span><span class="s4">&quot;Console&quot;</span><span class="s0">, </span><span class="s1">options: </span><span class="s4">&quot;ConsoleOptions&quot;</span>
+    <span class="s1">) -&gt; Measurement:</span>
+        <span class="s1">measurement = Measurement.get(console</span><span class="s0">, </span><span class="s1">options</span><span class="s0">, </span><span class="s1">self.renderable)</span>
+        <span class="s0">return </span><span class="s1">measurement</span>
+
+
+<span class="s0">if </span><span class="s1">__name__ == </span><span class="s4">&quot;__main__&quot;</span><span class="s1">:  </span><span class="s3"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">pip._vendor.rich.console </span><span class="s0">import </span><span class="s1">Console</span><span class="s0">, </span><span class="s1">Group</span>
+    <span class="s0">from </span><span class="s1">pip._vendor.rich.highlighter </span><span class="s0">import </span><span class="s1">ReprHighlighter</span>
+    <span class="s0">from </span><span class="s1">pip._vendor.rich.panel </span><span class="s0">import </span><span class="s1">Panel</span>
+
+    <span class="s1">highlighter = ReprHighlighter()</span>
+    <span class="s1">console = Console()</span>
+
+    <span class="s1">panel = Panel(</span>
+        <span class="s1">Group(</span>
+            <span class="s1">Align.left(highlighter(</span><span class="s4">&quot;align='left'&quot;</span><span class="s1">))</span><span class="s0">,</span>
+            <span class="s1">Align.center(highlighter(</span><span class="s4">&quot;align='center'&quot;</span><span class="s1">))</span><span class="s0">,</span>
+            <span class="s1">Align.right(highlighter(</span><span class="s4">&quot;align='right'&quot;</span><span class="s1">))</span><span class="s0">,</span>
+        <span class="s1">)</span><span class="s0">,</span>
+        <span class="s1">width=</span><span class="s2">60</span><span class="s0">,</span>
+        <span class="s1">style=</span><span class="s4">&quot;on dark_blue&quot;</span><span class="s0">,</span>
+        <span class="s1">title=</span><span class="s4">&quot;Algin&quot;</span><span class="s0">,</span>
+    <span class="s1">)</span>
+
+    <span class="s1">console.print(</span>
+        <span class="s1">Align.center(panel</span><span class="s0">, </span><span class="s1">vertical=</span><span class="s4">&quot;middle&quot;</span><span class="s0">, </span><span class="s1">style=</span><span class="s4">&quot;on red&quot;</span><span class="s0">, </span><span class="s1">height=console.height)</span>
+    <span class="s1">)</span>
+</pre>
+</body>
+</html>

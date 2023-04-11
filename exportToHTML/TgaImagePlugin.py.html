@@ -1,0 +1,276 @@
+<html>
+<head>
+<title>TgaImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6897bb;}
+.s4 { color: #6a8759;}
+.s5 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+TgaImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># TGA file handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 95-09-01 fl   created (reads 24-bit files only)</span>
+<span class="s0"># 97-01-04 fl   support more TGA versions, including compressed images</span>
+<span class="s0"># 98-07-04 fl   fixed orientation and alpha layer bugs</span>
+<span class="s0"># 98-09-11 fl   fixed orientation for runlength decoder</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 1997-98.</span>
+<span class="s0"># Copyright (c) Fredrik Lundh 1995-97.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+
+<span class="s2">import </span><span class="s1">warnings</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span><span class="s2">, </span><span class="s1">ImagePalette</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">i16le </span><span class="s2">as </span><span class="s1">i16</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">o8</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">o16le </span><span class="s2">as </span><span class="s1">o16</span>
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Read RGA file</span>
+
+
+<span class="s1">MODES = {</span>
+    <span class="s0"># map imagetype/depth to rawmode</span>
+    <span class="s1">(</span><span class="s3">1</span><span class="s2">, </span><span class="s3">8</span><span class="s1">): </span><span class="s4">&quot;P&quot;</span><span class="s2">,</span>
+    <span class="s1">(</span><span class="s3">3</span><span class="s2">, </span><span class="s3">1</span><span class="s1">): </span><span class="s4">&quot;1&quot;</span><span class="s2">,</span>
+    <span class="s1">(</span><span class="s3">3</span><span class="s2">, </span><span class="s3">8</span><span class="s1">): </span><span class="s4">&quot;L&quot;</span><span class="s2">,</span>
+    <span class="s1">(</span><span class="s3">3</span><span class="s2">, </span><span class="s3">16</span><span class="s1">): </span><span class="s4">&quot;LA&quot;</span><span class="s2">,</span>
+    <span class="s1">(</span><span class="s3">2</span><span class="s2">, </span><span class="s3">16</span><span class="s1">): </span><span class="s4">&quot;BGR;5&quot;</span><span class="s2">,</span>
+    <span class="s1">(</span><span class="s3">2</span><span class="s2">, </span><span class="s3">24</span><span class="s1">): </span><span class="s4">&quot;BGR&quot;</span><span class="s2">,</span>
+    <span class="s1">(</span><span class="s3">2</span><span class="s2">, </span><span class="s3">32</span><span class="s1">): </span><span class="s4">&quot;BGRA&quot;</span><span class="s2">,</span>
+<span class="s1">}</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for Targa files.</span>
+
+
+<span class="s2">class </span><span class="s1">TgaImageFile(ImageFile.ImageFile):</span>
+
+    <span class="s1">format = </span><span class="s4">&quot;TGA&quot;</span>
+    <span class="s1">format_description = </span><span class="s4">&quot;Targa&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+
+        <span class="s0"># process header</span>
+        <span class="s1">s = self.fp.read(</span><span class="s3">18</span><span class="s1">)</span>
+
+        <span class="s1">id_len = s[</span><span class="s3">0</span><span class="s1">]</span>
+
+        <span class="s1">colormaptype = s[</span><span class="s3">1</span><span class="s1">]</span>
+        <span class="s1">imagetype = s[</span><span class="s3">2</span><span class="s1">]</span>
+
+        <span class="s1">depth = s[</span><span class="s3">16</span><span class="s1">]</span>
+
+        <span class="s1">flags = s[</span><span class="s3">17</span><span class="s1">]</span>
+
+        <span class="s1">self._size = i16(s</span><span class="s2">, </span><span class="s3">12</span><span class="s1">)</span><span class="s2">, </span><span class="s1">i16(s</span><span class="s2">, </span><span class="s3">14</span><span class="s1">)</span>
+
+        <span class="s0"># validate header fields</span>
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s1">colormaptype </span><span class="s2">not in </span><span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">1</span><span class="s1">)</span>
+            <span class="s2">or </span><span class="s1">self.size[</span><span class="s3">0</span><span class="s1">] &lt;= </span><span class="s3">0</span>
+            <span class="s2">or </span><span class="s1">self.size[</span><span class="s3">1</span><span class="s1">] &lt;= </span><span class="s3">0</span>
+            <span class="s2">or </span><span class="s1">depth </span><span class="s2">not in </span><span class="s1">(</span><span class="s3">1</span><span class="s2">, </span><span class="s3">8</span><span class="s2">, </span><span class="s3">16</span><span class="s2">, </span><span class="s3">24</span><span class="s2">, </span><span class="s3">32</span><span class="s1">)</span>
+        <span class="s1">):</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;not a TGA file&quot;</span><span class="s1">)</span>
+
+        <span class="s0"># image mode</span>
+        <span class="s2">if </span><span class="s1">imagetype </span><span class="s2">in </span><span class="s1">(</span><span class="s3">3</span><span class="s2">, </span><span class="s3">11</span><span class="s1">):</span>
+            <span class="s1">self.mode = </span><span class="s4">&quot;L&quot;</span>
+            <span class="s2">if </span><span class="s1">depth == </span><span class="s3">1</span><span class="s1">:</span>
+                <span class="s1">self.mode = </span><span class="s4">&quot;1&quot;  </span><span class="s0"># ???</span>
+            <span class="s2">elif </span><span class="s1">depth == </span><span class="s3">16</span><span class="s1">:</span>
+                <span class="s1">self.mode = </span><span class="s4">&quot;LA&quot;</span>
+        <span class="s2">elif </span><span class="s1">imagetype </span><span class="s2">in </span><span class="s1">(</span><span class="s3">1</span><span class="s2">, </span><span class="s3">9</span><span class="s1">):</span>
+            <span class="s1">self.mode = </span><span class="s4">&quot;P&quot;</span>
+        <span class="s2">elif </span><span class="s1">imagetype </span><span class="s2">in </span><span class="s1">(</span><span class="s3">2</span><span class="s2">, </span><span class="s3">10</span><span class="s1">):</span>
+            <span class="s1">self.mode = </span><span class="s4">&quot;RGB&quot;</span>
+            <span class="s2">if </span><span class="s1">depth == </span><span class="s3">32</span><span class="s1">:</span>
+                <span class="s1">self.mode = </span><span class="s4">&quot;RGBA&quot;</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;unknown TGA mode&quot;</span><span class="s1">)</span>
+
+        <span class="s0"># orientation</span>
+        <span class="s1">orientation = flags &amp; </span><span class="s3">0x30</span>
+        <span class="s1">self._flip_horizontally = orientation </span><span class="s2">in </span><span class="s1">[</span><span class="s3">0x10</span><span class="s2">, </span><span class="s3">0x30</span><span class="s1">]</span>
+        <span class="s2">if </span><span class="s1">orientation </span><span class="s2">in </span><span class="s1">[</span><span class="s3">0x20</span><span class="s2">, </span><span class="s3">0x30</span><span class="s1">]:</span>
+            <span class="s1">orientation = </span><span class="s3">1</span>
+        <span class="s2">elif </span><span class="s1">orientation </span><span class="s2">in </span><span class="s1">[</span><span class="s3">0</span><span class="s2">, </span><span class="s3">0x10</span><span class="s1">]:</span>
+            <span class="s1">orientation = -</span><span class="s3">1</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;unknown TGA orientation&quot;</span><span class="s1">)</span>
+
+        <span class="s1">self.info[</span><span class="s4">&quot;orientation&quot;</span><span class="s1">] = orientation</span>
+
+        <span class="s2">if </span><span class="s1">imagetype &amp; </span><span class="s3">8</span><span class="s1">:</span>
+            <span class="s1">self.info[</span><span class="s4">&quot;compression&quot;</span><span class="s1">] = </span><span class="s4">&quot;tga_rle&quot;</span>
+
+        <span class="s2">if </span><span class="s1">id_len:</span>
+            <span class="s1">self.info[</span><span class="s4">&quot;id_section&quot;</span><span class="s1">] = self.fp.read(id_len)</span>
+
+        <span class="s2">if </span><span class="s1">colormaptype:</span>
+            <span class="s0"># read palette</span>
+            <span class="s1">start</span><span class="s2">, </span><span class="s1">size</span><span class="s2">, </span><span class="s1">mapdepth = i16(s</span><span class="s2">, </span><span class="s3">3</span><span class="s1">)</span><span class="s2">, </span><span class="s1">i16(s</span><span class="s2">, </span><span class="s3">5</span><span class="s1">)</span><span class="s2">, </span><span class="s1">s[</span><span class="s3">7</span><span class="s1">]</span>
+            <span class="s2">if </span><span class="s1">mapdepth == </span><span class="s3">16</span><span class="s1">:</span>
+                <span class="s1">self.palette = ImagePalette.raw(</span>
+                    <span class="s4">&quot;BGR;15&quot;</span><span class="s2">, </span><span class="s5">b&quot;</span><span class="s2">\0</span><span class="s5">&quot; </span><span class="s1">* </span><span class="s3">2 </span><span class="s1">* start + self.fp.read(</span><span class="s3">2 </span><span class="s1">* size)</span>
+                <span class="s1">)</span>
+            <span class="s2">elif </span><span class="s1">mapdepth == </span><span class="s3">24</span><span class="s1">:</span>
+                <span class="s1">self.palette = ImagePalette.raw(</span>
+                    <span class="s4">&quot;BGR&quot;</span><span class="s2">, </span><span class="s5">b&quot;</span><span class="s2">\0</span><span class="s5">&quot; </span><span class="s1">* </span><span class="s3">3 </span><span class="s1">* start + self.fp.read(</span><span class="s3">3 </span><span class="s1">* size)</span>
+                <span class="s1">)</span>
+            <span class="s2">elif </span><span class="s1">mapdepth == </span><span class="s3">32</span><span class="s1">:</span>
+                <span class="s1">self.palette = ImagePalette.raw(</span>
+                    <span class="s4">&quot;BGRA&quot;</span><span class="s2">, </span><span class="s5">b&quot;</span><span class="s2">\0</span><span class="s5">&quot; </span><span class="s1">* </span><span class="s3">4 </span><span class="s1">* start + self.fp.read(</span><span class="s3">4 </span><span class="s1">* size)</span>
+                <span class="s1">)</span>
+
+        <span class="s0"># setup tile descriptor</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">rawmode = MODES[(imagetype &amp; </span><span class="s3">7</span><span class="s2">, </span><span class="s1">depth)]</span>
+            <span class="s2">if </span><span class="s1">imagetype &amp; </span><span class="s3">8</span><span class="s1">:</span>
+                <span class="s0"># compressed</span>
+                <span class="s1">self.tile = [</span>
+                    <span class="s1">(</span>
+                        <span class="s4">&quot;tga_rle&quot;</span><span class="s2">,</span>
+                        <span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s1">) + self.size</span><span class="s2">,</span>
+                        <span class="s1">self.fp.tell()</span><span class="s2">,</span>
+                        <span class="s1">(rawmode</span><span class="s2">, </span><span class="s1">orientation</span><span class="s2">, </span><span class="s1">depth)</span><span class="s2">,</span>
+                    <span class="s1">)</span>
+                <span class="s1">]</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self.tile = [</span>
+                    <span class="s1">(</span>
+                        <span class="s4">&quot;raw&quot;</span><span class="s2">,</span>
+                        <span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s1">) + self.size</span><span class="s2">,</span>
+                        <span class="s1">self.fp.tell()</span><span class="s2">,</span>
+                        <span class="s1">(rawmode</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">orientation)</span><span class="s2">,</span>
+                    <span class="s1">)</span>
+                <span class="s1">]</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s2">pass  </span><span class="s0"># cannot decode</span>
+
+    <span class="s2">def </span><span class="s1">load_end(self):</span>
+        <span class="s2">if </span><span class="s1">self._flip_horizontally:</span>
+            <span class="s1">self.im = self.im.transpose(Image.Transpose.FLIP_LEFT_RIGHT)</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Write TGA file</span>
+
+
+<span class="s1">SAVE = {</span>
+    <span class="s4">&quot;1&quot;</span><span class="s1">: (</span><span class="s4">&quot;1&quot;</span><span class="s2">, </span><span class="s3">1</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s3">3</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s4">&quot;L&quot;</span><span class="s1">: (</span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s3">8</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s3">3</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s4">&quot;LA&quot;</span><span class="s1">: (</span><span class="s4">&quot;LA&quot;</span><span class="s2">, </span><span class="s3">16</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s3">3</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s4">&quot;P&quot;</span><span class="s1">: (</span><span class="s4">&quot;P&quot;</span><span class="s2">, </span><span class="s3">8</span><span class="s2">, </span><span class="s3">1</span><span class="s2">, </span><span class="s3">1</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s4">&quot;RGB&quot;</span><span class="s1">: (</span><span class="s4">&quot;BGR&quot;</span><span class="s2">, </span><span class="s3">24</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s3">2</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s4">&quot;RGBA&quot;</span><span class="s1">: (</span><span class="s4">&quot;BGRA&quot;</span><span class="s2">, </span><span class="s3">32</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s3">2</span><span class="s1">)</span><span class="s2">,</span>
+<span class="s1">}</span>
+
+
+<span class="s2">def </span><span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename):</span>
+
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">rawmode</span><span class="s2">, </span><span class="s1">bits</span><span class="s2">, </span><span class="s1">colormaptype</span><span class="s2">, </span><span class="s1">imagetype = SAVE[im.mode]</span>
+    <span class="s2">except </span><span class="s1">KeyError </span><span class="s2">as </span><span class="s1">e:</span>
+        <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">f&quot;cannot write mode </span><span class="s2">{</span><span class="s1">im.mode</span><span class="s2">} </span><span class="s4">as TGA&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+
+    <span class="s2">if </span><span class="s4">&quot;rle&quot; </span><span class="s2">in </span><span class="s1">im.encoderinfo:</span>
+        <span class="s1">rle = im.encoderinfo[</span><span class="s4">&quot;rle&quot;</span><span class="s1">]</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">compression = im.encoderinfo.get(</span><span class="s4">&quot;compression&quot;</span><span class="s2">, </span><span class="s1">im.info.get(</span><span class="s4">&quot;compression&quot;</span><span class="s1">))</span>
+        <span class="s1">rle = compression == </span><span class="s4">&quot;tga_rle&quot;</span>
+    <span class="s2">if </span><span class="s1">rle:</span>
+        <span class="s1">imagetype += </span><span class="s3">8</span>
+
+    <span class="s1">id_section = im.encoderinfo.get(</span><span class="s4">&quot;id_section&quot;</span><span class="s2">, </span><span class="s1">im.info.get(</span><span class="s4">&quot;id_section&quot;</span><span class="s2">, </span><span class="s4">&quot;&quot;</span><span class="s1">))</span>
+    <span class="s1">id_len = len(id_section)</span>
+    <span class="s2">if </span><span class="s1">id_len &gt; </span><span class="s3">255</span><span class="s1">:</span>
+        <span class="s1">id_len = </span><span class="s3">255</span>
+        <span class="s1">id_section = id_section[:</span><span class="s3">255</span><span class="s1">]</span>
+        <span class="s1">warnings.warn(</span><span class="s4">&quot;id_section has been trimmed to 255 characters&quot;</span><span class="s1">)</span>
+
+    <span class="s2">if </span><span class="s1">colormaptype:</span>
+        <span class="s1">palette = im.im.getpalette(</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;BGR&quot;</span><span class="s1">)</span>
+        <span class="s1">colormaplength</span><span class="s2">, </span><span class="s1">colormapentry = len(palette) // </span><span class="s3">3</span><span class="s2">, </span><span class="s3">24</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">colormaplength</span><span class="s2">, </span><span class="s1">colormapentry = </span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span>
+
+    <span class="s2">if </span><span class="s1">im.mode </span><span class="s2">in </span><span class="s1">(</span><span class="s4">&quot;LA&quot;</span><span class="s2">, </span><span class="s4">&quot;RGBA&quot;</span><span class="s1">):</span>
+        <span class="s1">flags = </span><span class="s3">8</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">flags = </span><span class="s3">0</span>
+
+    <span class="s1">orientation = im.encoderinfo.get(</span><span class="s4">&quot;orientation&quot;</span><span class="s2">, </span><span class="s1">im.info.get(</span><span class="s4">&quot;orientation&quot;</span><span class="s2">, </span><span class="s1">-</span><span class="s3">1</span><span class="s1">))</span>
+    <span class="s2">if </span><span class="s1">orientation &gt; </span><span class="s3">0</span><span class="s1">:</span>
+        <span class="s1">flags = flags | </span><span class="s3">0x20</span>
+
+    <span class="s1">fp.write(</span>
+        <span class="s1">o8(id_len)</span>
+        <span class="s1">+ o8(colormaptype)</span>
+        <span class="s1">+ o8(imagetype)</span>
+        <span class="s1">+ o16(</span><span class="s3">0</span><span class="s1">)  </span><span class="s0"># colormapfirst</span>
+        <span class="s1">+ o16(colormaplength)</span>
+        <span class="s1">+ o8(colormapentry)</span>
+        <span class="s1">+ o16(</span><span class="s3">0</span><span class="s1">)</span>
+        <span class="s1">+ o16(</span><span class="s3">0</span><span class="s1">)</span>
+        <span class="s1">+ o16(im.size[</span><span class="s3">0</span><span class="s1">])</span>
+        <span class="s1">+ o16(im.size[</span><span class="s3">1</span><span class="s1">])</span>
+        <span class="s1">+ o8(bits)</span>
+        <span class="s1">+ o8(flags)</span>
+    <span class="s1">)</span>
+
+    <span class="s2">if </span><span class="s1">id_section:</span>
+        <span class="s1">fp.write(id_section)</span>
+
+    <span class="s2">if </span><span class="s1">colormaptype:</span>
+        <span class="s1">fp.write(palette)</span>
+
+    <span class="s2">if </span><span class="s1">rle:</span>
+        <span class="s1">ImageFile._save(</span>
+            <span class="s1">im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">[(</span><span class="s4">&quot;tga_rle&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s1">) + im.size</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">(rawmode</span><span class="s2">, </span><span class="s1">orientation))]</span>
+        <span class="s1">)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">ImageFile._save(</span>
+            <span class="s1">im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">[(</span><span class="s4">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s1">) + im.size</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">(rawmode</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">orientation))]</span>
+        <span class="s1">)</span>
+
+    <span class="s0"># write targa version 2 footer</span>
+    <span class="s1">fp.write(</span><span class="s5">b&quot;</span><span class="s2">\000</span><span class="s5">&quot; </span><span class="s1">* </span><span class="s3">8 </span><span class="s1">+ </span><span class="s5">b&quot;TRUEVISION-XFILE.&quot; </span><span class="s1">+ </span><span class="s5">b&quot;</span><span class="s2">\000</span><span class="s5">&quot;</span><span class="s1">)</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Registry</span>
+
+
+<span class="s1">Image.register_open(TgaImageFile.format</span><span class="s2">, </span><span class="s1">TgaImageFile)</span>
+<span class="s1">Image.register_save(TgaImageFile.format</span><span class="s2">, </span><span class="s1">_save)</span>
+
+<span class="s1">Image.register_extensions(TgaImageFile.format</span><span class="s2">, </span><span class="s1">[</span><span class="s4">&quot;.tga&quot;</span><span class="s2">, </span><span class="s4">&quot;.icb&quot;</span><span class="s2">, </span><span class="s4">&quot;.vda&quot;</span><span class="s2">, </span><span class="s4">&quot;.vst&quot;</span><span class="s1">])</span>
+
+<span class="s1">Image.register_mime(TgaImageFile.format</span><span class="s2">, </span><span class="s4">&quot;image/x-tga&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,139 @@
+<html>
+<head>
+<title>types.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6897bb;}
+.s4 { color: #6a8759;}
+.s5 { color: #629755; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+types.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># -*- coding: utf-8 -*-</span>
+<span class="s0"># This module is part of GitPython and is released under</span>
+<span class="s0"># the BSD License: http://www.opensource.org/licenses/bsd-license.php</span>
+<span class="s0"># flake8: noqa</span>
+
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">(</span>
+    <span class="s1">Dict</span><span class="s2">,</span>
+    <span class="s1">NoReturn</span><span class="s2">,</span>
+    <span class="s1">Sequence</span><span class="s2">,</span>
+    <span class="s1">Tuple</span><span class="s2">,</span>
+    <span class="s1">Union</span><span class="s2">,</span>
+    <span class="s1">Any</span><span class="s2">,</span>
+    <span class="s1">TYPE_CHECKING</span><span class="s2">,</span>
+    <span class="s1">TypeVar</span><span class="s2">,</span>
+<span class="s1">)  </span><span class="s0"># noqa: F401</span>
+
+<span class="s2">if </span><span class="s1">sys.version_info[:</span><span class="s3">2</span><span class="s1">] &gt;= (</span><span class="s3">3</span><span class="s2">, </span><span class="s3">8</span><span class="s1">):</span>
+    <span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">(</span>
+        <span class="s1">Literal</span><span class="s2">,</span>
+        <span class="s1">SupportsIndex</span><span class="s2">,</span>
+        <span class="s1">TypedDict</span><span class="s2">,</span>
+        <span class="s1">Protocol</span><span class="s2">,</span>
+        <span class="s1">runtime_checkable</span><span class="s2">,</span>
+    <span class="s1">)  </span><span class="s0"># noqa: F401</span>
+<span class="s2">else</span><span class="s1">:</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">(</span>
+        <span class="s1">Literal</span><span class="s2">,</span>
+        <span class="s1">SupportsIndex</span><span class="s2">,  </span><span class="s0"># noqa: F401</span>
+        <span class="s1">TypedDict</span><span class="s2">,</span>
+        <span class="s1">Protocol</span><span class="s2">,</span>
+        <span class="s1">runtime_checkable</span><span class="s2">,</span>
+    <span class="s1">)  </span><span class="s0"># noqa: F401</span>
+
+<span class="s0"># if sys.version_info[:2] &gt;= (3, 10):</span>
+<span class="s0">#     from typing import TypeGuard  # noqa: F401</span>
+<span class="s0"># else:</span>
+<span class="s0">#     from typing_extensions import TypeGuard  # noqa: F401</span>
+
+
+<span class="s2">if </span><span class="s1">sys.version_info[:</span><span class="s3">2</span><span class="s1">] &lt; (</span><span class="s3">3</span><span class="s2">, </span><span class="s3">9</span><span class="s1">):</span>
+    <span class="s1">PathLike = Union[str</span><span class="s2">, </span><span class="s1">os.PathLike]</span>
+<span class="s2">else</span><span class="s1">:</span>
+    <span class="s0"># os.PathLike only becomes subscriptable from Python 3.9 onwards</span>
+    <span class="s1">PathLike = Union[str</span><span class="s2">, </span><span class="s1">os.PathLike[str]]</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s2">from </span><span class="s1">git.repo </span><span class="s2">import </span><span class="s1">Repo</span>
+    <span class="s2">from </span><span class="s1">git.objects </span><span class="s2">import </span><span class="s1">Commit</span><span class="s2">, </span><span class="s1">Tree</span><span class="s2">, </span><span class="s1">TagObject</span><span class="s2">, </span><span class="s1">Blob</span>
+
+    <span class="s0"># from git.refs import SymbolicReference</span>
+
+<span class="s1">TBD = Any</span>
+<span class="s1">_T = TypeVar(</span><span class="s4">&quot;_T&quot;</span><span class="s1">)</span>
+
+<span class="s1">Tree_ish = Union[</span><span class="s4">&quot;Commit&quot;</span><span class="s2">, </span><span class="s4">&quot;Tree&quot;</span><span class="s1">]</span>
+<span class="s1">Commit_ish = Union[</span><span class="s4">&quot;Commit&quot;</span><span class="s2">, </span><span class="s4">&quot;TagObject&quot;</span><span class="s2">, </span><span class="s4">&quot;Blob&quot;</span><span class="s2">, </span><span class="s4">&quot;Tree&quot;</span><span class="s1">]</span>
+<span class="s1">Lit_commit_ish = Literal[</span><span class="s4">&quot;commit&quot;</span><span class="s2">, </span><span class="s4">&quot;tag&quot;</span><span class="s2">, </span><span class="s4">&quot;blob&quot;</span><span class="s2">, </span><span class="s4">&quot;tree&quot;</span><span class="s1">]</span>
+
+<span class="s0"># Config_levels ---------------------------------------------------------</span>
+
+<span class="s1">Lit_config_levels = Literal[</span><span class="s4">&quot;system&quot;</span><span class="s2">, </span><span class="s4">&quot;global&quot;</span><span class="s2">, </span><span class="s4">&quot;user&quot;</span><span class="s2">, </span><span class="s4">&quot;repository&quot;</span><span class="s1">]</span>
+
+
+<span class="s0"># def is_config_level(inp: str) -&gt; TypeGuard[Lit_config_levels]:</span>
+<span class="s0">#     # return inp in get_args(Lit_config_level)  # only py &gt;= 3.8</span>
+<span class="s0">#     return inp in (&quot;system&quot;, &quot;user&quot;, &quot;global&quot;, &quot;repository&quot;)</span>
+
+
+<span class="s1">ConfigLevels_Tup = Tuple[Literal[</span><span class="s4">&quot;system&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s1">Literal[</span><span class="s4">&quot;user&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s1">Literal[</span><span class="s4">&quot;global&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s1">Literal[</span><span class="s4">&quot;repository&quot;</span><span class="s1">]]</span>
+
+<span class="s0"># -----------------------------------------------------------------------------------</span>
+
+
+<span class="s2">def </span><span class="s1">assert_never(inp: NoReturn</span><span class="s2">, </span><span class="s1">raise_error: bool = </span><span class="s2">True, </span><span class="s1">exc: Union[Exception</span><span class="s2">, None</span><span class="s1">] = </span><span class="s2">None</span><span class="s1">) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+    <span class="s5">&quot;&quot;&quot;For use in exhaustive checking of literal or Enum in if/else chain. 
+    Should only be reached if all members not handled OR attempt to pass non-members through chain. 
+ 
+    If all members handled, type is Empty. Otherwise, will cause mypy error. 
+    If non-members given, should cause mypy error at variable creation. 
+ 
+    If raise_error is True, will also raise AssertionError or the Exception passed to exc. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">raise_error:</span>
+        <span class="s2">if </span><span class="s1">exc </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">f&quot;An unhandled Literal (</span><span class="s2">{</span><span class="s1">inp</span><span class="s2">}</span><span class="s4">) in an if/else chain was found&quot;</span><span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">exc</span>
+
+
+<span class="s2">class </span><span class="s1">Files_TD(TypedDict):</span>
+    <span class="s1">insertions: int</span>
+    <span class="s1">deletions: int</span>
+    <span class="s1">lines: int</span>
+
+
+<span class="s2">class </span><span class="s1">Total_TD(TypedDict):</span>
+    <span class="s1">insertions: int</span>
+    <span class="s1">deletions: int</span>
+    <span class="s1">lines: int</span>
+    <span class="s1">files: int</span>
+
+
+<span class="s2">class </span><span class="s1">HSH_TD(TypedDict):</span>
+    <span class="s1">total: Total_TD</span>
+    <span class="s1">files: Dict[PathLike</span><span class="s2">, </span><span class="s1">Files_TD]</span>
+
+
+<span class="s1">@runtime_checkable</span>
+<span class="s2">class </span><span class="s1">Has_Repo(Protocol):</span>
+    <span class="s1">repo: </span><span class="s4">&quot;Repo&quot;</span>
+
+
+<span class="s1">@runtime_checkable</span>
+<span class="s2">class </span><span class="s1">Has_id_attribute(Protocol):</span>
+    <span class="s1">_id_attribute_: str</span>
+</pre>
+</body>
+</html>

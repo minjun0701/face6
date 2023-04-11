@@ -1,0 +1,171 @@
+<html>
+<head>
+<title>repr.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #6a8759;}
+.s3 { color: #629755; font-style: italic;}
+.s4 { color: #808080;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+repr.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">inspect</span>
+<span class="s0">from </span><span class="s1">functools </span><span class="s0">import </span><span class="s1">partial</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">(</span>
+    <span class="s1">Any</span><span class="s0">,</span>
+    <span class="s1">Callable</span><span class="s0">,</span>
+    <span class="s1">Iterable</span><span class="s0">,</span>
+    <span class="s1">List</span><span class="s0">,</span>
+    <span class="s1">Optional</span><span class="s0">,</span>
+    <span class="s1">Tuple</span><span class="s0">,</span>
+    <span class="s1">Type</span><span class="s0">,</span>
+    <span class="s1">TypeVar</span><span class="s0">,</span>
+    <span class="s1">Union</span><span class="s0">,</span>
+    <span class="s1">overload</span><span class="s0">,</span>
+<span class="s1">)</span>
+
+<span class="s1">T = TypeVar(</span><span class="s2">&quot;T&quot;</span><span class="s1">)</span>
+
+
+<span class="s1">Result = Iterable[Union[Any</span><span class="s0">, </span><span class="s1">Tuple[Any]</span><span class="s0">, </span><span class="s1">Tuple[str</span><span class="s0">, </span><span class="s1">Any]</span><span class="s0">, </span><span class="s1">Tuple[str</span><span class="s0">, </span><span class="s1">Any</span><span class="s0">, </span><span class="s1">Any]]]</span>
+<span class="s1">RichReprResult = Result</span>
+
+
+<span class="s0">class </span><span class="s1">ReprError(Exception):</span>
+    <span class="s3">&quot;&quot;&quot;An error occurred when attempting to build a repr.&quot;&quot;&quot;</span>
+
+
+<span class="s1">@overload</span>
+<span class="s0">def </span><span class="s1">auto(cls: Optional[Type[T]]) -&gt; Type[T]:</span>
+    <span class="s1">...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s0">def </span><span class="s1">auto(*</span><span class="s0">, </span><span class="s1">angular: bool = </span><span class="s0">False</span><span class="s1">) -&gt; Callable[[Type[T]]</span><span class="s0">, </span><span class="s1">Type[T]]:</span>
+    <span class="s1">...</span>
+
+
+<span class="s0">def </span><span class="s1">auto(</span>
+    <span class="s1">cls: Optional[Type[T]] = </span><span class="s0">None, </span><span class="s1">*</span><span class="s0">, </span><span class="s1">angular: Optional[bool] = </span><span class="s0">None</span>
+<span class="s1">) -&gt; Union[Type[T]</span><span class="s0">, </span><span class="s1">Callable[[Type[T]]</span><span class="s0">, </span><span class="s1">Type[T]]]:</span>
+    <span class="s3">&quot;&quot;&quot;Class decorator to create __repr__ from __rich_repr__&quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">do_replace(cls: Type[T]</span><span class="s0">, </span><span class="s1">angular: Optional[bool] = </span><span class="s0">None</span><span class="s1">) -&gt; Type[T]:</span>
+        <span class="s0">def </span><span class="s1">auto_repr(self: T) -&gt; str:</span>
+            <span class="s3">&quot;&quot;&quot;Create repr string from __rich_repr__&quot;&quot;&quot;</span>
+            <span class="s1">repr_str: List[str] = []</span>
+            <span class="s1">append = repr_str.append</span>
+
+            <span class="s1">angular: bool = getattr(self.__rich_repr__</span><span class="s0">, </span><span class="s2">&quot;angular&quot;</span><span class="s0">, False</span><span class="s1">)  </span><span class="s4"># type: ignore[attr-defined]</span>
+            <span class="s0">for </span><span class="s1">arg </span><span class="s0">in </span><span class="s1">self.__rich_repr__():  </span><span class="s4"># type: ignore[attr-defined]</span>
+                <span class="s0">if </span><span class="s1">isinstance(arg</span><span class="s0">, </span><span class="s1">tuple):</span>
+                    <span class="s0">if </span><span class="s1">len(arg) == </span><span class="s5">1</span><span class="s1">:</span>
+                        <span class="s1">append(repr(arg[</span><span class="s5">0</span><span class="s1">]))</span>
+                    <span class="s0">else</span><span class="s1">:</span>
+                        <span class="s1">key</span><span class="s0">, </span><span class="s1">value</span><span class="s0">, </span><span class="s1">*default = arg</span>
+                        <span class="s0">if </span><span class="s1">key </span><span class="s0">is None</span><span class="s1">:</span>
+                            <span class="s1">append(repr(value))</span>
+                        <span class="s0">else</span><span class="s1">:</span>
+                            <span class="s0">if </span><span class="s1">len(default) </span><span class="s0">and </span><span class="s1">default[</span><span class="s5">0</span><span class="s1">] == value:</span>
+                                <span class="s0">continue</span>
+                            <span class="s1">append(</span><span class="s2">f&quot;</span><span class="s0">{</span><span class="s1">key</span><span class="s0">}</span><span class="s2">=</span><span class="s0">{</span><span class="s1">value</span><span class="s0">!r}</span><span class="s2">&quot;</span><span class="s1">)</span>
+                <span class="s0">else</span><span class="s1">:</span>
+                    <span class="s1">append(repr(arg))</span>
+            <span class="s0">if </span><span class="s1">angular:</span>
+                <span class="s0">return </span><span class="s2">f&quot;&lt;</span><span class="s0">{</span><span class="s1">self.__class__.__name__</span><span class="s0">} {</span><span class="s2">' '</span><span class="s1">.join(repr_str)</span><span class="s0">}</span><span class="s2">&gt;&quot;</span>
+            <span class="s0">else</span><span class="s1">:</span>
+                <span class="s0">return </span><span class="s2">f&quot;</span><span class="s0">{</span><span class="s1">self.__class__.__name__</span><span class="s0">}</span><span class="s2">(</span><span class="s0">{</span><span class="s2">', '</span><span class="s1">.join(repr_str)</span><span class="s0">}</span><span class="s2">)&quot;</span>
+
+        <span class="s0">def </span><span class="s1">auto_rich_repr(self: Type[T]) -&gt; Result:</span>
+            <span class="s3">&quot;&quot;&quot;Auto generate __rich_rep__ from signature of __init__&quot;&quot;&quot;</span>
+            <span class="s0">try</span><span class="s1">:</span>
+                <span class="s1">signature = inspect.signature(self.__init__)</span>
+                <span class="s0">for </span><span class="s1">name</span><span class="s0">, </span><span class="s1">param </span><span class="s0">in </span><span class="s1">signature.parameters.items():</span>
+                    <span class="s0">if </span><span class="s1">param.kind == param.POSITIONAL_ONLY:</span>
+                        <span class="s0">yield </span><span class="s1">getattr(self</span><span class="s0">, </span><span class="s1">name)</span>
+                    <span class="s0">elif </span><span class="s1">param.kind </span><span class="s0">in </span><span class="s1">(</span>
+                        <span class="s1">param.POSITIONAL_OR_KEYWORD</span><span class="s0">,</span>
+                        <span class="s1">param.KEYWORD_ONLY</span><span class="s0">,</span>
+                    <span class="s1">):</span>
+                        <span class="s0">if </span><span class="s1">param.default == param.empty:</span>
+                            <span class="s0">yield </span><span class="s1">getattr(self</span><span class="s0">, </span><span class="s1">param.name)</span>
+                        <span class="s0">else</span><span class="s1">:</span>
+                            <span class="s0">yield </span><span class="s1">param.name</span><span class="s0">, </span><span class="s1">getattr(self</span><span class="s0">, </span><span class="s1">param.name)</span><span class="s0">, </span><span class="s1">param.default</span>
+            <span class="s0">except </span><span class="s1">Exception </span><span class="s0">as </span><span class="s1">error:</span>
+                <span class="s0">raise </span><span class="s1">ReprError(</span>
+                    <span class="s2">f&quot;Failed to auto generate __rich_repr__; </span><span class="s0">{</span><span class="s1">error</span><span class="s0">}</span><span class="s2">&quot;</span>
+                <span class="s1">) </span><span class="s0">from None</span>
+
+        <span class="s0">if not </span><span class="s1">hasattr(cls</span><span class="s0">, </span><span class="s2">&quot;__rich_repr__&quot;</span><span class="s1">):</span>
+            <span class="s1">auto_rich_repr.__doc__ = </span><span class="s2">&quot;Build a rich repr&quot;</span>
+            <span class="s1">cls.__rich_repr__ = auto_rich_repr  </span><span class="s4"># type: ignore[attr-defined]</span>
+
+        <span class="s1">auto_repr.__doc__ = </span><span class="s2">&quot;Return repr(self)&quot;</span>
+        <span class="s1">cls.__repr__ = auto_repr  </span><span class="s4"># type: ignore[assignment]</span>
+        <span class="s0">if </span><span class="s1">angular </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">cls.__rich_repr__.angular = angular  </span><span class="s4"># type: ignore[attr-defined]</span>
+        <span class="s0">return </span><span class="s1">cls</span>
+
+    <span class="s0">if </span><span class="s1">cls </span><span class="s0">is None</span><span class="s1">:</span>
+        <span class="s0">return </span><span class="s1">partial(do_replace</span><span class="s0">, </span><span class="s1">angular=angular)</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s0">return </span><span class="s1">do_replace(cls</span><span class="s0">, </span><span class="s1">angular=angular)</span>
+
+
+<span class="s1">@overload</span>
+<span class="s0">def </span><span class="s1">rich_repr(cls: Optional[Type[T]]) -&gt; Type[T]:</span>
+    <span class="s1">...</span>
+
+
+<span class="s1">@overload</span>
+<span class="s0">def </span><span class="s1">rich_repr(*</span><span class="s0">, </span><span class="s1">angular: bool = </span><span class="s0">False</span><span class="s1">) -&gt; Callable[[Type[T]]</span><span class="s0">, </span><span class="s1">Type[T]]:</span>
+    <span class="s1">...</span>
+
+
+<span class="s0">def </span><span class="s1">rich_repr(</span>
+    <span class="s1">cls: Optional[Type[T]] = </span><span class="s0">None, </span><span class="s1">*</span><span class="s0">, </span><span class="s1">angular: bool = </span><span class="s0">False</span>
+<span class="s1">) -&gt; Union[Type[T]</span><span class="s0">, </span><span class="s1">Callable[[Type[T]]</span><span class="s0">, </span><span class="s1">Type[T]]]:</span>
+    <span class="s0">if </span><span class="s1">cls </span><span class="s0">is None</span><span class="s1">:</span>
+        <span class="s0">return </span><span class="s1">auto(angular=angular)</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s0">return </span><span class="s1">auto(cls)</span>
+
+
+<span class="s0">if </span><span class="s1">__name__ == </span><span class="s2">&quot;__main__&quot;</span><span class="s1">:</span>
+
+    <span class="s1">@auto</span>
+    <span class="s0">class </span><span class="s1">Foo:</span>
+        <span class="s0">def </span><span class="s1">__rich_repr__(self) -&gt; Result:</span>
+            <span class="s0">yield </span><span class="s2">&quot;foo&quot;</span>
+            <span class="s0">yield </span><span class="s2">&quot;bar&quot;</span><span class="s0">, </span><span class="s1">{</span><span class="s2">&quot;shopping&quot;</span><span class="s1">: [</span><span class="s2">&quot;eggs&quot;</span><span class="s0">, </span><span class="s2">&quot;ham&quot;</span><span class="s0">, </span><span class="s2">&quot;pineapple&quot;</span><span class="s1">]}</span>
+            <span class="s0">yield </span><span class="s2">&quot;buy&quot;</span><span class="s0">, </span><span class="s2">&quot;hand sanitizer&quot;</span>
+
+    <span class="s1">foo = Foo()</span>
+    <span class="s0">from </span><span class="s1">pip._vendor.rich.console </span><span class="s0">import </span><span class="s1">Console</span>
+
+    <span class="s1">console = Console()</span>
+
+    <span class="s1">console.rule(</span><span class="s2">&quot;Standard repr&quot;</span><span class="s1">)</span>
+    <span class="s1">console.print(foo)</span>
+
+    <span class="s1">console.print(foo</span><span class="s0">, </span><span class="s1">width=</span><span class="s5">60</span><span class="s1">)</span>
+    <span class="s1">console.print(foo</span><span class="s0">, </span><span class="s1">width=</span><span class="s5">30</span><span class="s1">)</span>
+
+    <span class="s1">console.rule(</span><span class="s2">&quot;Angular repr&quot;</span><span class="s1">)</span>
+    <span class="s1">Foo.__rich_repr__.angular = </span><span class="s0">True  </span><span class="s4"># type: ignore[attr-defined]</span>
+
+    <span class="s1">console.print(foo)</span>
+
+    <span class="s1">console.print(foo</span><span class="s0">, </span><span class="s1">width=</span><span class="s5">60</span><span class="s1">)</span>
+    <span class="s1">console.print(foo</span><span class="s0">, </span><span class="s1">width=</span><span class="s5">30</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

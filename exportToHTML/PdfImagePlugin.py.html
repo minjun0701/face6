@@ -1,0 +1,293 @@
+<html>
+<head>
+<title>PdfImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6a8759;}
+.s4 { color: #6897bb;}
+.s5 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+PdfImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># PDF (Acrobat) file handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1996-07-16 fl   Created</span>
+<span class="s0"># 1997-01-18 fl   Fixed header</span>
+<span class="s0"># 2004-02-21 fl   Fixes for 1/L/CMYK images, etc.</span>
+<span class="s0"># 2004-02-24 fl   Fixes for 1 and P images.</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2004 by Secret Labs AB.  All rights reserved.</span>
+<span class="s0"># Copyright (c) 1996-1997 by Fredrik Lundh.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for PDF images (output only).</span>
+<span class="s0">##</span>
+
+<span class="s2">import </span><span class="s1">io</span>
+<span class="s2">import </span><span class="s1">math</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">time</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span><span class="s2">, </span><span class="s1">ImageSequence</span><span class="s2">, </span><span class="s1">PdfParser</span><span class="s2">, </span><span class="s1">__version__</span><span class="s2">, </span><span class="s1">features</span>
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+
+<span class="s0"># object ids:</span>
+<span class="s0">#  1. catalogue</span>
+<span class="s0">#  2. pages</span>
+<span class="s0">#  3. image</span>
+<span class="s0">#  4. page</span>
+<span class="s0">#  5. page contents</span>
+
+
+<span class="s2">def </span><span class="s1">_save_all(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename):</span>
+    <span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename</span><span class="s2">, </span><span class="s1">save_all=</span><span class="s2">True</span><span class="s1">)</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># (Internal) Image save plugin for the PDF format.</span>
+
+
+<span class="s2">def </span><span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename</span><span class="s2">, </span><span class="s1">save_all=</span><span class="s2">False</span><span class="s1">):</span>
+    <span class="s1">is_appending = im.encoderinfo.get(</span><span class="s3">&quot;append&quot;</span><span class="s2">, False</span><span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">is_appending:</span>
+        <span class="s1">existing_pdf = PdfParser.PdfParser(f=fp</span><span class="s2">, </span><span class="s1">filename=filename</span><span class="s2">, </span><span class="s1">mode=</span><span class="s3">&quot;r+b&quot;</span><span class="s1">)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">existing_pdf = PdfParser.PdfParser(f=fp</span><span class="s2">, </span><span class="s1">filename=filename</span><span class="s2">, </span><span class="s1">mode=</span><span class="s3">&quot;w+b&quot;</span><span class="s1">)</span>
+
+    <span class="s1">resolution = im.encoderinfo.get(</span><span class="s3">&quot;resolution&quot;</span><span class="s2">, </span><span class="s4">72.0</span><span class="s1">)</span>
+
+    <span class="s1">info = {</span>
+        <span class="s3">&quot;title&quot;</span><span class="s1">: </span><span class="s2">None</span>
+        <span class="s2">if </span><span class="s1">is_appending</span>
+        <span class="s2">else </span><span class="s1">os.path.splitext(os.path.basename(filename))[</span><span class="s4">0</span><span class="s1">]</span><span class="s2">,</span>
+        <span class="s3">&quot;author&quot;</span><span class="s1">: </span><span class="s2">None,</span>
+        <span class="s3">&quot;subject&quot;</span><span class="s1">: </span><span class="s2">None,</span>
+        <span class="s3">&quot;keywords&quot;</span><span class="s1">: </span><span class="s2">None,</span>
+        <span class="s3">&quot;creator&quot;</span><span class="s1">: </span><span class="s2">None,</span>
+        <span class="s3">&quot;producer&quot;</span><span class="s1">: </span><span class="s2">None,</span>
+        <span class="s3">&quot;creationDate&quot;</span><span class="s1">: </span><span class="s2">None if </span><span class="s1">is_appending </span><span class="s2">else </span><span class="s1">time.gmtime()</span><span class="s2">,</span>
+        <span class="s3">&quot;modDate&quot;</span><span class="s1">: </span><span class="s2">None if </span><span class="s1">is_appending </span><span class="s2">else </span><span class="s1">time.gmtime()</span><span class="s2">,</span>
+    <span class="s1">}</span>
+    <span class="s2">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">default </span><span class="s2">in </span><span class="s1">info.items():</span>
+        <span class="s1">v = im.encoderinfo.get(k) </span><span class="s2">if </span><span class="s1">k </span><span class="s2">in </span><span class="s1">im.encoderinfo </span><span class="s2">else </span><span class="s1">default</span>
+        <span class="s2">if </span><span class="s1">v:</span>
+            <span class="s1">existing_pdf.info[k[</span><span class="s4">0</span><span class="s1">].upper() + k[</span><span class="s4">1</span><span class="s1">:]] = v</span>
+
+    <span class="s0">#</span>
+    <span class="s0"># make sure image data is available</span>
+    <span class="s1">im.load()</span>
+
+    <span class="s1">existing_pdf.start_writing()</span>
+    <span class="s1">existing_pdf.write_header()</span>
+    <span class="s1">existing_pdf.write_comment(</span><span class="s3">f&quot;created by Pillow </span><span class="s2">{</span><span class="s1">__version__</span><span class="s2">} </span><span class="s3">PDF driver&quot;</span><span class="s1">)</span>
+
+    <span class="s0">#</span>
+    <span class="s0"># pages</span>
+    <span class="s1">ims = [im]</span>
+    <span class="s2">if </span><span class="s1">save_all:</span>
+        <span class="s1">append_images = im.encoderinfo.get(</span><span class="s3">&quot;append_images&quot;</span><span class="s2">, </span><span class="s1">[])</span>
+        <span class="s2">for </span><span class="s1">append_im </span><span class="s2">in </span><span class="s1">append_images:</span>
+            <span class="s1">append_im.encoderinfo = im.encoderinfo.copy()</span>
+            <span class="s1">ims.append(append_im)</span>
+    <span class="s1">number_of_pages = </span><span class="s4">0</span>
+    <span class="s1">image_refs = []</span>
+    <span class="s1">page_refs = []</span>
+    <span class="s1">contents_refs = []</span>
+    <span class="s2">for </span><span class="s1">im </span><span class="s2">in </span><span class="s1">ims:</span>
+        <span class="s1">im_number_of_pages = </span><span class="s4">1</span>
+        <span class="s2">if </span><span class="s1">save_all:</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">im_number_of_pages = im.n_frames</span>
+            <span class="s2">except </span><span class="s1">AttributeError:</span>
+                <span class="s0"># Image format does not have n_frames.</span>
+                <span class="s0"># It is a single frame image</span>
+                <span class="s2">pass</span>
+        <span class="s1">number_of_pages += im_number_of_pages</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(im_number_of_pages):</span>
+            <span class="s1">image_refs.append(existing_pdf.next_object_id(</span><span class="s4">0</span><span class="s1">))</span>
+            <span class="s1">page_refs.append(existing_pdf.next_object_id(</span><span class="s4">0</span><span class="s1">))</span>
+            <span class="s1">contents_refs.append(existing_pdf.next_object_id(</span><span class="s4">0</span><span class="s1">))</span>
+            <span class="s1">existing_pdf.pages.append(page_refs[-</span><span class="s4">1</span><span class="s1">])</span>
+
+    <span class="s0">#</span>
+    <span class="s0"># catalog and list of pages</span>
+    <span class="s1">existing_pdf.write_catalog()</span>
+
+    <span class="s1">page_number = </span><span class="s4">0</span>
+    <span class="s2">for </span><span class="s1">im_sequence </span><span class="s2">in </span><span class="s1">ims:</span>
+        <span class="s1">im_pages = ImageSequence.Iterator(im_sequence) </span><span class="s2">if </span><span class="s1">save_all </span><span class="s2">else </span><span class="s1">[im_sequence]</span>
+        <span class="s2">for </span><span class="s1">im </span><span class="s2">in </span><span class="s1">im_pages:</span>
+            <span class="s0"># FIXME: Should replace ASCIIHexDecode with RunLengthDecode</span>
+            <span class="s0"># (packbits) or LZWDecode (tiff/lzw compression).  Note that</span>
+            <span class="s0"># PDF 1.2 also supports Flatedecode (zip compression).</span>
+
+            <span class="s1">bits = </span><span class="s4">8</span>
+            <span class="s1">params = </span><span class="s2">None</span>
+            <span class="s1">decode = </span><span class="s2">None</span>
+
+            <span class="s0">#</span>
+            <span class="s0"># Get image characteristics</span>
+
+            <span class="s1">width</span><span class="s2">, </span><span class="s1">height = im.size</span>
+
+            <span class="s2">if </span><span class="s1">im.mode == </span><span class="s3">&quot;1&quot;</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">features.check(</span><span class="s3">&quot;libtiff&quot;</span><span class="s1">):</span>
+                    <span class="s1">filter = </span><span class="s3">&quot;CCITTFaxDecode&quot;</span>
+                    <span class="s1">bits = </span><span class="s4">1</span>
+                    <span class="s1">params = PdfParser.PdfArray(</span>
+                        <span class="s1">[</span>
+                            <span class="s1">PdfParser.PdfDict(</span>
+                                <span class="s1">{</span>
+                                    <span class="s3">&quot;K&quot;</span><span class="s1">: -</span><span class="s4">1</span><span class="s2">,</span>
+                                    <span class="s3">&quot;BlackIs1&quot;</span><span class="s1">: </span><span class="s2">True,</span>
+                                    <span class="s3">&quot;Columns&quot;</span><span class="s1">: width</span><span class="s2">,</span>
+                                    <span class="s3">&quot;Rows&quot;</span><span class="s1">: height</span><span class="s2">,</span>
+                                <span class="s1">}</span>
+                            <span class="s1">)</span>
+                        <span class="s1">]</span>
+                    <span class="s1">)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">filter = </span><span class="s3">&quot;DCTDecode&quot;</span>
+                <span class="s1">colorspace = PdfParser.PdfName(</span><span class="s3">&quot;DeviceGray&quot;</span><span class="s1">)</span>
+                <span class="s1">procset = </span><span class="s3">&quot;ImageB&quot;  </span><span class="s0"># grayscale</span>
+            <span class="s2">elif </span><span class="s1">im.mode == </span><span class="s3">&quot;L&quot;</span><span class="s1">:</span>
+                <span class="s1">filter = </span><span class="s3">&quot;DCTDecode&quot;</span>
+                <span class="s0"># params = f&quot;&lt;&lt; /Predictor 15 /Columns {width-2} &gt;&gt;&quot;</span>
+                <span class="s1">colorspace = PdfParser.PdfName(</span><span class="s3">&quot;DeviceGray&quot;</span><span class="s1">)</span>
+                <span class="s1">procset = </span><span class="s3">&quot;ImageB&quot;  </span><span class="s0"># grayscale</span>
+            <span class="s2">elif </span><span class="s1">im.mode == </span><span class="s3">&quot;P&quot;</span><span class="s1">:</span>
+                <span class="s1">filter = </span><span class="s3">&quot;ASCIIHexDecode&quot;</span>
+                <span class="s1">palette = im.getpalette()</span>
+                <span class="s1">colorspace = [</span>
+                    <span class="s1">PdfParser.PdfName(</span><span class="s3">&quot;Indexed&quot;</span><span class="s1">)</span><span class="s2">,</span>
+                    <span class="s1">PdfParser.PdfName(</span><span class="s3">&quot;DeviceRGB&quot;</span><span class="s1">)</span><span class="s2">,</span>
+                    <span class="s4">255</span><span class="s2">,</span>
+                    <span class="s1">PdfParser.PdfBinary(palette)</span><span class="s2">,</span>
+                <span class="s1">]</span>
+                <span class="s1">procset = </span><span class="s3">&quot;ImageI&quot;  </span><span class="s0"># indexed color</span>
+            <span class="s2">elif </span><span class="s1">im.mode == </span><span class="s3">&quot;RGB&quot;</span><span class="s1">:</span>
+                <span class="s1">filter = </span><span class="s3">&quot;DCTDecode&quot;</span>
+                <span class="s1">colorspace = PdfParser.PdfName(</span><span class="s3">&quot;DeviceRGB&quot;</span><span class="s1">)</span>
+                <span class="s1">procset = </span><span class="s3">&quot;ImageC&quot;  </span><span class="s0"># color images</span>
+            <span class="s2">elif </span><span class="s1">im.mode == </span><span class="s3">&quot;CMYK&quot;</span><span class="s1">:</span>
+                <span class="s1">filter = </span><span class="s3">&quot;DCTDecode&quot;</span>
+                <span class="s1">colorspace = PdfParser.PdfName(</span><span class="s3">&quot;DeviceCMYK&quot;</span><span class="s1">)</span>
+                <span class="s1">procset = </span><span class="s3">&quot;ImageC&quot;  </span><span class="s0"># color images</span>
+                <span class="s1">decode = [</span><span class="s4">1</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s4">1</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s4">1</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s4">1</span><span class="s2">, </span><span class="s4">0</span><span class="s1">]</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">f&quot;cannot save mode </span><span class="s2">{</span><span class="s1">im.mode</span><span class="s2">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+
+            <span class="s0">#</span>
+            <span class="s0"># image</span>
+
+            <span class="s1">op = io.BytesIO()</span>
+
+            <span class="s2">if </span><span class="s1">filter == </span><span class="s3">&quot;ASCIIHexDecode&quot;</span><span class="s1">:</span>
+                <span class="s1">ImageFile._save(im</span><span class="s2">, </span><span class="s1">op</span><span class="s2">, </span><span class="s1">[(</span><span class="s3">&quot;hex&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + im.size</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">im.mode)])</span>
+            <span class="s2">elif </span><span class="s1">filter == </span><span class="s3">&quot;CCITTFaxDecode&quot;</span><span class="s1">:</span>
+                <span class="s1">im.save(</span>
+                    <span class="s1">op</span><span class="s2">,</span>
+                    <span class="s3">&quot;TIFF&quot;</span><span class="s2">,</span>
+                    <span class="s1">compression=</span><span class="s3">&quot;group4&quot;</span><span class="s2">,</span>
+                    <span class="s0"># use a single strip</span>
+                    <span class="s1">strip_size=math.ceil(im.width / </span><span class="s4">8</span><span class="s1">) * im.height</span><span class="s2">,</span>
+                <span class="s1">)</span>
+            <span class="s2">elif </span><span class="s1">filter == </span><span class="s3">&quot;DCTDecode&quot;</span><span class="s1">:</span>
+                <span class="s1">Image.SAVE[</span><span class="s3">&quot;JPEG&quot;</span><span class="s1">](im</span><span class="s2">, </span><span class="s1">op</span><span class="s2">, </span><span class="s1">filename)</span>
+            <span class="s2">elif </span><span class="s1">filter == </span><span class="s3">&quot;FlateDecode&quot;</span><span class="s1">:</span>
+                <span class="s1">ImageFile._save(im</span><span class="s2">, </span><span class="s1">op</span><span class="s2">, </span><span class="s1">[(</span><span class="s3">&quot;zip&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + im.size</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">im.mode)])</span>
+            <span class="s2">elif </span><span class="s1">filter == </span><span class="s3">&quot;RunLengthDecode&quot;</span><span class="s1">:</span>
+                <span class="s1">ImageFile._save(im</span><span class="s2">, </span><span class="s1">op</span><span class="s2">, </span><span class="s1">[(</span><span class="s3">&quot;packbits&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + im.size</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">im.mode)])</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s3">f&quot;unsupported PDF filter (</span><span class="s2">{</span><span class="s1">filter</span><span class="s2">}</span><span class="s3">)&quot;</span><span class="s1">)</span>
+
+            <span class="s1">stream = op.getvalue()</span>
+            <span class="s2">if </span><span class="s1">filter == </span><span class="s3">&quot;CCITTFaxDecode&quot;</span><span class="s1">:</span>
+                <span class="s1">stream = stream[</span><span class="s4">8</span><span class="s1">:]</span>
+                <span class="s1">filter = PdfParser.PdfArray([PdfParser.PdfName(filter)])</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">filter = PdfParser.PdfName(filter)</span>
+
+            <span class="s1">existing_pdf.write_obj(</span>
+                <span class="s1">image_refs[page_number]</span><span class="s2">,</span>
+                <span class="s1">stream=stream</span><span class="s2">,</span>
+                <span class="s1">Type=PdfParser.PdfName(</span><span class="s3">&quot;XObject&quot;</span><span class="s1">)</span><span class="s2">,</span>
+                <span class="s1">Subtype=PdfParser.PdfName(</span><span class="s3">&quot;Image&quot;</span><span class="s1">)</span><span class="s2">,</span>
+                <span class="s1">Width=width</span><span class="s2">,  </span><span class="s0"># * 72.0 / resolution,</span>
+                <span class="s1">Height=height</span><span class="s2">,  </span><span class="s0"># * 72.0 / resolution,</span>
+                <span class="s1">Filter=filter</span><span class="s2">,</span>
+                <span class="s1">BitsPerComponent=bits</span><span class="s2">,</span>
+                <span class="s1">Decode=decode</span><span class="s2">,</span>
+                <span class="s1">DecodeParms=params</span><span class="s2">,</span>
+                <span class="s1">ColorSpace=colorspace</span><span class="s2">,</span>
+            <span class="s1">)</span>
+
+            <span class="s0">#</span>
+            <span class="s0"># page</span>
+
+            <span class="s1">existing_pdf.write_page(</span>
+                <span class="s1">page_refs[page_number]</span><span class="s2">,</span>
+                <span class="s1">Resources=PdfParser.PdfDict(</span>
+                    <span class="s1">ProcSet=[PdfParser.PdfName(</span><span class="s3">&quot;PDF&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s1">PdfParser.PdfName(procset)]</span><span class="s2">,</span>
+                    <span class="s1">XObject=PdfParser.PdfDict(image=image_refs[page_number])</span><span class="s2">,</span>
+                <span class="s1">)</span><span class="s2">,</span>
+                <span class="s1">MediaBox=[</span>
+                    <span class="s4">0</span><span class="s2">,</span>
+                    <span class="s4">0</span><span class="s2">,</span>
+                    <span class="s1">width * </span><span class="s4">72.0 </span><span class="s1">/ resolution</span><span class="s2">,</span>
+                    <span class="s1">height * </span><span class="s4">72.0 </span><span class="s1">/ resolution</span><span class="s2">,</span>
+                <span class="s1">]</span><span class="s2">,</span>
+                <span class="s1">Contents=contents_refs[page_number]</span><span class="s2">,</span>
+            <span class="s1">)</span>
+
+            <span class="s0">#</span>
+            <span class="s0"># page contents</span>
+
+            <span class="s1">page_contents = </span><span class="s5">b&quot;q %f 0 0 %f 0 0 cm /image Do Q</span><span class="s2">\n</span><span class="s5">&quot; </span><span class="s1">% (</span>
+                <span class="s1">width * </span><span class="s4">72.0 </span><span class="s1">/ resolution</span><span class="s2">,</span>
+                <span class="s1">height * </span><span class="s4">72.0 </span><span class="s1">/ resolution</span><span class="s2">,</span>
+            <span class="s1">)</span>
+
+            <span class="s1">existing_pdf.write_obj(contents_refs[page_number]</span><span class="s2">, </span><span class="s1">stream=page_contents)</span>
+
+            <span class="s1">page_number += </span><span class="s4">1</span>
+
+    <span class="s0">#</span>
+    <span class="s0"># trailer</span>
+    <span class="s1">existing_pdf.write_xref_and_trailer()</span>
+    <span class="s2">if </span><span class="s1">hasattr(fp</span><span class="s2">, </span><span class="s3">&quot;flush&quot;</span><span class="s1">):</span>
+        <span class="s1">fp.flush()</span>
+    <span class="s1">existing_pdf.close()</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+
+
+<span class="s1">Image.register_save(</span><span class="s3">&quot;PDF&quot;</span><span class="s2">, </span><span class="s1">_save)</span>
+<span class="s1">Image.register_save_all(</span><span class="s3">&quot;PDF&quot;</span><span class="s2">, </span><span class="s1">_save_all)</span>
+
+<span class="s1">Image.register_extension(</span><span class="s3">&quot;PDF&quot;</span><span class="s2">, </span><span class="s3">&quot;.pdf&quot;</span><span class="s1">)</span>
+
+<span class="s1">Image.register_mime(</span><span class="s3">&quot;PDF&quot;</span><span class="s2">, </span><span class="s3">&quot;application/pdf&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

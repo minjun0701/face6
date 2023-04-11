@@ -1,0 +1,790 @@
+<html>
+<head>
+<title>symbolic.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #808080;}
+.s3 { color: #6a8759;}
+.s4 { color: #629755; font-style: italic;}
+.s5 { color: #6897bb;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+symbolic.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">git.types </span><span class="s0">import </span><span class="s1">PathLike</span>
+<span class="s0">import </span><span class="s1">os</span>
+
+<span class="s0">from </span><span class="s1">git.compat </span><span class="s0">import </span><span class="s1">defenc</span>
+<span class="s0">from </span><span class="s1">git.objects </span><span class="s0">import </span><span class="s1">Object</span>
+<span class="s0">from </span><span class="s1">git.objects.commit </span><span class="s0">import </span><span class="s1">Commit</span>
+<span class="s0">from </span><span class="s1">git.util </span><span class="s0">import </span><span class="s1">(</span>
+    <span class="s1">join_path</span><span class="s0">,</span>
+    <span class="s1">join_path_native</span><span class="s0">,</span>
+    <span class="s1">to_native_path_linux</span><span class="s0">,</span>
+    <span class="s1">assure_directory_exists</span><span class="s0">,</span>
+    <span class="s1">hex_to_bin</span><span class="s0">,</span>
+    <span class="s1">LockedFD</span><span class="s0">,</span>
+<span class="s1">)</span>
+<span class="s0">from </span><span class="s1">gitdb.exc </span><span class="s0">import </span><span class="s1">BadObject</span><span class="s0">, </span><span class="s1">BadName</span>
+
+<span class="s0">from </span><span class="s1">.log </span><span class="s0">import </span><span class="s1">RefLog</span>
+
+<span class="s2"># typing ------------------------------------------------------------------</span>
+
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">(</span>
+    <span class="s1">Any</span><span class="s0">,</span>
+    <span class="s1">Iterator</span><span class="s0">,</span>
+    <span class="s1">List</span><span class="s0">,</span>
+    <span class="s1">Tuple</span><span class="s0">,</span>
+    <span class="s1">Type</span><span class="s0">,</span>
+    <span class="s1">TypeVar</span><span class="s0">,</span>
+    <span class="s1">Union</span><span class="s0">,</span>
+    <span class="s1">TYPE_CHECKING</span><span class="s0">,</span>
+    <span class="s1">cast</span><span class="s0">,</span>
+<span class="s1">)  </span><span class="s2"># NOQA</span>
+<span class="s0">from </span><span class="s1">git.types </span><span class="s0">import </span><span class="s1">Commit_ish</span><span class="s0">, </span><span class="s1">PathLike  </span><span class="s2"># NOQA</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s0">from </span><span class="s1">git.repo </span><span class="s0">import </span><span class="s1">Repo</span>
+    <span class="s0">from </span><span class="s1">git.refs </span><span class="s0">import </span><span class="s1">Head</span><span class="s0">, </span><span class="s1">TagReference</span><span class="s0">, </span><span class="s1">RemoteReference</span><span class="s0">, </span><span class="s1">Reference</span>
+    <span class="s0">from </span><span class="s1">.log </span><span class="s0">import </span><span class="s1">RefLogEntry</span>
+    <span class="s0">from </span><span class="s1">git.config </span><span class="s0">import </span><span class="s1">GitConfigParser</span>
+    <span class="s0">from </span><span class="s1">git.objects.commit </span><span class="s0">import </span><span class="s1">Actor</span>
+
+
+<span class="s1">T_References = TypeVar(</span><span class="s3">&quot;T_References&quot;</span><span class="s0">, </span><span class="s1">bound=</span><span class="s3">&quot;SymbolicReference&quot;</span><span class="s1">)</span>
+
+<span class="s2"># ------------------------------------------------------------------------------</span>
+
+
+<span class="s1">__all__ = [</span><span class="s3">&quot;SymbolicReference&quot;</span><span class="s1">]</span>
+
+
+<span class="s0">def </span><span class="s1">_git_dir(repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s0">, </span><span class="s1">path: Union[PathLike</span><span class="s0">, None</span><span class="s1">]) -&gt; PathLike:</span>
+    <span class="s4">&quot;&quot;&quot;Find the git dir that's appropriate for the path&quot;&quot;&quot;</span>
+    <span class="s1">name = </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">path</span><span class="s0">}</span><span class="s3">&quot;</span>
+    <span class="s0">if </span><span class="s1">name </span><span class="s0">in </span><span class="s1">[</span><span class="s3">&quot;HEAD&quot;</span><span class="s0">, </span><span class="s3">&quot;ORIG_HEAD&quot;</span><span class="s0">, </span><span class="s3">&quot;FETCH_HEAD&quot;</span><span class="s0">, </span><span class="s3">&quot;index&quot;</span><span class="s0">, </span><span class="s3">&quot;logs&quot;</span><span class="s1">]:</span>
+        <span class="s0">return </span><span class="s1">repo.git_dir</span>
+    <span class="s0">return </span><span class="s1">repo.common_dir</span>
+
+
+<span class="s0">class </span><span class="s1">SymbolicReference(object):</span>
+
+    <span class="s4">&quot;&quot;&quot;Represents a special case of a reference such that this reference is symbolic. 
+    It does not point to a specific commit, but to another Head, which itself 
+    specifies a commit. 
+ 
+    A typical example for a symbolic reference is HEAD.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ = (</span><span class="s3">&quot;repo&quot;</span><span class="s0">, </span><span class="s3">&quot;path&quot;</span><span class="s1">)</span>
+    <span class="s1">_resolve_ref_on_create = </span><span class="s0">False</span>
+    <span class="s1">_points_to_commits_only = </span><span class="s0">True</span>
+    <span class="s1">_common_path_default = </span><span class="s3">&quot;&quot;</span>
+    <span class="s1">_remote_common_path_default = </span><span class="s3">&quot;refs/remotes&quot;</span>
+    <span class="s1">_id_attribute_ = </span><span class="s3">&quot;name&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s0">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s0">, </span><span class="s1">path: PathLike</span><span class="s0">, </span><span class="s1">check_path: bool = </span><span class="s0">False</span><span class="s1">):</span>
+        <span class="s1">self.repo = repo</span>
+        <span class="s1">self.path = path</span>
+
+    <span class="s0">def </span><span class="s1">__str__(self) -&gt; str:</span>
+        <span class="s0">return </span><span class="s1">str(self.path)</span>
+
+    <span class="s0">def </span><span class="s1">__repr__(self) -&gt; str:</span>
+        <span class="s0">return </span><span class="s3">'&lt;git.%s &quot;%s&quot;&gt;' </span><span class="s1">% (self.__class__.__name__</span><span class="s0">, </span><span class="s1">self.path)</span>
+
+    <span class="s0">def </span><span class="s1">__eq__(self</span><span class="s0">, </span><span class="s1">other: object) -&gt; bool:</span>
+        <span class="s0">if </span><span class="s1">hasattr(other</span><span class="s0">, </span><span class="s3">&quot;path&quot;</span><span class="s1">):</span>
+            <span class="s1">other = cast(SymbolicReference</span><span class="s0">, </span><span class="s1">other)</span>
+            <span class="s0">return </span><span class="s1">self.path == other.path</span>
+        <span class="s0">return False</span>
+
+    <span class="s0">def </span><span class="s1">__ne__(self</span><span class="s0">, </span><span class="s1">other: object) -&gt; bool:</span>
+        <span class="s0">return not </span><span class="s1">(self == other)</span>
+
+    <span class="s0">def </span><span class="s1">__hash__(self) -&gt; int:</span>
+        <span class="s0">return </span><span class="s1">hash(self.path)</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">name(self) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: 
+            In case of symbolic references, the shortest assumable name 
+            is the path itself.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">str(self.path)</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">abspath(self) -&gt; PathLike:</span>
+        <span class="s0">return </span><span class="s1">join_path_native(_git_dir(self.repo</span><span class="s0">, </span><span class="s1">self.path)</span><span class="s0">, </span><span class="s1">self.path)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">_get_packed_refs_path(cls</span><span class="s0">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s1">) -&gt; str:</span>
+        <span class="s0">return </span><span class="s1">os.path.join(repo.common_dir</span><span class="s0">, </span><span class="s3">&quot;packed-refs&quot;</span><span class="s1">)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">_iter_packed_refs(cls</span><span class="s0">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s1">) -&gt; Iterator[Tuple[str</span><span class="s0">, </span><span class="s1">str]]:</span>
+        <span class="s4">&quot;&quot;&quot;Returns an iterator yielding pairs of sha1/path pairs (as strings) for the corresponding refs. 
+        :note: The packed refs file will be kept open as long as we iterate&quot;&quot;&quot;</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s0">with </span><span class="s1">open(cls._get_packed_refs_path(repo)</span><span class="s0">, </span><span class="s3">&quot;rt&quot;</span><span class="s0">, </span><span class="s1">encoding=</span><span class="s3">&quot;UTF-8&quot;</span><span class="s1">) </span><span class="s0">as </span><span class="s1">fp:</span>
+                <span class="s0">for </span><span class="s1">line </span><span class="s0">in </span><span class="s1">fp:</span>
+                    <span class="s1">line = line.strip()</span>
+                    <span class="s0">if not </span><span class="s1">line:</span>
+                        <span class="s0">continue</span>
+                    <span class="s0">if </span><span class="s1">line.startswith(</span><span class="s3">&quot;#&quot;</span><span class="s1">):</span>
+                        <span class="s2"># &quot;# pack-refs with: peeled fully-peeled sorted&quot;</span>
+                        <span class="s2"># the git source code shows &quot;peeled&quot;,</span>
+                        <span class="s2"># &quot;fully-peeled&quot; and &quot;sorted&quot; as the keywords</span>
+                        <span class="s2"># that can go on this line, as per comments in git file</span>
+                        <span class="s2"># refs/packed-backend.c</span>
+                        <span class="s2"># I looked at master on 2017-10-11,</span>
+                        <span class="s2"># commit 111ef79afe, after tag v2.15.0-rc1</span>
+                        <span class="s2"># from repo https://github.com/git/git.git</span>
+                        <span class="s0">if </span><span class="s1">line.startswith(</span><span class="s3">&quot;# pack-refs with:&quot;</span><span class="s1">) </span><span class="s0">and </span><span class="s3">&quot;peeled&quot; </span><span class="s0">not in </span><span class="s1">line:</span>
+                            <span class="s0">raise </span><span class="s1">TypeError(</span><span class="s3">&quot;PackingType of packed-Refs not understood: %r&quot; </span><span class="s1">% line)</span>
+                        <span class="s2"># END abort if we do not understand the packing scheme</span>
+                        <span class="s0">continue</span>
+                    <span class="s2"># END parse comment</span>
+
+                    <span class="s2"># skip dereferenced tag object entries - previous line was actual</span>
+                    <span class="s2"># tag reference for it</span>
+                    <span class="s0">if </span><span class="s1">line[</span><span class="s5">0</span><span class="s1">] == </span><span class="s3">&quot;^&quot;</span><span class="s1">:</span>
+                        <span class="s0">continue</span>
+
+                    <span class="s0">yield </span><span class="s1">cast(Tuple[str</span><span class="s0">, </span><span class="s1">str]</span><span class="s0">, </span><span class="s1">tuple(line.split(</span><span class="s3">&quot; &quot;</span><span class="s0">, </span><span class="s5">1</span><span class="s1">)))</span>
+                <span class="s2"># END for each line</span>
+        <span class="s0">except </span><span class="s1">OSError:</span>
+            <span class="s0">return None</span>
+        <span class="s2"># END no packed-refs file handling</span>
+        <span class="s2"># NOTE: Had try-finally block around here to close the fp,</span>
+        <span class="s2"># but some python version wouldn't allow yields within that.</span>
+        <span class="s2"># I believe files are closing themselves on destruction, so it is</span>
+        <span class="s2"># alright.</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">dereference_recursive(cls</span><span class="s0">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s0">, </span><span class="s1">ref_path: Union[PathLike</span><span class="s0">, None</span><span class="s1">]) -&gt; str:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: hexsha stored in the reference at the given ref_path, recursively dereferencing all 
+            intermediate references as required 
+        :param repo: the repository containing the reference at ref_path&quot;&quot;&quot;</span>
+
+        <span class="s0">while True</span><span class="s1">:</span>
+            <span class="s1">hexsha</span><span class="s0">, </span><span class="s1">ref_path = cls._get_ref_info(repo</span><span class="s0">, </span><span class="s1">ref_path)</span>
+            <span class="s0">if </span><span class="s1">hexsha </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s0">return </span><span class="s1">hexsha</span>
+        <span class="s2"># END recursive dereferencing</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">_get_ref_info_helper(</span>
+        <span class="s1">cls</span><span class="s0">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s0">, </span><span class="s1">ref_path: Union[PathLike</span><span class="s0">, None</span><span class="s1">]</span>
+    <span class="s1">) -&gt; Union[Tuple[str</span><span class="s0">, None</span><span class="s1">]</span><span class="s0">, </span><span class="s1">Tuple[</span><span class="s0">None, </span><span class="s1">str]]:</span>
+        <span class="s4">&quot;&quot;&quot;Return: (str(sha), str(target_ref_path)) if available, the sha the file at 
+        rela_path points to, or None. target_ref_path is the reference we 
+        point to, or None&quot;&quot;&quot;</span>
+        <span class="s1">tokens: Union[</span><span class="s0">None, </span><span class="s1">List[str]</span><span class="s0">, </span><span class="s1">Tuple[str</span><span class="s0">, </span><span class="s1">str]] = </span><span class="s0">None</span>
+        <span class="s1">repodir = _git_dir(repo</span><span class="s0">, </span><span class="s1">ref_path)</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s0">with </span><span class="s1">open(os.path.join(repodir</span><span class="s0">, </span><span class="s1">str(ref_path))</span><span class="s0">, </span><span class="s3">&quot;rt&quot;</span><span class="s0">, </span><span class="s1">encoding=</span><span class="s3">&quot;UTF-8&quot;</span><span class="s1">) </span><span class="s0">as </span><span class="s1">fp:</span>
+                <span class="s1">value = fp.read().rstrip()</span>
+            <span class="s2"># Don't only split on spaces, but on whitespace, which allows to parse lines like</span>
+            <span class="s2"># 60b64ef992065e2600bfef6187a97f92398a9144                branch 'master' of git-server:/path/to/repo</span>
+            <span class="s1">tokens = value.split()</span>
+            <span class="s0">assert </span><span class="s1">len(tokens) != </span><span class="s5">0</span>
+        <span class="s0">except </span><span class="s1">OSError:</span>
+            <span class="s2"># Probably we are just packed, find our entry in the packed refs file</span>
+            <span class="s2"># NOTE: We are not a symbolic ref if we are in a packed file, as these</span>
+            <span class="s2"># are excluded explicitly</span>
+            <span class="s0">for </span><span class="s1">sha</span><span class="s0">, </span><span class="s1">path </span><span class="s0">in </span><span class="s1">cls._iter_packed_refs(repo):</span>
+                <span class="s0">if </span><span class="s1">path != ref_path:</span>
+                    <span class="s0">continue</span>
+                <span class="s2"># sha will be used</span>
+                <span class="s1">tokens = sha</span><span class="s0">, </span><span class="s1">path</span>
+                <span class="s0">break</span>
+            <span class="s2"># END for each packed ref</span>
+        <span class="s2"># END handle packed refs</span>
+        <span class="s0">if </span><span class="s1">tokens </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Reference at %r does not exist&quot; </span><span class="s1">% ref_path)</span>
+
+        <span class="s2"># is it a reference ?</span>
+        <span class="s0">if </span><span class="s1">tokens[</span><span class="s5">0</span><span class="s1">] == </span><span class="s3">&quot;ref:&quot;</span><span class="s1">:</span>
+            <span class="s0">return </span><span class="s1">(</span><span class="s0">None, </span><span class="s1">tokens[</span><span class="s5">1</span><span class="s1">])</span>
+
+        <span class="s2"># its a commit</span>
+        <span class="s0">if </span><span class="s1">repo.re_hexsha_only.match(tokens[</span><span class="s5">0</span><span class="s1">]):</span>
+            <span class="s0">return </span><span class="s1">(tokens[</span><span class="s5">0</span><span class="s1">]</span><span class="s0">, None</span><span class="s1">)</span>
+
+        <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Failed to parse reference information from %r&quot; </span><span class="s1">% ref_path)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">_get_ref_info(cls</span><span class="s0">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s0">, </span><span class="s1">ref_path: Union[PathLike</span><span class="s0">, None</span><span class="s1">]) -&gt; Union[Tuple[str</span><span class="s0">, None</span><span class="s1">]</span><span class="s0">, </span><span class="s1">Tuple[</span><span class="s0">None, </span><span class="s1">str]]:</span>
+        <span class="s4">&quot;&quot;&quot;Return: (str(sha), str(target_ref_path)) if available, the sha the file at 
+        rela_path points to, or None. target_ref_path is the reference we 
+        point to, or None&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">cls._get_ref_info_helper(repo</span><span class="s0">, </span><span class="s1">ref_path)</span>
+
+    <span class="s0">def </span><span class="s1">_get_object(self) -&gt; Commit_ish:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: 
+            The object our ref currently refers to. Refs can be cached, they will 
+            always point to the actual object as it gets re-created on each query&quot;&quot;&quot;</span>
+        <span class="s2"># have to be dynamic here as we may be a tag which can point to anything</span>
+        <span class="s2"># Our path will be resolved to the hexsha which will be used accordingly</span>
+        <span class="s0">return </span><span class="s1">Object.new_from_sha(self.repo</span><span class="s0">, </span><span class="s1">hex_to_bin(self.dereference_recursive(self.repo</span><span class="s0">, </span><span class="s1">self.path)))</span>
+
+    <span class="s0">def </span><span class="s1">_get_commit(self) -&gt; </span><span class="s3">&quot;Commit&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: 
+            Commit object we point to, works for detached and non-detached 
+            SymbolicReferences. The symbolic reference will be dereferenced recursively.&quot;&quot;&quot;</span>
+        <span class="s1">obj = self._get_object()</span>
+        <span class="s0">if </span><span class="s1">obj.type == </span><span class="s3">&quot;tag&quot;</span><span class="s1">:</span>
+            <span class="s1">obj = obj.object</span>
+        <span class="s2"># END dereference tag</span>
+
+        <span class="s0">if </span><span class="s1">obj.type != Commit.type:</span>
+            <span class="s0">raise </span><span class="s1">TypeError(</span><span class="s3">&quot;Symbolic Reference pointed to object %r, commit was required&quot; </span><span class="s1">% obj)</span>
+        <span class="s2"># END handle type</span>
+        <span class="s0">return </span><span class="s1">obj</span>
+
+    <span class="s0">def </span><span class="s1">set_commit(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">commit: Union[Commit</span><span class="s0">, </span><span class="s3">&quot;SymbolicReference&quot;</span><span class="s0">, </span><span class="s1">str]</span><span class="s0">,</span>
+        <span class="s1">logmsg: Union[str</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None,</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;SymbolicReference&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;As set_object, but restricts the type of object to be a Commit 
+ 
+        :raise ValueError: If commit is not a Commit object or doesn't point to 
+            a commit 
+        :return: self&quot;&quot;&quot;</span>
+        <span class="s2"># check the type - assume the best if it is a base-string</span>
+        <span class="s1">invalid_type = </span><span class="s0">False</span>
+        <span class="s0">if </span><span class="s1">isinstance(commit</span><span class="s0">, </span><span class="s1">Object):</span>
+            <span class="s1">invalid_type = commit.type != Commit.type</span>
+        <span class="s0">elif </span><span class="s1">isinstance(commit</span><span class="s0">, </span><span class="s1">SymbolicReference):</span>
+            <span class="s1">invalid_type = commit.object.type != Commit.type</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s0">try</span><span class="s1">:</span>
+                <span class="s1">invalid_type = self.repo.rev_parse(commit).type != Commit.type</span>
+            <span class="s0">except </span><span class="s1">(BadObject</span><span class="s0">, </span><span class="s1">BadName) </span><span class="s0">as </span><span class="s1">e:</span>
+                <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Invalid object: %s&quot; </span><span class="s1">% commit) </span><span class="s0">from </span><span class="s1">e</span>
+            <span class="s2"># END handle exception</span>
+        <span class="s2"># END verify type</span>
+
+        <span class="s0">if </span><span class="s1">invalid_type:</span>
+            <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Need commit, got %r&quot; </span><span class="s1">% commit)</span>
+        <span class="s2"># END handle raise</span>
+
+        <span class="s2"># we leave strings to the rev-parse method below</span>
+        <span class="s1">self.set_object(commit</span><span class="s0">, </span><span class="s1">logmsg)</span>
+
+        <span class="s0">return </span><span class="s1">self</span>
+
+    <span class="s0">def </span><span class="s1">set_object(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">object: Union[Commit_ish</span><span class="s0">, </span><span class="s3">&quot;SymbolicReference&quot;</span><span class="s0">, </span><span class="s1">str]</span><span class="s0">,</span>
+        <span class="s1">logmsg: Union[str</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None,</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;SymbolicReference&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Set the object we point to, possibly dereference our symbolic reference first. 
+        If the reference does not exist, it will be created 
+ 
+        :param object: a refspec, a SymbolicReference or an Object instance. SymbolicReferences 
+            will be dereferenced beforehand to obtain the object they point to 
+        :param logmsg: If not None, the message will be used in the reflog entry to be 
+            written. Otherwise the reflog is not altered 
+        :note: plain SymbolicReferences may not actually point to objects by convention 
+        :return: self&quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">isinstance(object</span><span class="s0">, </span><span class="s1">SymbolicReference):</span>
+            <span class="s1">object = object.object  </span><span class="s2"># @ReservedAssignment</span>
+        <span class="s2"># END resolve references</span>
+
+        <span class="s1">is_detached = </span><span class="s0">True</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">is_detached = self.is_detached</span>
+        <span class="s0">except </span><span class="s1">ValueError:</span>
+            <span class="s0">pass</span>
+        <span class="s2"># END handle non-existing ones</span>
+
+        <span class="s0">if </span><span class="s1">is_detached:</span>
+            <span class="s0">return </span><span class="s1">self.set_reference(object</span><span class="s0">, </span><span class="s1">logmsg)</span>
+
+        <span class="s2"># set the commit on our reference</span>
+        <span class="s0">return </span><span class="s1">self._get_reference().set_object(object</span><span class="s0">, </span><span class="s1">logmsg)</span>
+
+    <span class="s1">commit = property(_get_commit</span><span class="s0">, </span><span class="s1">set_commit</span><span class="s0">, </span><span class="s1">doc=</span><span class="s3">&quot;Query or set commits directly&quot;</span><span class="s1">)  </span><span class="s2"># type: ignore</span>
+    <span class="s1">object = property(_get_object</span><span class="s0">, </span><span class="s1">set_object</span><span class="s0">, </span><span class="s1">doc=</span><span class="s3">&quot;Return the object our ref currently refers to&quot;</span><span class="s1">)  </span><span class="s2"># type: ignore</span>
+
+    <span class="s0">def </span><span class="s1">_get_reference(self) -&gt; </span><span class="s3">&quot;SymbolicReference&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;:return: Reference Object we point to 
+        :raise TypeError: If this symbolic reference is detached, hence it doesn't point 
+            to a reference, but to a commit&quot;&quot;&quot;</span>
+        <span class="s1">sha</span><span class="s0">, </span><span class="s1">target_ref_path = self._get_ref_info(self.repo</span><span class="s0">, </span><span class="s1">self.path)</span>
+        <span class="s0">if </span><span class="s1">target_ref_path </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s0">raise </span><span class="s1">TypeError(</span><span class="s3">&quot;%s is a detached symbolic reference as it points to %r&quot; </span><span class="s1">% (self</span><span class="s0">, </span><span class="s1">sha))</span>
+        <span class="s0">return </span><span class="s1">self.from_path(self.repo</span><span class="s0">, </span><span class="s1">target_ref_path)</span>
+
+    <span class="s0">def </span><span class="s1">set_reference(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">ref: Union[Commit_ish</span><span class="s0">, </span><span class="s3">&quot;SymbolicReference&quot;</span><span class="s0">, </span><span class="s1">str]</span><span class="s0">,</span>
+        <span class="s1">logmsg: Union[str</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None,</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;SymbolicReference&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Set ourselves to the given ref. It will stay a symbol if the ref is a Reference. 
+        Otherwise an Object, given as Object instance or refspec, is assumed and if valid, 
+        will be set which effectively detaches the reference if it was a purely 
+        symbolic one. 
+ 
+        :param ref: SymbolicReference instance, Object instance or refspec string 
+            Only if the ref is a SymbolicRef instance, we will point to it. Everything 
+            else is dereferenced to obtain the actual object. 
+        :param logmsg: If set to a string, the message will be used in the reflog. 
+            Otherwise, a reflog entry is not written for the changed reference. 
+            The previous commit of the entry will be the commit we point to now. 
+ 
+            See also: log_append() 
+ 
+        :return: self 
+        :note: This symbolic reference will not be dereferenced. For that, see 
+            ``set_object(...)``&quot;&quot;&quot;</span>
+        <span class="s1">write_value = </span><span class="s0">None</span>
+        <span class="s1">obj = </span><span class="s0">None</span>
+        <span class="s0">if </span><span class="s1">isinstance(ref</span><span class="s0">, </span><span class="s1">SymbolicReference):</span>
+            <span class="s1">write_value = </span><span class="s3">&quot;ref: %s&quot; </span><span class="s1">% ref.path</span>
+        <span class="s0">elif </span><span class="s1">isinstance(ref</span><span class="s0">, </span><span class="s1">Object):</span>
+            <span class="s1">obj = ref</span>
+            <span class="s1">write_value = ref.hexsha</span>
+        <span class="s0">elif </span><span class="s1">isinstance(ref</span><span class="s0">, </span><span class="s1">str):</span>
+            <span class="s0">try</span><span class="s1">:</span>
+                <span class="s1">obj = self.repo.rev_parse(ref + </span><span class="s3">&quot;^{}&quot;</span><span class="s1">)  </span><span class="s2"># optionally deref tags</span>
+                <span class="s1">write_value = obj.hexsha</span>
+            <span class="s0">except </span><span class="s1">(BadObject</span><span class="s0">, </span><span class="s1">BadName) </span><span class="s0">as </span><span class="s1">e:</span>
+                <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Could not extract object from %s&quot; </span><span class="s1">% ref) </span><span class="s0">from </span><span class="s1">e</span>
+            <span class="s2"># END end try string</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Unrecognized Value: %r&quot; </span><span class="s1">% ref)</span>
+        <span class="s2"># END try commit attribute</span>
+
+        <span class="s2"># typecheck</span>
+        <span class="s0">if </span><span class="s1">obj </span><span class="s0">is not None and </span><span class="s1">self._points_to_commits_only </span><span class="s0">and </span><span class="s1">obj.type != Commit.type:</span>
+            <span class="s0">raise </span><span class="s1">TypeError(</span><span class="s3">&quot;Require commit, got %r&quot; </span><span class="s1">% obj)</span>
+        <span class="s2"># END verify type</span>
+
+        <span class="s1">oldbinsha: bytes = </span><span class="s6">b&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">logmsg </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s0">try</span><span class="s1">:</span>
+                <span class="s1">oldbinsha = self.commit.binsha</span>
+            <span class="s0">except </span><span class="s1">ValueError:</span>
+                <span class="s1">oldbinsha = Commit.NULL_BIN_SHA</span>
+            <span class="s2"># END handle non-existing</span>
+        <span class="s2"># END retrieve old hexsha</span>
+
+        <span class="s1">fpath = self.abspath</span>
+        <span class="s1">assure_directory_exists(fpath</span><span class="s0">, </span><span class="s1">is_file=</span><span class="s0">True</span><span class="s1">)</span>
+
+        <span class="s1">lfd = LockedFD(fpath)</span>
+        <span class="s1">fd = lfd.open(write=</span><span class="s0">True, </span><span class="s1">stream=</span><span class="s0">True</span><span class="s1">)</span>
+        <span class="s1">ok = </span><span class="s0">True</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">fd.write(write_value.encode(</span><span class="s3">&quot;utf-8&quot;</span><span class="s1">) + </span><span class="s6">b&quot;</span><span class="s0">\n</span><span class="s6">&quot;</span><span class="s1">)</span>
+            <span class="s1">lfd.commit()</span>
+            <span class="s1">ok = </span><span class="s0">True</span>
+        <span class="s0">finally</span><span class="s1">:</span>
+            <span class="s0">if not </span><span class="s1">ok:</span>
+                <span class="s1">lfd.rollback()</span>
+        <span class="s2"># Adjust the reflog</span>
+        <span class="s0">if </span><span class="s1">logmsg </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">self.log_append(oldbinsha</span><span class="s0">, </span><span class="s1">logmsg)</span>
+
+        <span class="s0">return </span><span class="s1">self</span>
+
+    <span class="s2"># aliased reference</span>
+    <span class="s1">reference: Union[</span><span class="s3">&quot;Head&quot;</span><span class="s0">, </span><span class="s3">&quot;TagReference&quot;</span><span class="s0">, </span><span class="s3">&quot;RemoteReference&quot;</span><span class="s0">, </span><span class="s3">&quot;Reference&quot;</span><span class="s1">]</span>
+    <span class="s1">reference = property(_get_reference</span><span class="s0">, </span><span class="s1">set_reference</span><span class="s0">, </span><span class="s1">doc=</span><span class="s3">&quot;Returns the Reference we point to&quot;</span><span class="s1">)  </span><span class="s2"># type: ignore</span>
+    <span class="s1">ref = reference</span>
+
+    <span class="s0">def </span><span class="s1">is_valid(self) -&gt; bool:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: 
+            True if the reference is valid, hence it can be read and points to 
+            a valid object or reference.&quot;&quot;&quot;</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">self.object</span>
+        <span class="s0">except </span><span class="s1">(OSError</span><span class="s0">, </span><span class="s1">ValueError):</span>
+            <span class="s0">return False</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s0">return True</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">is_detached(self) -&gt; bool:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: 
+            True if we are a detached reference, hence we point to a specific commit 
+            instead to another reference&quot;&quot;&quot;</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">self.ref</span>
+            <span class="s0">return False</span>
+        <span class="s0">except </span><span class="s1">TypeError:</span>
+            <span class="s0">return True</span>
+
+    <span class="s0">def </span><span class="s1">log(self) -&gt; </span><span class="s3">&quot;RefLog&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: RefLog for this reference. Its last entry reflects the latest change 
+            applied to this reference 
+ 
+        .. note:: As the log is parsed every time, its recommended to cache it for use 
+            instead of calling this method repeatedly. It should be considered read-only.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">RefLog.from_file(RefLog.path(self))</span>
+
+    <span class="s0">def </span><span class="s1">log_append(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">oldbinsha: bytes</span><span class="s0">,</span>
+        <span class="s1">message: Union[str</span><span class="s0">, None</span><span class="s1">]</span><span class="s0">,</span>
+        <span class="s1">newbinsha: Union[bytes</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None,</span>
+    <span class="s1">) -&gt; </span><span class="s3">&quot;RefLogEntry&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Append a logentry to the logfile of this ref 
+ 
+        :param oldbinsha: binary sha this ref used to point to 
+        :param message: A message describing the change 
+        :param newbinsha: The sha the ref points to now. If None, our current commit sha 
+            will be used 
+        :return: added RefLogEntry instance&quot;&quot;&quot;</span>
+        <span class="s2"># NOTE: we use the committer of the currently active commit - this should be</span>
+        <span class="s2"># correct to allow overriding the committer on a per-commit level.</span>
+        <span class="s2"># See https://github.com/gitpython-developers/GitPython/pull/146</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">committer_or_reader: Union[</span><span class="s3">&quot;Actor&quot;</span><span class="s0">, </span><span class="s3">&quot;GitConfigParser&quot;</span><span class="s1">] = self.commit.committer</span>
+        <span class="s0">except </span><span class="s1">ValueError:</span>
+            <span class="s1">committer_or_reader = self.repo.config_reader()</span>
+        <span class="s2"># end handle newly cloned repositories</span>
+        <span class="s0">if </span><span class="s1">newbinsha </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">newbinsha = self.commit.binsha</span>
+
+        <span class="s0">if </span><span class="s1">message </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">message = </span><span class="s3">&quot;&quot;</span>
+
+        <span class="s0">return </span><span class="s1">RefLog.append_entry(committer_or_reader</span><span class="s0">, </span><span class="s1">RefLog.path(self)</span><span class="s0">, </span><span class="s1">oldbinsha</span><span class="s0">, </span><span class="s1">newbinsha</span><span class="s0">, </span><span class="s1">message)</span>
+
+    <span class="s0">def </span><span class="s1">log_entry(self</span><span class="s0">, </span><span class="s1">index: int) -&gt; </span><span class="s3">&quot;RefLogEntry&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;:return: RefLogEntry at the given index 
+        :param index: python list compatible positive or negative index 
+ 
+        .. note:: This method must read part of the reflog during execution, hence 
+            it should be used sparringly, or only if you need just one index. 
+            In that case, it will be faster than the ``log()`` method&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">RefLog.entry_at(RefLog.path(self)</span><span class="s0">, </span><span class="s1">index)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">to_full_path(cls</span><span class="s0">, </span><span class="s1">path: Union[PathLike</span><span class="s0">, </span><span class="s3">&quot;SymbolicReference&quot;</span><span class="s1">]) -&gt; PathLike:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :return: string with a full repository-relative path which can be used to initialize 
+            a Reference instance, for instance by using ``Reference.from_path``&quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">isinstance(path</span><span class="s0">, </span><span class="s1">SymbolicReference):</span>
+            <span class="s1">path = path.path</span>
+        <span class="s1">full_ref_path = path</span>
+        <span class="s0">if not </span><span class="s1">cls._common_path_default:</span>
+            <span class="s0">return </span><span class="s1">full_ref_path</span>
+        <span class="s0">if not </span><span class="s1">str(path).startswith(cls._common_path_default + </span><span class="s3">&quot;/&quot;</span><span class="s1">):</span>
+            <span class="s1">full_ref_path = </span><span class="s3">&quot;%s/%s&quot; </span><span class="s1">% (cls._common_path_default</span><span class="s0">, </span><span class="s1">path)</span>
+        <span class="s0">return </span><span class="s1">full_ref_path</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">delete(cls</span><span class="s0">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s0">, </span><span class="s1">path: PathLike) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Delete the reference at the given path 
+ 
+        :param repo: 
+            Repository to delete the reference from 
+ 
+        :param path: 
+            Short or full path pointing to the reference, i.e. refs/myreference 
+            or just &quot;myreference&quot;, hence 'refs/' is implied. 
+            Alternatively the symbolic reference to be deleted&quot;&quot;&quot;</span>
+        <span class="s1">full_ref_path = cls.to_full_path(path)</span>
+        <span class="s1">abs_path = os.path.join(repo.common_dir</span><span class="s0">, </span><span class="s1">full_ref_path)</span>
+        <span class="s0">if </span><span class="s1">os.path.exists(abs_path):</span>
+            <span class="s1">os.remove(abs_path)</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s2"># check packed refs</span>
+            <span class="s1">pack_file_path = cls._get_packed_refs_path(repo)</span>
+            <span class="s0">try</span><span class="s1">:</span>
+                <span class="s0">with </span><span class="s1">open(pack_file_path</span><span class="s0">, </span><span class="s3">&quot;rb&quot;</span><span class="s1">) </span><span class="s0">as </span><span class="s1">reader:</span>
+                    <span class="s1">new_lines = []</span>
+                    <span class="s1">made_change = </span><span class="s0">False</span>
+                    <span class="s1">dropped_last_line = </span><span class="s0">False</span>
+                    <span class="s0">for </span><span class="s1">line_bytes </span><span class="s0">in </span><span class="s1">reader:</span>
+                        <span class="s1">line = line_bytes.decode(defenc)</span>
+                        <span class="s1">_</span><span class="s0">, </span><span class="s1">_</span><span class="s0">, </span><span class="s1">line_ref = line.partition(</span><span class="s3">&quot; &quot;</span><span class="s1">)</span>
+                        <span class="s1">line_ref = line_ref.strip()</span>
+                        <span class="s2"># keep line if it is a comment or if the ref to delete is not</span>
+                        <span class="s2"># in the line</span>
+                        <span class="s2"># If we deleted the last line and this one is a tag-reference object,</span>
+                        <span class="s2"># we drop it as well</span>
+                        <span class="s0">if </span><span class="s1">(line.startswith(</span><span class="s3">&quot;#&quot;</span><span class="s1">) </span><span class="s0">or </span><span class="s1">full_ref_path != line_ref) </span><span class="s0">and </span><span class="s1">(</span>
+                            <span class="s0">not </span><span class="s1">dropped_last_line </span><span class="s0">or </span><span class="s1">dropped_last_line </span><span class="s0">and not </span><span class="s1">line.startswith(</span><span class="s3">&quot;^&quot;</span><span class="s1">)</span>
+                        <span class="s1">):</span>
+                            <span class="s1">new_lines.append(line)</span>
+                            <span class="s1">dropped_last_line = </span><span class="s0">False</span>
+                            <span class="s0">continue</span>
+                        <span class="s2"># END skip comments and lines without our path</span>
+
+                        <span class="s2"># drop this line</span>
+                        <span class="s1">made_change = </span><span class="s0">True</span>
+                        <span class="s1">dropped_last_line = </span><span class="s0">True</span>
+
+                <span class="s2"># write the new lines</span>
+                <span class="s0">if </span><span class="s1">made_change:</span>
+                    <span class="s2"># write-binary is required, otherwise windows will</span>
+                    <span class="s2"># open the file in text mode and change LF to CRLF !</span>
+                    <span class="s0">with </span><span class="s1">open(pack_file_path</span><span class="s0">, </span><span class="s3">&quot;wb&quot;</span><span class="s1">) </span><span class="s0">as </span><span class="s1">fd:</span>
+                        <span class="s1">fd.writelines(line.encode(defenc) </span><span class="s0">for </span><span class="s1">line </span><span class="s0">in </span><span class="s1">new_lines)</span>
+
+            <span class="s0">except </span><span class="s1">OSError:</span>
+                <span class="s0">pass  </span><span class="s2"># it didn't exist at all</span>
+
+        <span class="s2"># delete the reflog</span>
+        <span class="s1">reflog_path = RefLog.path(cls(repo</span><span class="s0">, </span><span class="s1">full_ref_path))</span>
+        <span class="s0">if </span><span class="s1">os.path.isfile(reflog_path):</span>
+            <span class="s1">os.remove(reflog_path)</span>
+        <span class="s2"># END remove reflog</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">_create(</span>
+        <span class="s1">cls: Type[T_References]</span><span class="s0">,</span>
+        <span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s0">,</span>
+        <span class="s1">path: PathLike</span><span class="s0">,</span>
+        <span class="s1">resolve: bool</span><span class="s0">,</span>
+        <span class="s1">reference: Union[</span><span class="s3">&quot;SymbolicReference&quot;</span><span class="s0">, </span><span class="s1">str]</span><span class="s0">,</span>
+        <span class="s1">force: bool</span><span class="s0">,</span>
+        <span class="s1">logmsg: Union[str</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None,</span>
+    <span class="s1">) -&gt; T_References:</span>
+        <span class="s4">&quot;&quot;&quot;internal method used to create a new symbolic reference. 
+        If resolve is False, the reference will be taken as is, creating 
+        a proper symbolic reference. Otherwise it will be resolved to the 
+        corresponding object and a detached symbolic reference will be created 
+        instead&quot;&quot;&quot;</span>
+        <span class="s1">git_dir = _git_dir(repo</span><span class="s0">, </span><span class="s1">path)</span>
+        <span class="s1">full_ref_path = cls.to_full_path(path)</span>
+        <span class="s1">abs_ref_path = os.path.join(git_dir</span><span class="s0">, </span><span class="s1">full_ref_path)</span>
+
+        <span class="s2"># figure out target data</span>
+        <span class="s1">target = reference</span>
+        <span class="s0">if </span><span class="s1">resolve:</span>
+            <span class="s1">target = repo.rev_parse(str(reference))</span>
+
+        <span class="s0">if not </span><span class="s1">force </span><span class="s0">and </span><span class="s1">os.path.isfile(abs_ref_path):</span>
+            <span class="s1">target_data = str(target)</span>
+            <span class="s0">if </span><span class="s1">isinstance(target</span><span class="s0">, </span><span class="s1">SymbolicReference):</span>
+                <span class="s1">target_data = str(target.path)</span>
+            <span class="s0">if not </span><span class="s1">resolve:</span>
+                <span class="s1">target_data = </span><span class="s3">&quot;ref: &quot; </span><span class="s1">+ target_data</span>
+            <span class="s0">with </span><span class="s1">open(abs_ref_path</span><span class="s0">, </span><span class="s3">&quot;rb&quot;</span><span class="s1">) </span><span class="s0">as </span><span class="s1">fd:</span>
+                <span class="s1">existing_data = fd.read().decode(defenc).strip()</span>
+            <span class="s0">if </span><span class="s1">existing_data != target_data:</span>
+                <span class="s0">raise </span><span class="s1">OSError(</span>
+                    <span class="s3">&quot;Reference at %r does already exist, pointing to %r, requested was %r&quot;</span>
+                    <span class="s1">% (full_ref_path</span><span class="s0">, </span><span class="s1">existing_data</span><span class="s0">, </span><span class="s1">target_data)</span>
+                <span class="s1">)</span>
+        <span class="s2"># END no force handling</span>
+
+        <span class="s1">ref = cls(repo</span><span class="s0">, </span><span class="s1">full_ref_path)</span>
+        <span class="s1">ref.set_reference(target</span><span class="s0">, </span><span class="s1">logmsg)</span>
+        <span class="s0">return </span><span class="s1">ref</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">create(</span>
+        <span class="s1">cls: Type[T_References]</span><span class="s0">,</span>
+        <span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s0">,</span>
+        <span class="s1">path: PathLike</span><span class="s0">,</span>
+        <span class="s1">reference: Union[</span><span class="s3">&quot;SymbolicReference&quot;</span><span class="s0">, </span><span class="s1">str] = </span><span class="s3">&quot;HEAD&quot;</span><span class="s0">,</span>
+        <span class="s1">logmsg: Union[str</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None,</span>
+        <span class="s1">force: bool = </span><span class="s0">False,</span>
+        <span class="s1">**kwargs: Any</span><span class="s0">,</span>
+    <span class="s1">) -&gt; T_References:</span>
+        <span class="s4">&quot;&quot;&quot;Create a new symbolic reference, hence a reference pointing , to another reference. 
+ 
+        :param repo: 
+            Repository to create the reference in 
+ 
+        :param path: 
+            full path at which the new symbolic reference is supposed to be 
+            created at, i.e. &quot;NEW_HEAD&quot; or &quot;symrefs/my_new_symref&quot; 
+ 
+        :param reference: 
+            The reference to which the new symbolic reference should point to. 
+            If it is a commit'ish, the symbolic ref will be detached. 
+ 
+        :param force: 
+            if True, force creation even if a symbolic reference with that name already exists. 
+            Raise OSError otherwise 
+ 
+        :param logmsg: 
+            If not None, the message to append to the reflog. Otherwise no reflog 
+            entry is written. 
+ 
+        :return: Newly created symbolic Reference 
+ 
+        :raise OSError: 
+            If a (Symbolic)Reference with the same name but different contents 
+            already exists. 
+ 
+        :note: This does not alter the current HEAD, index or Working Tree&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">cls._create(repo</span><span class="s0">, </span><span class="s1">path</span><span class="s0">, </span><span class="s1">cls._resolve_ref_on_create</span><span class="s0">, </span><span class="s1">reference</span><span class="s0">, </span><span class="s1">force</span><span class="s0">, </span><span class="s1">logmsg)</span>
+
+    <span class="s0">def </span><span class="s1">rename(self</span><span class="s0">, </span><span class="s1">new_path: PathLike</span><span class="s0">, </span><span class="s1">force: bool = </span><span class="s0">False</span><span class="s1">) -&gt; </span><span class="s3">&quot;SymbolicReference&quot;</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Rename self to a new path 
+ 
+        :param new_path: 
+            Either a simple name or a full path, i.e. new_name or features/new_name. 
+            The prefix refs/ is implied for references and will be set as needed. 
+            In case this is a symbolic ref, there is no implied prefix 
+ 
+        :param force: 
+            If True, the rename will succeed even if a head with the target name 
+            already exists. It will be overwritten in that case 
+ 
+        :return: self 
+        :raise OSError: In case a file at path but a different contents already exists&quot;&quot;&quot;</span>
+        <span class="s1">new_path = self.to_full_path(new_path)</span>
+        <span class="s0">if </span><span class="s1">self.path == new_path:</span>
+            <span class="s0">return </span><span class="s1">self</span>
+
+        <span class="s1">new_abs_path = os.path.join(_git_dir(self.repo</span><span class="s0">, </span><span class="s1">new_path)</span><span class="s0">, </span><span class="s1">new_path)</span>
+        <span class="s1">cur_abs_path = os.path.join(_git_dir(self.repo</span><span class="s0">, </span><span class="s1">self.path)</span><span class="s0">, </span><span class="s1">self.path)</span>
+        <span class="s0">if </span><span class="s1">os.path.isfile(new_abs_path):</span>
+            <span class="s0">if not </span><span class="s1">force:</span>
+                <span class="s2"># if they point to the same file, its not an error</span>
+                <span class="s0">with </span><span class="s1">open(new_abs_path</span><span class="s0">, </span><span class="s3">&quot;rb&quot;</span><span class="s1">) </span><span class="s0">as </span><span class="s1">fd1:</span>
+                    <span class="s1">f1 = fd1.read().strip()</span>
+                <span class="s0">with </span><span class="s1">open(cur_abs_path</span><span class="s0">, </span><span class="s3">&quot;rb&quot;</span><span class="s1">) </span><span class="s0">as </span><span class="s1">fd2:</span>
+                    <span class="s1">f2 = fd2.read().strip()</span>
+                <span class="s0">if </span><span class="s1">f1 != f2:</span>
+                    <span class="s0">raise </span><span class="s1">OSError(</span><span class="s3">&quot;File at path %r already exists&quot; </span><span class="s1">% new_abs_path)</span>
+                <span class="s2"># else: we could remove ourselves and use the otherone, but</span>
+                <span class="s2"># but clarity we just continue as usual</span>
+            <span class="s2"># END not force handling</span>
+            <span class="s1">os.remove(new_abs_path)</span>
+        <span class="s2"># END handle existing target file</span>
+
+        <span class="s1">dname = os.path.dirname(new_abs_path)</span>
+        <span class="s0">if not </span><span class="s1">os.path.isdir(dname):</span>
+            <span class="s1">os.makedirs(dname)</span>
+        <span class="s2"># END create directory</span>
+
+        <span class="s1">os.rename(cur_abs_path</span><span class="s0">, </span><span class="s1">new_abs_path)</span>
+        <span class="s1">self.path = new_path</span>
+
+        <span class="s0">return </span><span class="s1">self</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">_iter_items(</span>
+        <span class="s1">cls: Type[T_References]</span><span class="s0">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s0">, </span><span class="s1">common_path: Union[PathLike</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None</span>
+    <span class="s1">) -&gt; Iterator[T_References]:</span>
+        <span class="s0">if </span><span class="s1">common_path </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s1">common_path = cls._common_path_default</span>
+        <span class="s1">rela_paths = set()</span>
+
+        <span class="s2"># walk loose refs</span>
+        <span class="s2"># Currently we do not follow links</span>
+        <span class="s0">for </span><span class="s1">root</span><span class="s0">, </span><span class="s1">dirs</span><span class="s0">, </span><span class="s1">files </span><span class="s0">in </span><span class="s1">os.walk(join_path_native(repo.common_dir</span><span class="s0">, </span><span class="s1">common_path)):</span>
+            <span class="s0">if </span><span class="s3">&quot;refs&quot; </span><span class="s0">not in </span><span class="s1">root.split(os.sep):  </span><span class="s2"># skip non-refs subfolders</span>
+                <span class="s1">refs_id = [d </span><span class="s0">for </span><span class="s1">d </span><span class="s0">in </span><span class="s1">dirs </span><span class="s0">if </span><span class="s1">d == </span><span class="s3">&quot;refs&quot;</span><span class="s1">]</span>
+                <span class="s0">if </span><span class="s1">refs_id:</span>
+                    <span class="s1">dirs[</span><span class="s5">0</span><span class="s1">:] = [</span><span class="s3">&quot;refs&quot;</span><span class="s1">]</span>
+            <span class="s2"># END prune non-refs folders</span>
+
+            <span class="s0">for </span><span class="s1">f </span><span class="s0">in </span><span class="s1">files:</span>
+                <span class="s0">if </span><span class="s1">f == </span><span class="s3">&quot;packed-refs&quot;</span><span class="s1">:</span>
+                    <span class="s0">continue</span>
+                <span class="s1">abs_path = to_native_path_linux(join_path(root</span><span class="s0">, </span><span class="s1">f))</span>
+                <span class="s1">rela_paths.add(abs_path.replace(to_native_path_linux(repo.common_dir) + </span><span class="s3">&quot;/&quot;</span><span class="s0">, </span><span class="s3">&quot;&quot;</span><span class="s1">))</span>
+            <span class="s2"># END for each file in root directory</span>
+        <span class="s2"># END for each directory to walk</span>
+
+        <span class="s2"># read packed refs</span>
+        <span class="s0">for </span><span class="s1">_sha</span><span class="s0">, </span><span class="s1">rela_path </span><span class="s0">in </span><span class="s1">cls._iter_packed_refs(repo):</span>
+            <span class="s0">if </span><span class="s1">rela_path.startswith(str(common_path)):</span>
+                <span class="s1">rela_paths.add(rela_path)</span>
+            <span class="s2"># END relative path matches common path</span>
+        <span class="s2"># END packed refs reading</span>
+
+        <span class="s2"># return paths in sorted order</span>
+        <span class="s0">for </span><span class="s1">path </span><span class="s0">in </span><span class="s1">sorted(rela_paths):</span>
+            <span class="s0">try</span><span class="s1">:</span>
+                <span class="s0">yield </span><span class="s1">cls.from_path(repo</span><span class="s0">, </span><span class="s1">path)</span>
+            <span class="s0">except </span><span class="s1">ValueError:</span>
+                <span class="s0">continue</span>
+        <span class="s2"># END for each sorted relative refpath</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">iter_items(</span>
+        <span class="s1">cls: Type[T_References]</span><span class="s0">,</span>
+        <span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s0">,</span>
+        <span class="s1">common_path: Union[PathLike</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None,</span>
+        <span class="s1">*args: Any</span><span class="s0">,</span>
+        <span class="s1">**kwargs: Any</span><span class="s0">,</span>
+    <span class="s1">) -&gt; Iterator[T_References]:</span>
+        <span class="s4">&quot;&quot;&quot;Find all refs in the repository 
+ 
+        :param repo: is the Repo 
+ 
+        :param common_path: 
+            Optional keyword argument to the path which is to be shared by all 
+            returned Ref objects. 
+            Defaults to class specific portion if None assuring that only 
+            refs suitable for the actual class are returned. 
+ 
+        :return: 
+            git.SymbolicReference[], each of them is guaranteed to be a symbolic 
+            ref which is not detached and pointing to a valid ref 
+ 
+            List is lexicographically sorted 
+            The returned objects represent actual subclasses, such as Head or TagReference&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">(r </span><span class="s0">for </span><span class="s1">r </span><span class="s0">in </span><span class="s1">cls._iter_items(repo</span><span class="s0">, </span><span class="s1">common_path) </span><span class="s0">if </span><span class="s1">r.__class__ == SymbolicReference </span><span class="s0">or not </span><span class="s1">r.is_detached)</span>
+
+    <span class="s1">@classmethod</span>
+    <span class="s0">def </span><span class="s1">from_path(cls: Type[T_References]</span><span class="s0">, </span><span class="s1">repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s0">, </span><span class="s1">path: PathLike) -&gt; T_References:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :param path: full .git-directory-relative path name to the Reference to instantiate 
+        :note: use to_full_path() if you only have a partial path of a known Reference Type 
+        :return: 
+            Instance of type Reference, Head, or Tag 
+            depending on the given path&quot;&quot;&quot;</span>
+        <span class="s0">if not </span><span class="s1">path:</span>
+            <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Cannot create Reference from %r&quot; </span><span class="s1">% path)</span>
+
+        <span class="s2"># Names like HEAD are inserted after the refs module is imported - we have an import dependency</span>
+        <span class="s2"># cycle and don't want to import these names in-function</span>
+        <span class="s0">from </span><span class="s1">. </span><span class="s0">import </span><span class="s1">HEAD</span><span class="s0">, </span><span class="s1">Head</span><span class="s0">, </span><span class="s1">RemoteReference</span><span class="s0">, </span><span class="s1">TagReference</span><span class="s0">, </span><span class="s1">Reference</span>
+
+        <span class="s0">for </span><span class="s1">ref_type </span><span class="s0">in </span><span class="s1">(</span>
+            <span class="s1">HEAD</span><span class="s0">,</span>
+            <span class="s1">Head</span><span class="s0">,</span>
+            <span class="s1">RemoteReference</span><span class="s0">,</span>
+            <span class="s1">TagReference</span><span class="s0">,</span>
+            <span class="s1">Reference</span><span class="s0">,</span>
+            <span class="s1">SymbolicReference</span><span class="s0">,</span>
+        <span class="s1">):</span>
+            <span class="s0">try</span><span class="s1">:</span>
+                <span class="s1">instance: T_References</span>
+                <span class="s1">instance = ref_type(repo</span><span class="s0">, </span><span class="s1">path)</span>
+                <span class="s0">if </span><span class="s1">instance.__class__ == SymbolicReference </span><span class="s0">and </span><span class="s1">instance.is_detached:</span>
+                    <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;SymbolRef was detached, we drop it&quot;</span><span class="s1">)</span>
+                <span class="s0">else</span><span class="s1">:</span>
+                    <span class="s0">return </span><span class="s1">instance</span>
+
+            <span class="s0">except </span><span class="s1">ValueError:</span>
+                <span class="s0">pass</span>
+            <span class="s2"># END exception handling</span>
+        <span class="s2"># END for each type to try</span>
+        <span class="s0">raise </span><span class="s1">ValueError(</span><span class="s3">&quot;Could not find reference type suitable to handle path %r&quot; </span><span class="s1">% path)</span>
+
+    <span class="s0">def </span><span class="s1">is_remote(self) -&gt; bool:</span>
+        <span class="s4">&quot;&quot;&quot;:return: True if this symbolic reference points to a remote branch&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">str(self.path).startswith(self._remote_common_path_default + </span><span class="s3">&quot;/&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

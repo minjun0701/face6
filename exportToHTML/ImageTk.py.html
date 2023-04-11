@@ -1,0 +1,313 @@
+<html>
+<head>
+<title>ImageTk.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6a8759;}
+.s4 { color: #6897bb;}
+.s5 { color: #629755; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageTk.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># a Tk display interface</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 96-04-08 fl   Created</span>
+<span class="s0"># 96-09-06 fl   Added getimage method</span>
+<span class="s0"># 96-11-01 fl   Rewritten, removed image attribute and crop method</span>
+<span class="s0"># 97-05-09 fl   Use PyImagingPaste method instead of image type</span>
+<span class="s0"># 97-05-12 fl   Minor tweaks to match the IFUNC95 interface</span>
+<span class="s0"># 97-05-17 fl   Support the &quot;pilbitmap&quot; booster patch</span>
+<span class="s0"># 97-06-05 fl   Added file= and data= argument to image constructors</span>
+<span class="s0"># 98-03-09 fl   Added width and height methods to Image classes</span>
+<span class="s0"># 98-07-02 fl   Use default mode for &quot;P&quot; images without palette attribute</span>
+<span class="s0"># 98-07-02 fl   Explicitly destroy Tkinter image objects</span>
+<span class="s0"># 99-07-24 fl   Support multiple Tk interpreters (from Greg Couch)</span>
+<span class="s0"># 99-07-26 fl   Automatically hook into Tkinter (if possible)</span>
+<span class="s0"># 99-08-15 fl   Hook uses _imagingtk instead of _imaging</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-1999 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 1996-1997 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">import </span><span class="s1">tkinter</span>
+<span class="s2">from </span><span class="s1">io </span><span class="s2">import </span><span class="s1">BytesIO</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span>
+<span class="s2">from </span><span class="s1">._deprecate </span><span class="s2">import </span><span class="s1">deprecate</span>
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Check for Tkinter interface hooks</span>
+
+<span class="s1">_pilbitmap_ok = </span><span class="s2">None</span>
+
+
+<span class="s2">def </span><span class="s1">_pilbitmap_check():</span>
+    <span class="s2">global </span><span class="s1">_pilbitmap_ok</span>
+    <span class="s2">if </span><span class="s1">_pilbitmap_ok </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">im = Image.new(</span><span class="s3">&quot;1&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">1</span><span class="s2">, </span><span class="s4">1</span><span class="s1">))</span>
+            <span class="s1">tkinter.BitmapImage(data=</span><span class="s3">f&quot;PIL:</span><span class="s2">{</span><span class="s1">im.im.id</span><span class="s2">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+            <span class="s1">_pilbitmap_ok = </span><span class="s4">1</span>
+        <span class="s2">except </span><span class="s1">tkinter.TclError:</span>
+            <span class="s1">_pilbitmap_ok = </span><span class="s4">0</span>
+    <span class="s2">return </span><span class="s1">_pilbitmap_ok</span>
+
+
+<span class="s2">def </span><span class="s1">_get_image_from_kw(kw):</span>
+    <span class="s1">source = </span><span class="s2">None</span>
+    <span class="s2">if </span><span class="s3">&quot;file&quot; </span><span class="s2">in </span><span class="s1">kw:</span>
+        <span class="s1">source = kw.pop(</span><span class="s3">&quot;file&quot;</span><span class="s1">)</span>
+    <span class="s2">elif </span><span class="s3">&quot;data&quot; </span><span class="s2">in </span><span class="s1">kw:</span>
+        <span class="s1">source = BytesIO(kw.pop(</span><span class="s3">&quot;data&quot;</span><span class="s1">))</span>
+    <span class="s2">if </span><span class="s1">source:</span>
+        <span class="s2">return </span><span class="s1">Image.open(source)</span>
+
+
+<span class="s2">def </span><span class="s1">_pyimagingtkcall(command</span><span class="s2">, </span><span class="s1">photo</span><span class="s2">, </span><span class="s1">id):</span>
+    <span class="s1">tk = photo.tk</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">tk.call(command</span><span class="s2">, </span><span class="s1">photo</span><span class="s2">, </span><span class="s1">id)</span>
+    <span class="s2">except </span><span class="s1">tkinter.TclError:</span>
+        <span class="s0"># activate Tkinter hook</span>
+        <span class="s0"># may raise an error if it cannot attach to Tkinter</span>
+        <span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">_imagingtk</span>
+
+        <span class="s1">_imagingtk.tkinit(tk.interpaddr())</span>
+        <span class="s1">tk.call(command</span><span class="s2">, </span><span class="s1">photo</span><span class="s2">, </span><span class="s1">id)</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># PhotoImage</span>
+
+
+<span class="s2">class </span><span class="s1">PhotoImage:</span>
+    <span class="s5">&quot;&quot;&quot; 
+    A Tkinter-compatible photo image.  This can be used 
+    everywhere Tkinter expects an image object.  If the image is an RGBA 
+    image, pixels having alpha 0 are treated as transparent. 
+ 
+    The constructor takes either a PIL image, or a mode and a size. 
+    Alternatively, you can use the ``file`` or ``data`` options to initialize 
+    the photo image object. 
+ 
+    :param image: Either a PIL image, or a mode string.  If a mode string is 
+                  used, a size must also be given. 
+    :param size: If the first argument is a mode string, this defines the size 
+                 of the image. 
+    :keyword file: A filename to load the image from (using 
+                   ``Image.open(file)``). 
+    :keyword data: An 8-bit string containing image data (as loaded from an 
+                   image file). 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">image=</span><span class="s2">None, </span><span class="s1">size=</span><span class="s2">None, </span><span class="s1">**kw):</span>
+
+        <span class="s0"># Tk compatibility: file or data</span>
+        <span class="s2">if </span><span class="s1">image </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">image = _get_image_from_kw(kw)</span>
+
+        <span class="s2">if </span><span class="s1">hasattr(image</span><span class="s2">, </span><span class="s3">&quot;mode&quot;</span><span class="s1">) </span><span class="s2">and </span><span class="s1">hasattr(image</span><span class="s2">, </span><span class="s3">&quot;size&quot;</span><span class="s1">):</span>
+            <span class="s0"># got an image instead of a mode</span>
+            <span class="s1">mode = image.mode</span>
+            <span class="s2">if </span><span class="s1">mode == </span><span class="s3">&quot;P&quot;</span><span class="s1">:</span>
+                <span class="s0"># palette mapped data</span>
+                <span class="s1">image.apply_transparency()</span>
+                <span class="s1">image.load()</span>
+                <span class="s2">try</span><span class="s1">:</span>
+                    <span class="s1">mode = image.palette.mode</span>
+                <span class="s2">except </span><span class="s1">AttributeError:</span>
+                    <span class="s1">mode = </span><span class="s3">&quot;RGB&quot;  </span><span class="s0"># default</span>
+            <span class="s1">size = image.size</span>
+            <span class="s1">kw[</span><span class="s3">&quot;width&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s1">kw[</span><span class="s3">&quot;height&quot;</span><span class="s1">] = size</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">mode = image</span>
+            <span class="s1">image = </span><span class="s2">None</span>
+
+        <span class="s2">if </span><span class="s1">mode </span><span class="s2">not in </span><span class="s1">[</span><span class="s3">&quot;1&quot;</span><span class="s2">, </span><span class="s3">&quot;L&quot;</span><span class="s2">, </span><span class="s3">&quot;RGB&quot;</span><span class="s2">, </span><span class="s3">&quot;RGBA&quot;</span><span class="s1">]:</span>
+            <span class="s1">mode = Image.getmodebase(mode)</span>
+
+        <span class="s1">self.__mode = mode</span>
+        <span class="s1">self.__size = size</span>
+        <span class="s1">self.__photo = tkinter.PhotoImage(**kw)</span>
+        <span class="s1">self.tk = self.__photo.tk</span>
+        <span class="s2">if </span><span class="s1">image:</span>
+            <span class="s1">self.paste(image)</span>
+
+    <span class="s2">def </span><span class="s1">__del__(self):</span>
+        <span class="s1">name = self.__photo.name</span>
+        <span class="s1">self.__photo.name = </span><span class="s2">None</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">self.__photo.tk.call(</span><span class="s3">&quot;image&quot;</span><span class="s2">, </span><span class="s3">&quot;delete&quot;</span><span class="s2">, </span><span class="s1">name)</span>
+        <span class="s2">except </span><span class="s1">Exception:</span>
+            <span class="s2">pass  </span><span class="s0"># ignore internal errors</span>
+
+    <span class="s2">def </span><span class="s1">__str__(self):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Get the Tkinter photo image identifier.  This method is automatically 
+        called by Tkinter whenever a PhotoImage object is passed to a Tkinter 
+        method. 
+ 
+        :return: A Tkinter photo image identifier (a string). 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">str(self.__photo)</span>
+
+    <span class="s2">def </span><span class="s1">width(self):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Get the width of the image. 
+ 
+        :return: The width, in pixels. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self.__size[</span><span class="s4">0</span><span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">height(self):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Get the height of the image. 
+ 
+        :return: The height, in pixels. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self.__size[</span><span class="s4">1</span><span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">paste(self</span><span class="s2">, </span><span class="s1">im</span><span class="s2">, </span><span class="s1">box=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Paste a PIL image into the photo image.  Note that this can 
+        be very slow if the photo image is displayed. 
+ 
+        :param im: A PIL image. The size must match the target region.  If the 
+                   mode does not match, the image is converted to the mode of 
+                   the bitmap image. 
+        :param box: Deprecated. This parameter will be removed in Pillow 10 
+                    (2023-07-01). 
+        &quot;&quot;&quot;</span>
+
+        <span class="s2">if </span><span class="s1">box </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">deprecate(</span><span class="s3">&quot;The box parameter&quot;</span><span class="s2">, </span><span class="s4">10</span><span class="s2">, None</span><span class="s1">)</span>
+
+        <span class="s0"># convert to blittable</span>
+        <span class="s1">im.load()</span>
+        <span class="s1">image = im.im</span>
+        <span class="s2">if </span><span class="s1">image.isblock() </span><span class="s2">and </span><span class="s1">im.mode == self.__mode:</span>
+            <span class="s1">block = image</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">block = image.new_block(self.__mode</span><span class="s2">, </span><span class="s1">im.size)</span>
+            <span class="s1">image.convert2(block</span><span class="s2">, </span><span class="s1">image)  </span><span class="s0"># convert directly between buffers</span>
+
+        <span class="s1">_pyimagingtkcall(</span><span class="s3">&quot;PyImagingPhoto&quot;</span><span class="s2">, </span><span class="s1">self.__photo</span><span class="s2">, </span><span class="s1">block.id)</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># BitmapImage</span>
+
+
+<span class="s2">class </span><span class="s1">BitmapImage:</span>
+    <span class="s5">&quot;&quot;&quot; 
+    A Tkinter-compatible bitmap image.  This can be used everywhere Tkinter 
+    expects an image object. 
+ 
+    The given image must have mode &quot;1&quot;.  Pixels having value 0 are treated as 
+    transparent.  Options, if any, are passed on to Tkinter.  The most commonly 
+    used option is ``foreground``, which is used to specify the color for the 
+    non-transparent parts.  See the Tkinter documentation for information on 
+    how to specify colours. 
+ 
+    :param image: A PIL image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">image=</span><span class="s2">None, </span><span class="s1">**kw):</span>
+
+        <span class="s0"># Tk compatibility: file or data</span>
+        <span class="s2">if </span><span class="s1">image </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">image = _get_image_from_kw(kw)</span>
+
+        <span class="s1">self.__mode = image.mode</span>
+        <span class="s1">self.__size = image.size</span>
+
+        <span class="s2">if </span><span class="s1">_pilbitmap_check():</span>
+            <span class="s0"># fast way (requires the pilbitmap booster patch)</span>
+            <span class="s1">image.load()</span>
+            <span class="s1">kw[</span><span class="s3">&quot;data&quot;</span><span class="s1">] = </span><span class="s3">f&quot;PIL:</span><span class="s2">{</span><span class="s1">image.im.id</span><span class="s2">}</span><span class="s3">&quot;</span>
+            <span class="s1">self.__im = image  </span><span class="s0"># must keep a reference</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s0"># slow but safe way</span>
+            <span class="s1">kw[</span><span class="s3">&quot;data&quot;</span><span class="s1">] = image.tobitmap()</span>
+        <span class="s1">self.__photo = tkinter.BitmapImage(**kw)</span>
+
+    <span class="s2">def </span><span class="s1">__del__(self):</span>
+        <span class="s1">name = self.__photo.name</span>
+        <span class="s1">self.__photo.name = </span><span class="s2">None</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">self.__photo.tk.call(</span><span class="s3">&quot;image&quot;</span><span class="s2">, </span><span class="s3">&quot;delete&quot;</span><span class="s2">, </span><span class="s1">name)</span>
+        <span class="s2">except </span><span class="s1">Exception:</span>
+            <span class="s2">pass  </span><span class="s0"># ignore internal errors</span>
+
+    <span class="s2">def </span><span class="s1">width(self):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Get the width of the image. 
+ 
+        :return: The width, in pixels. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self.__size[</span><span class="s4">0</span><span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">height(self):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Get the height of the image. 
+ 
+        :return: The height, in pixels. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self.__size[</span><span class="s4">1</span><span class="s1">]</span>
+
+    <span class="s2">def </span><span class="s1">__str__(self):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Get the Tkinter bitmap image identifier.  This method is automatically 
+        called by Tkinter whenever a BitmapImage object is passed to a Tkinter 
+        method. 
+ 
+        :return: A Tkinter bitmap image identifier (a string). 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">str(self.__photo)</span>
+
+
+<span class="s2">def </span><span class="s1">getimage(photo):</span>
+    <span class="s5">&quot;&quot;&quot;Copies the contents of a PhotoImage to a PIL image memory.&quot;&quot;&quot;</span>
+    <span class="s1">im = Image.new(</span><span class="s3">&quot;RGBA&quot;</span><span class="s2">, </span><span class="s1">(photo.width()</span><span class="s2">, </span><span class="s1">photo.height()))</span>
+    <span class="s1">block = im.im</span>
+
+    <span class="s1">_pyimagingtkcall(</span><span class="s3">&quot;PyImagingPhotoGet&quot;</span><span class="s2">, </span><span class="s1">photo</span><span class="s2">, </span><span class="s1">block.id)</span>
+
+    <span class="s2">return </span><span class="s1">im</span>
+
+
+<span class="s2">def </span><span class="s1">_show(image</span><span class="s2">, </span><span class="s1">title):</span>
+    <span class="s5">&quot;&quot;&quot;Helper for the Image.show method.&quot;&quot;&quot;</span>
+
+    <span class="s2">class </span><span class="s1">UI(tkinter.Label):</span>
+        <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">master</span><span class="s2">, </span><span class="s1">im):</span>
+            <span class="s2">if </span><span class="s1">im.mode == </span><span class="s3">&quot;1&quot;</span><span class="s1">:</span>
+                <span class="s1">self.image = BitmapImage(im</span><span class="s2">, </span><span class="s1">foreground=</span><span class="s3">&quot;white&quot;</span><span class="s2">, </span><span class="s1">master=master)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self.image = PhotoImage(im</span><span class="s2">, </span><span class="s1">master=master)</span>
+            <span class="s1">super().__init__(master</span><span class="s2">, </span><span class="s1">image=self.image</span><span class="s2">, </span><span class="s1">bg=</span><span class="s3">&quot;black&quot;</span><span class="s2">, </span><span class="s1">bd=</span><span class="s4">0</span><span class="s1">)</span>
+
+    <span class="s2">if not </span><span class="s1">tkinter._default_root:</span>
+        <span class="s2">raise </span><span class="s1">OSError(</span><span class="s3">&quot;tkinter not initialized&quot;</span><span class="s1">)</span>
+    <span class="s1">top = tkinter.Toplevel()</span>
+    <span class="s2">if </span><span class="s1">title:</span>
+        <span class="s1">top.title(title)</span>
+    <span class="s1">UI(top</span><span class="s2">, </span><span class="s1">image).pack()</span>
+</pre>
+</body>
+</html>

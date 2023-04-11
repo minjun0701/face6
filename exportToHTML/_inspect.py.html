@@ -1,0 +1,292 @@
+<html>
+<head>
+<title>_inspect.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #629755; font-style: italic;}
+.s3 { color: #6a8759;}
+.s4 { color: #6897bb;}
+.s5 { color: #808080;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_inspect.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">absolute_import</span>
+
+<span class="s0">import </span><span class="s1">inspect</span>
+<span class="s0">from </span><span class="s1">inspect </span><span class="s0">import </span><span class="s1">cleandoc</span><span class="s0">, </span><span class="s1">getdoc</span><span class="s0">, </span><span class="s1">getfile</span><span class="s0">, </span><span class="s1">isclass</span><span class="s0">, </span><span class="s1">ismodule</span><span class="s0">, </span><span class="s1">signature</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span><span class="s0">, </span><span class="s1">Collection</span><span class="s0">, </span><span class="s1">Iterable</span><span class="s0">, </span><span class="s1">Optional</span><span class="s0">, </span><span class="s1">Tuple</span><span class="s0">, </span><span class="s1">Type</span><span class="s0">, </span><span class="s1">Union</span>
+
+<span class="s0">from </span><span class="s1">.console </span><span class="s0">import </span><span class="s1">Group</span><span class="s0">, </span><span class="s1">RenderableType</span>
+<span class="s0">from </span><span class="s1">.control </span><span class="s0">import </span><span class="s1">escape_control_codes</span>
+<span class="s0">from </span><span class="s1">.highlighter </span><span class="s0">import </span><span class="s1">ReprHighlighter</span>
+<span class="s0">from </span><span class="s1">.jupyter </span><span class="s0">import </span><span class="s1">JupyterMixin</span>
+<span class="s0">from </span><span class="s1">.panel </span><span class="s0">import </span><span class="s1">Panel</span>
+<span class="s0">from </span><span class="s1">.pretty </span><span class="s0">import </span><span class="s1">Pretty</span>
+<span class="s0">from </span><span class="s1">.table </span><span class="s0">import </span><span class="s1">Table</span>
+<span class="s0">from </span><span class="s1">.text </span><span class="s0">import </span><span class="s1">Text</span><span class="s0">, </span><span class="s1">TextType</span>
+
+
+<span class="s0">def </span><span class="s1">_first_paragraph(doc: str) -&gt; str:</span>
+    <span class="s2">&quot;&quot;&quot;Get the first paragraph from a docstring.&quot;&quot;&quot;</span>
+    <span class="s1">paragraph</span><span class="s0">, </span><span class="s1">_</span><span class="s0">, </span><span class="s1">_ = doc.partition(</span><span class="s3">&quot;</span><span class="s0">\n\n</span><span class="s3">&quot;</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s1">paragraph</span>
+
+
+<span class="s0">class </span><span class="s1">Inspect(JupyterMixin):</span>
+    <span class="s2">&quot;&quot;&quot;A renderable to inspect any Python Object. 
+ 
+    Args: 
+        obj (Any): An object to inspect. 
+        title (str, optional): Title to display over inspect result, or None use type. Defaults to None. 
+        help (bool, optional): Show full help text rather than just first paragraph. Defaults to False. 
+        methods (bool, optional): Enable inspection of callables. Defaults to False. 
+        docs (bool, optional): Also render doc strings. Defaults to True. 
+        private (bool, optional): Show private attributes (beginning with underscore). Defaults to False. 
+        dunder (bool, optional): Show attributes starting with double underscore. Defaults to False. 
+        sort (bool, optional): Sort attributes alphabetically. Defaults to True. 
+        all (bool, optional): Show all attributes. Defaults to False. 
+        value (bool, optional): Pretty print value of object. Defaults to True. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">obj: Any</span><span class="s0">,</span>
+        <span class="s1">*</span><span class="s0">,</span>
+        <span class="s1">title: Optional[TextType] = </span><span class="s0">None,</span>
+        <span class="s1">help: bool = </span><span class="s0">False,</span>
+        <span class="s1">methods: bool = </span><span class="s0">False,</span>
+        <span class="s1">docs: bool = </span><span class="s0">True,</span>
+        <span class="s1">private: bool = </span><span class="s0">False,</span>
+        <span class="s1">dunder: bool = </span><span class="s0">False,</span>
+        <span class="s1">sort: bool = </span><span class="s0">True,</span>
+        <span class="s1">all: bool = </span><span class="s0">True,</span>
+        <span class="s1">value: bool = </span><span class="s0">True,</span>
+    <span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">self.highlighter = ReprHighlighter()</span>
+        <span class="s1">self.obj = obj</span>
+        <span class="s1">self.title = title </span><span class="s0">or </span><span class="s1">self._make_title(obj)</span>
+        <span class="s0">if </span><span class="s1">all:</span>
+            <span class="s1">methods = private = dunder = </span><span class="s0">True</span>
+        <span class="s1">self.help = help</span>
+        <span class="s1">self.methods = methods</span>
+        <span class="s1">self.docs = docs </span><span class="s0">or </span><span class="s1">help</span>
+        <span class="s1">self.private = private </span><span class="s0">or </span><span class="s1">dunder</span>
+        <span class="s1">self.dunder = dunder</span>
+        <span class="s1">self.sort = sort</span>
+        <span class="s1">self.value = value</span>
+
+    <span class="s0">def </span><span class="s1">_make_title(self</span><span class="s0">, </span><span class="s1">obj: Any) -&gt; Text:</span>
+        <span class="s2">&quot;&quot;&quot;Make a default title.&quot;&quot;&quot;</span>
+        <span class="s1">title_str = (</span>
+            <span class="s1">str(obj)</span>
+            <span class="s0">if </span><span class="s1">(isclass(obj) </span><span class="s0">or </span><span class="s1">callable(obj) </span><span class="s0">or </span><span class="s1">ismodule(obj))</span>
+            <span class="s0">else </span><span class="s1">str(type(obj))</span>
+        <span class="s1">)</span>
+        <span class="s1">title_text = self.highlighter(title_str)</span>
+        <span class="s0">return </span><span class="s1">title_text</span>
+
+    <span class="s0">def </span><span class="s1">__rich__(self) -&gt; Panel:</span>
+        <span class="s0">return </span><span class="s1">Panel.fit(</span>
+            <span class="s1">Group(*self._render())</span><span class="s0">,</span>
+            <span class="s1">title=self.title</span><span class="s0">,</span>
+            <span class="s1">border_style=</span><span class="s3">&quot;scope.border&quot;</span><span class="s0">,</span>
+            <span class="s1">padding=(</span><span class="s4">0</span><span class="s0">, </span><span class="s4">1</span><span class="s1">)</span><span class="s0">,</span>
+        <span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">_get_signature(self</span><span class="s0">, </span><span class="s1">name: str</span><span class="s0">, </span><span class="s1">obj: Any) -&gt; Optional[Text]:</span>
+        <span class="s2">&quot;&quot;&quot;Get a signature for a callable.&quot;&quot;&quot;</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">_signature = str(signature(obj)) + </span><span class="s3">&quot;:&quot;</span>
+        <span class="s0">except </span><span class="s1">ValueError:</span>
+            <span class="s1">_signature = </span><span class="s3">&quot;(...)&quot;</span>
+        <span class="s0">except </span><span class="s1">TypeError:</span>
+            <span class="s0">return None</span>
+
+        <span class="s1">source_filename: Optional[str] = </span><span class="s0">None</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">source_filename = getfile(obj)</span>
+        <span class="s0">except </span><span class="s1">(OSError</span><span class="s0">, </span><span class="s1">TypeError):</span>
+            <span class="s5"># OSError is raised if obj has no source file, e.g. when defined in REPL.</span>
+            <span class="s0">pass</span>
+
+        <span class="s1">callable_name = Text(name</span><span class="s0">, </span><span class="s1">style=</span><span class="s3">&quot;inspect.callable&quot;</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">source_filename:</span>
+            <span class="s1">callable_name.stylize(</span><span class="s3">f&quot;link file://</span><span class="s0">{</span><span class="s1">source_filename</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s1">)</span>
+        <span class="s1">signature_text = self.highlighter(_signature)</span>
+
+        <span class="s1">qualname = name </span><span class="s0">or </span><span class="s1">getattr(obj</span><span class="s0">, </span><span class="s3">&quot;__qualname__&quot;</span><span class="s0">, </span><span class="s1">name)</span>
+
+        <span class="s5"># If obj is a module, there may be classes (which are callable) to display</span>
+        <span class="s0">if </span><span class="s1">inspect.isclass(obj):</span>
+            <span class="s1">prefix = </span><span class="s3">&quot;class&quot;</span>
+        <span class="s0">elif </span><span class="s1">inspect.iscoroutinefunction(obj):</span>
+            <span class="s1">prefix = </span><span class="s3">&quot;async def&quot;</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">prefix = </span><span class="s3">&quot;def&quot;</span>
+
+        <span class="s1">qual_signature = Text.assemble(</span>
+            <span class="s1">(</span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">prefix</span><span class="s0">} </span><span class="s3">&quot;</span><span class="s0">, </span><span class="s3">f&quot;inspect.</span><span class="s0">{</span><span class="s1">prefix.replace(</span><span class="s3">' '</span><span class="s0">, </span><span class="s3">'_'</span><span class="s1">)</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s1">)</span><span class="s0">,</span>
+            <span class="s1">(qualname</span><span class="s0">, </span><span class="s3">&quot;inspect.callable&quot;</span><span class="s1">)</span><span class="s0">,</span>
+            <span class="s1">signature_text</span><span class="s0">,</span>
+        <span class="s1">)</span>
+
+        <span class="s0">return </span><span class="s1">qual_signature</span>
+
+    <span class="s0">def </span><span class="s1">_render(self) -&gt; Iterable[RenderableType]:</span>
+        <span class="s2">&quot;&quot;&quot;Render object.&quot;&quot;&quot;</span>
+
+        <span class="s0">def </span><span class="s1">sort_items(item: Tuple[str</span><span class="s0">, </span><span class="s1">Any]) -&gt; Tuple[bool</span><span class="s0">, </span><span class="s1">str]:</span>
+            <span class="s1">key</span><span class="s0">, </span><span class="s1">(_error</span><span class="s0">, </span><span class="s1">value) = item</span>
+            <span class="s0">return </span><span class="s1">(callable(value)</span><span class="s0">, </span><span class="s1">key.strip(</span><span class="s3">&quot;_&quot;</span><span class="s1">).lower())</span>
+
+        <span class="s0">def </span><span class="s1">safe_getattr(attr_name: str) -&gt; Tuple[Any</span><span class="s0">, </span><span class="s1">Any]:</span>
+            <span class="s2">&quot;&quot;&quot;Get attribute or any exception.&quot;&quot;&quot;</span>
+            <span class="s0">try</span><span class="s1">:</span>
+                <span class="s0">return </span><span class="s1">(</span><span class="s0">None, </span><span class="s1">getattr(obj</span><span class="s0">, </span><span class="s1">attr_name))</span>
+            <span class="s0">except </span><span class="s1">Exception </span><span class="s0">as </span><span class="s1">error:</span>
+                <span class="s0">return </span><span class="s1">(error</span><span class="s0">, None</span><span class="s1">)</span>
+
+        <span class="s1">obj = self.obj</span>
+        <span class="s1">keys = dir(obj)</span>
+        <span class="s1">total_items = len(keys)</span>
+        <span class="s0">if not </span><span class="s1">self.dunder:</span>
+            <span class="s1">keys = [key </span><span class="s0">for </span><span class="s1">key </span><span class="s0">in </span><span class="s1">keys </span><span class="s0">if not </span><span class="s1">key.startswith(</span><span class="s3">&quot;__&quot;</span><span class="s1">)]</span>
+        <span class="s0">if not </span><span class="s1">self.private:</span>
+            <span class="s1">keys = [key </span><span class="s0">for </span><span class="s1">key </span><span class="s0">in </span><span class="s1">keys </span><span class="s0">if not </span><span class="s1">key.startswith(</span><span class="s3">&quot;_&quot;</span><span class="s1">)]</span>
+        <span class="s1">not_shown_count = total_items - len(keys)</span>
+        <span class="s1">items = [(key</span><span class="s0">, </span><span class="s1">safe_getattr(key)) </span><span class="s0">for </span><span class="s1">key </span><span class="s0">in </span><span class="s1">keys]</span>
+        <span class="s0">if </span><span class="s1">self.sort:</span>
+            <span class="s1">items.sort(key=sort_items)</span>
+
+        <span class="s1">items_table = Table.grid(padding=(</span><span class="s4">0</span><span class="s0">, </span><span class="s4">1</span><span class="s1">)</span><span class="s0">, </span><span class="s1">expand=</span><span class="s0">False</span><span class="s1">)</span>
+        <span class="s1">items_table.add_column(justify=</span><span class="s3">&quot;right&quot;</span><span class="s1">)</span>
+        <span class="s1">add_row = items_table.add_row</span>
+        <span class="s1">highlighter = self.highlighter</span>
+
+        <span class="s0">if </span><span class="s1">callable(obj):</span>
+            <span class="s1">signature = self._get_signature(</span><span class="s3">&quot;&quot;</span><span class="s0">, </span><span class="s1">obj)</span>
+            <span class="s0">if </span><span class="s1">signature </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s0">yield </span><span class="s1">signature</span>
+                <span class="s0">yield </span><span class="s3">&quot;&quot;</span>
+
+        <span class="s0">if </span><span class="s1">self.docs:</span>
+            <span class="s1">_doc = self._get_formatted_doc(obj)</span>
+            <span class="s0">if </span><span class="s1">_doc </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s1">doc_text = Text(_doc</span><span class="s0">, </span><span class="s1">style=</span><span class="s3">&quot;inspect.help&quot;</span><span class="s1">)</span>
+                <span class="s1">doc_text = highlighter(doc_text)</span>
+                <span class="s0">yield </span><span class="s1">doc_text</span>
+                <span class="s0">yield </span><span class="s3">&quot;&quot;</span>
+
+        <span class="s0">if </span><span class="s1">self.value </span><span class="s0">and not </span><span class="s1">(isclass(obj) </span><span class="s0">or </span><span class="s1">callable(obj) </span><span class="s0">or </span><span class="s1">ismodule(obj)):</span>
+            <span class="s0">yield </span><span class="s1">Panel(</span>
+                <span class="s1">Pretty(obj</span><span class="s0">, </span><span class="s1">indent_guides=</span><span class="s0">True, </span><span class="s1">max_length=</span><span class="s4">10</span><span class="s0">, </span><span class="s1">max_string=</span><span class="s4">60</span><span class="s1">)</span><span class="s0">,</span>
+                <span class="s1">border_style=</span><span class="s3">&quot;inspect.value.border&quot;</span><span class="s0">,</span>
+            <span class="s1">)</span>
+            <span class="s0">yield </span><span class="s3">&quot;&quot;</span>
+
+        <span class="s0">for </span><span class="s1">key</span><span class="s0">, </span><span class="s1">(error</span><span class="s0">, </span><span class="s1">value) </span><span class="s0">in </span><span class="s1">items:</span>
+            <span class="s1">key_text = Text.assemble(</span>
+                <span class="s1">(</span>
+                    <span class="s1">key</span><span class="s0">,</span>
+                    <span class="s3">&quot;inspect.attr.dunder&quot; </span><span class="s0">if </span><span class="s1">key.startswith(</span><span class="s3">&quot;__&quot;</span><span class="s1">) </span><span class="s0">else </span><span class="s3">&quot;inspect.attr&quot;</span><span class="s0">,</span>
+                <span class="s1">)</span><span class="s0">,</span>
+                <span class="s1">(</span><span class="s3">&quot; =&quot;</span><span class="s0">, </span><span class="s3">&quot;inspect.equals&quot;</span><span class="s1">)</span><span class="s0">,</span>
+            <span class="s1">)</span>
+            <span class="s0">if </span><span class="s1">error </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s1">warning = key_text.copy()</span>
+                <span class="s1">warning.stylize(</span><span class="s3">&quot;inspect.error&quot;</span><span class="s1">)</span>
+                <span class="s1">add_row(warning</span><span class="s0">, </span><span class="s1">highlighter(repr(error)))</span>
+                <span class="s0">continue</span>
+
+            <span class="s0">if </span><span class="s1">callable(value):</span>
+                <span class="s0">if not </span><span class="s1">self.methods:</span>
+                    <span class="s0">continue</span>
+
+                <span class="s1">_signature_text = self._get_signature(key</span><span class="s0">, </span><span class="s1">value)</span>
+                <span class="s0">if </span><span class="s1">_signature_text </span><span class="s0">is None</span><span class="s1">:</span>
+                    <span class="s1">add_row(key_text</span><span class="s0">, </span><span class="s1">Pretty(value</span><span class="s0">, </span><span class="s1">highlighter=highlighter))</span>
+                <span class="s0">else</span><span class="s1">:</span>
+                    <span class="s0">if </span><span class="s1">self.docs:</span>
+                        <span class="s1">docs = self._get_formatted_doc(value)</span>
+                        <span class="s0">if </span><span class="s1">docs </span><span class="s0">is not None</span><span class="s1">:</span>
+                            <span class="s1">_signature_text.append(</span><span class="s3">&quot;</span><span class="s0">\n</span><span class="s3">&quot; </span><span class="s0">if </span><span class="s3">&quot;</span><span class="s0">\n</span><span class="s3">&quot; </span><span class="s0">in </span><span class="s1">docs </span><span class="s0">else </span><span class="s3">&quot; &quot;</span><span class="s1">)</span>
+                            <span class="s1">doc = highlighter(docs)</span>
+                            <span class="s1">doc.stylize(</span><span class="s3">&quot;inspect.doc&quot;</span><span class="s1">)</span>
+                            <span class="s1">_signature_text.append(doc)</span>
+
+                    <span class="s1">add_row(key_text</span><span class="s0">, </span><span class="s1">_signature_text)</span>
+            <span class="s0">else</span><span class="s1">:</span>
+                <span class="s1">add_row(key_text</span><span class="s0">, </span><span class="s1">Pretty(value</span><span class="s0">, </span><span class="s1">highlighter=highlighter))</span>
+        <span class="s0">if </span><span class="s1">items_table.row_count:</span>
+            <span class="s0">yield </span><span class="s1">items_table</span>
+        <span class="s0">elif </span><span class="s1">not_shown_count:</span>
+            <span class="s0">yield </span><span class="s1">Text.from_markup(</span>
+                <span class="s3">f&quot;[b cyan]</span><span class="s0">{</span><span class="s1">not_shown_count</span><span class="s0">}</span><span class="s3">[/][i] attribute(s) not shown.[/i] &quot;</span>
+                <span class="s3">f&quot;Run [b][magenta]inspect[/]([not b]inspect[/])[/b] for options.&quot;</span>
+            <span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">_get_formatted_doc(self</span><span class="s0">, </span><span class="s1">object_: Any) -&gt; Optional[str]:</span>
+        <span class="s2">&quot;&quot;&quot; 
+        Extract the docstring of an object, process it and returns it. 
+        The processing consists in cleaning up the doctring's indentation, 
+        taking only its 1st paragraph if `self.help` is not True, 
+        and escape its control codes. 
+ 
+        Args: 
+            object_ (Any): the object to get the docstring from. 
+ 
+        Returns: 
+            Optional[str]: the processed docstring, or None if no docstring was found. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">docs = getdoc(object_)</span>
+        <span class="s0">if </span><span class="s1">docs </span><span class="s0">is None</span><span class="s1">:</span>
+            <span class="s0">return None</span>
+        <span class="s1">docs = cleandoc(docs).strip()</span>
+        <span class="s0">if not </span><span class="s1">self.help:</span>
+            <span class="s1">docs = _first_paragraph(docs)</span>
+        <span class="s0">return </span><span class="s1">escape_control_codes(docs)</span>
+
+
+<span class="s0">def </span><span class="s1">get_object_types_mro(obj: Union[object</span><span class="s0">, </span><span class="s1">Type[Any]]) -&gt; Tuple[type</span><span class="s0">, </span><span class="s1">...]:</span>
+    <span class="s2">&quot;&quot;&quot;Returns the MRO of an object's class, or of the object itself if it's a class.&quot;&quot;&quot;</span>
+    <span class="s0">if not </span><span class="s1">hasattr(obj</span><span class="s0">, </span><span class="s3">&quot;__mro__&quot;</span><span class="s1">):</span>
+        <span class="s5"># N.B. we cannot use `if type(obj) is type` here because it doesn't work with</span>
+        <span class="s5"># some types of classes, such as the ones that use abc.ABCMeta.</span>
+        <span class="s1">obj = type(obj)</span>
+    <span class="s0">return </span><span class="s1">getattr(obj</span><span class="s0">, </span><span class="s3">&quot;__mro__&quot;</span><span class="s0">, </span><span class="s1">())</span>
+
+
+<span class="s0">def </span><span class="s1">get_object_types_mro_as_strings(obj: object) -&gt; Collection[str]:</span>
+    <span class="s2">&quot;&quot;&quot; 
+    Returns the MRO of an object's class as full qualified names, or of the object itself if it's a class. 
+ 
+    Examples: 
+        `object_types_mro_as_strings(JSONDecoder)` will return `['json.decoder.JSONDecoder', 'builtins.object']` 
+    &quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s1">[</span>
+        <span class="s3">f'</span><span class="s0">{</span><span class="s1">getattr(type_</span><span class="s0">, </span><span class="s3">&quot;__module__&quot;</span><span class="s0">, </span><span class="s3">&quot;&quot;</span><span class="s1">)</span><span class="s0">}</span><span class="s3">.</span><span class="s0">{</span><span class="s1">getattr(type_</span><span class="s0">, </span><span class="s3">&quot;__qualname__&quot;</span><span class="s0">, </span><span class="s3">&quot;&quot;</span><span class="s1">)</span><span class="s0">}</span><span class="s3">'</span>
+        <span class="s0">for </span><span class="s1">type_ </span><span class="s0">in </span><span class="s1">get_object_types_mro(obj)</span>
+    <span class="s1">]</span>
+
+
+<span class="s0">def </span><span class="s1">is_object_one_of_types(</span>
+    <span class="s1">obj: object</span><span class="s0">, </span><span class="s1">fully_qualified_types_names: Collection[str]</span>
+<span class="s1">) -&gt; bool:</span>
+    <span class="s2">&quot;&quot;&quot; 
+    Returns `True` if the given object's class (or the object itself, if it's a class) has one of the 
+    fully qualified names in its MRO. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">for </span><span class="s1">type_name </span><span class="s0">in </span><span class="s1">get_object_types_mro_as_strings(obj):</span>
+        <span class="s0">if </span><span class="s1">type_name </span><span class="s0">in </span><span class="s1">fully_qualified_types_names:</span>
+            <span class="s0">return True</span>
+    <span class="s0">return False</span>
+</pre>
+</body>
+</html>

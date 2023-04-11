@@ -1,0 +1,104 @@
+<html>
+<head>
+<title>_null_file.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #808080;}
+.s3 { color: #6a8759;}
+.s4 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_null_file.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">types </span><span class="s0">import </span><span class="s1">TracebackType</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">IO</span><span class="s0">, </span><span class="s1">Iterable</span><span class="s0">, </span><span class="s1">Iterator</span><span class="s0">, </span><span class="s1">List</span><span class="s0">, </span><span class="s1">Optional</span><span class="s0">, </span><span class="s1">Type</span>
+
+
+<span class="s0">class </span><span class="s1">NullFile(IO[str]):</span>
+
+    <span class="s2"># TODO: &quot;mode&quot;, &quot;name&quot; and &quot;closed&quot; are only required for Python 3.6.</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">mode(self) -&gt; str:</span>
+        <span class="s0">return </span><span class="s3">&quot;&quot;</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">name(self) -&gt; str:</span>
+        <span class="s0">return </span><span class="s3">&quot;NullFile&quot;</span>
+
+    <span class="s0">def </span><span class="s1">closed(self) -&gt; bool:</span>
+        <span class="s0">return False</span>
+
+    <span class="s0">def </span><span class="s1">close(self) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s0">pass</span>
+
+    <span class="s0">def </span><span class="s1">isatty(self) -&gt; bool:</span>
+        <span class="s0">return False</span>
+
+    <span class="s0">def </span><span class="s1">read(self</span><span class="s0">, </span><span class="s1">__n: int = </span><span class="s4">1</span><span class="s1">) -&gt; str:</span>
+        <span class="s0">return </span><span class="s3">&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">readable(self) -&gt; bool:</span>
+        <span class="s0">return False</span>
+
+    <span class="s0">def </span><span class="s1">readline(self</span><span class="s0">, </span><span class="s1">__limit: int = </span><span class="s4">1</span><span class="s1">) -&gt; str:</span>
+        <span class="s0">return </span><span class="s3">&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">readlines(self</span><span class="s0">, </span><span class="s1">__hint: int = </span><span class="s4">1</span><span class="s1">) -&gt; List[str]:</span>
+        <span class="s0">return </span><span class="s1">[]</span>
+
+    <span class="s0">def </span><span class="s1">seek(self</span><span class="s0">, </span><span class="s1">__offset: int</span><span class="s0">, </span><span class="s1">__whence: int = </span><span class="s4">1</span><span class="s1">) -&gt; int:</span>
+        <span class="s0">return </span><span class="s4">0</span>
+
+    <span class="s0">def </span><span class="s1">seekable(self) -&gt; bool:</span>
+        <span class="s0">return False</span>
+
+    <span class="s0">def </span><span class="s1">tell(self) -&gt; int:</span>
+        <span class="s0">return </span><span class="s4">0</span>
+
+    <span class="s0">def </span><span class="s1">truncate(self</span><span class="s0">, </span><span class="s1">__size: Optional[int] = </span><span class="s4">1</span><span class="s1">) -&gt; int:</span>
+        <span class="s0">return </span><span class="s4">0</span>
+
+    <span class="s0">def </span><span class="s1">writable(self) -&gt; bool:</span>
+        <span class="s0">return False</span>
+
+    <span class="s0">def </span><span class="s1">writelines(self</span><span class="s0">, </span><span class="s1">__lines: Iterable[str]) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s0">pass</span>
+
+    <span class="s0">def </span><span class="s1">__next__(self) -&gt; str:</span>
+        <span class="s0">return </span><span class="s3">&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__iter__(self) -&gt; Iterator[str]:</span>
+        <span class="s0">return </span><span class="s1">iter([</span><span class="s3">&quot;&quot;</span><span class="s1">])</span>
+
+    <span class="s0">def </span><span class="s1">__enter__(self) -&gt; IO[str]:</span>
+        <span class="s0">pass</span>
+
+    <span class="s0">def </span><span class="s1">__exit__(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">__t: Optional[Type[BaseException]]</span><span class="s0">,</span>
+        <span class="s1">__value: Optional[BaseException]</span><span class="s0">,</span>
+        <span class="s1">__traceback: Optional[TracebackType]</span><span class="s0">,</span>
+    <span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s0">pass</span>
+
+    <span class="s0">def </span><span class="s1">write(self</span><span class="s0">, </span><span class="s1">text: str) -&gt; int:</span>
+        <span class="s0">return </span><span class="s4">0</span>
+
+    <span class="s0">def </span><span class="s1">flush(self) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s0">pass</span>
+
+    <span class="s0">def </span><span class="s1">fileno(self) -&gt; int:</span>
+        <span class="s0">return </span><span class="s1">-</span><span class="s4">1</span>
+
+
+<span class="s1">NULL_FILE = NullFile()</span>
+</pre>
+</body>
+</html>

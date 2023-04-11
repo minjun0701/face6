@@ -1,0 +1,32 @@
+<html>
+<head>
+<title>compat.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #6a8759;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+compat.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">.core </span><span class="s0">import </span><span class="s1">*</span>
+<span class="s0">from </span><span class="s1">.codec </span><span class="s0">import </span><span class="s1">*</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span><span class="s0">, </span><span class="s1">Union</span>
+
+<span class="s0">def </span><span class="s1">ToASCII(label: str) -&gt; bytes:</span>
+    <span class="s0">return </span><span class="s1">encode(label)</span>
+
+<span class="s0">def </span><span class="s1">ToUnicode(label: Union[bytes</span><span class="s0">, </span><span class="s1">bytearray]) -&gt; str:</span>
+    <span class="s0">return </span><span class="s1">decode(label)</span>
+
+<span class="s0">def </span><span class="s1">nameprep(s: Any) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+    <span class="s0">raise </span><span class="s1">NotImplementedError(</span><span class="s2">'IDNA 2008 does not utilise nameprep protocol'</span><span class="s1">)</span>
+
+</pre>
+</body>
+</html>

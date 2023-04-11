@@ -1,0 +1,713 @@
+<html>
+<head>
+<title>_parser.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6897bb;}
+.s4 { color: #6a8759;}
+.s5 { color: #629755; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_parser.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># SPDX-License-Identifier: MIT</span>
+<span class="s0"># SPDX-FileCopyrightText: 2021 Taneli Hukkinen</span>
+<span class="s0"># Licensed to PSF under a Contributor Agreement.</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s1">collections.abc </span><span class="s2">import </span><span class="s1">Iterable</span>
+<span class="s2">import </span><span class="s1">string</span>
+<span class="s2">from </span><span class="s1">types </span><span class="s2">import </span><span class="s1">MappingProxyType</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">BinaryIO</span><span class="s2">, </span><span class="s1">NamedTuple</span>
+
+<span class="s2">from </span><span class="s1">._re </span><span class="s2">import </span><span class="s1">(</span>
+    <span class="s1">RE_DATETIME</span><span class="s2">,</span>
+    <span class="s1">RE_LOCALTIME</span><span class="s2">,</span>
+    <span class="s1">RE_NUMBER</span><span class="s2">,</span>
+    <span class="s1">match_to_datetime</span><span class="s2">,</span>
+    <span class="s1">match_to_localtime</span><span class="s2">,</span>
+    <span class="s1">match_to_number</span><span class="s2">,</span>
+<span class="s1">)</span>
+<span class="s2">from </span><span class="s1">._types </span><span class="s2">import </span><span class="s1">Key</span><span class="s2">, </span><span class="s1">ParseFloat</span><span class="s2">, </span><span class="s1">Pos</span>
+
+<span class="s1">ASCII_CTRL = frozenset(chr(i) </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">32</span><span class="s1">)) | frozenset(chr(</span><span class="s3">127</span><span class="s1">))</span>
+
+<span class="s0"># Neither of these sets include quotation mark or backslash. They are</span>
+<span class="s0"># currently handled as separate cases in the parser functions.</span>
+<span class="s1">ILLEGAL_BASIC_STR_CHARS = ASCII_CTRL - frozenset(</span><span class="s4">&quot;</span><span class="s2">\t</span><span class="s4">&quot;</span><span class="s1">)</span>
+<span class="s1">ILLEGAL_MULTILINE_BASIC_STR_CHARS = ASCII_CTRL - frozenset(</span><span class="s4">&quot;</span><span class="s2">\t\n</span><span class="s4">&quot;</span><span class="s1">)</span>
+
+<span class="s1">ILLEGAL_LITERAL_STR_CHARS = ILLEGAL_BASIC_STR_CHARS</span>
+<span class="s1">ILLEGAL_MULTILINE_LITERAL_STR_CHARS = ILLEGAL_MULTILINE_BASIC_STR_CHARS</span>
+
+<span class="s1">ILLEGAL_COMMENT_CHARS = ILLEGAL_BASIC_STR_CHARS</span>
+
+<span class="s1">TOML_WS = frozenset(</span><span class="s4">&quot; </span><span class="s2">\t</span><span class="s4">&quot;</span><span class="s1">)</span>
+<span class="s1">TOML_WS_AND_NEWLINE = TOML_WS | frozenset(</span><span class="s4">&quot;</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s1">)</span>
+<span class="s1">BARE_KEY_CHARS = frozenset(string.ascii_letters + string.digits + </span><span class="s4">&quot;-_&quot;</span><span class="s1">)</span>
+<span class="s1">KEY_INITIAL_CHARS = BARE_KEY_CHARS | frozenset(</span><span class="s4">&quot;</span><span class="s2">\&quot;</span><span class="s4">'&quot;</span><span class="s1">)</span>
+<span class="s1">HEXDIGIT_CHARS = frozenset(string.hexdigits)</span>
+
+<span class="s1">BASIC_STR_ESCAPE_REPLACEMENTS = MappingProxyType(</span>
+    <span class="s1">{</span>
+        <span class="s4">&quot;</span><span class="s2">\\</span><span class="s4">b&quot;</span><span class="s1">: </span><span class="s4">&quot;</span><span class="s2">\u0008</span><span class="s4">&quot;</span><span class="s2">,  </span><span class="s0"># backspace</span>
+        <span class="s4">&quot;</span><span class="s2">\\</span><span class="s4">t&quot;</span><span class="s1">: </span><span class="s4">&quot;</span><span class="s2">\u0009</span><span class="s4">&quot;</span><span class="s2">,  </span><span class="s0"># tab</span>
+        <span class="s4">&quot;</span><span class="s2">\\</span><span class="s4">n&quot;</span><span class="s1">: </span><span class="s4">&quot;</span><span class="s2">\u000A</span><span class="s4">&quot;</span><span class="s2">,  </span><span class="s0"># linefeed</span>
+        <span class="s4">&quot;</span><span class="s2">\\</span><span class="s4">f&quot;</span><span class="s1">: </span><span class="s4">&quot;</span><span class="s2">\u000C</span><span class="s4">&quot;</span><span class="s2">,  </span><span class="s0"># form feed</span>
+        <span class="s4">&quot;</span><span class="s2">\\</span><span class="s4">r&quot;</span><span class="s1">: </span><span class="s4">&quot;</span><span class="s2">\u000D</span><span class="s4">&quot;</span><span class="s2">,  </span><span class="s0"># carriage return</span>
+        <span class="s4">'</span><span class="s2">\\</span><span class="s4">&quot;'</span><span class="s1">: </span><span class="s4">&quot;</span><span class="s2">\u0022</span><span class="s4">&quot;</span><span class="s2">,  </span><span class="s0"># quote</span>
+        <span class="s4">&quot;</span><span class="s2">\\\\</span><span class="s4">&quot;</span><span class="s1">: </span><span class="s4">&quot;</span><span class="s2">\u005C</span><span class="s4">&quot;</span><span class="s2">,  </span><span class="s0"># backslash</span>
+    <span class="s1">}</span>
+<span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">TOMLDecodeError(ValueError):</span>
+    <span class="s5">&quot;&quot;&quot;An error raised if a document is not valid TOML.&quot;&quot;&quot;</span>
+
+
+<span class="s2">def </span><span class="s1">load(__fp: BinaryIO</span><span class="s2">, </span><span class="s1">*</span><span class="s2">, </span><span class="s1">parse_float: ParseFloat = float) -&gt; dict[str</span><span class="s2">, </span><span class="s1">Any]:</span>
+    <span class="s5">&quot;&quot;&quot;Parse TOML from a binary file object.&quot;&quot;&quot;</span>
+    <span class="s1">b = __fp.read()</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">s = b.decode()</span>
+    <span class="s2">except </span><span class="s1">AttributeError:</span>
+        <span class="s2">raise </span><span class="s1">TypeError(</span>
+            <span class="s4">&quot;File must be opened in binary mode, e.g. use `open('foo.toml', 'rb')`&quot;</span>
+        <span class="s1">) </span><span class="s2">from None</span>
+    <span class="s2">return </span><span class="s1">loads(s</span><span class="s2">, </span><span class="s1">parse_float=parse_float)</span>
+
+
+<span class="s2">def </span><span class="s1">loads(__s: str</span><span class="s2">, </span><span class="s1">*</span><span class="s2">, </span><span class="s1">parse_float: ParseFloat = float) -&gt; dict[str</span><span class="s2">, </span><span class="s1">Any]:  </span><span class="s0"># noqa: C901</span>
+    <span class="s5">&quot;&quot;&quot;Parse TOML from a string.&quot;&quot;&quot;</span>
+
+    <span class="s0"># The spec allows converting &quot;\r\n&quot; to &quot;\n&quot;, even in string</span>
+    <span class="s0"># literals. Let's do so to simplify parsing.</span>
+    <span class="s1">src = __s.replace(</span><span class="s4">&quot;</span><span class="s2">\r\n</span><span class="s4">&quot;</span><span class="s2">, </span><span class="s4">&quot;</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s1">)</span>
+    <span class="s1">pos = </span><span class="s3">0</span>
+    <span class="s1">out = Output(NestedDict()</span><span class="s2">, </span><span class="s1">Flags())</span>
+    <span class="s1">header: Key = ()</span>
+    <span class="s1">parse_float = make_safe_parse_float(parse_float)</span>
+
+    <span class="s0"># Parse one statement at a time</span>
+    <span class="s0"># (typically means one line in TOML source)</span>
+    <span class="s2">while True</span><span class="s1">:</span>
+        <span class="s0"># 1. Skip line leading whitespace</span>
+        <span class="s1">pos = skip_chars(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">TOML_WS)</span>
+
+        <span class="s0"># 2. Parse rules. Expect one of the following:</span>
+        <span class="s0">#    - end of file</span>
+        <span class="s0">#    - end of line</span>
+        <span class="s0">#    - comment</span>
+        <span class="s0">#    - key/value pair</span>
+        <span class="s0">#    - append dict to list (and move to its namespace)</span>
+        <span class="s0">#    - create dict (and move to its namespace)</span>
+        <span class="s0"># Skip trailing whitespace when applicable.</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">char = src[pos]</span>
+        <span class="s2">except </span><span class="s1">IndexError:</span>
+            <span class="s2">break</span>
+        <span class="s2">if </span><span class="s1">char == </span><span class="s4">&quot;</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s1">:</span>
+            <span class="s1">pos += </span><span class="s3">1</span>
+            <span class="s2">continue</span>
+        <span class="s2">if </span><span class="s1">char </span><span class="s2">in </span><span class="s1">KEY_INITIAL_CHARS:</span>
+            <span class="s1">pos = key_value_rule(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">out</span><span class="s2">, </span><span class="s1">header</span><span class="s2">, </span><span class="s1">parse_float)</span>
+            <span class="s1">pos = skip_chars(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">TOML_WS)</span>
+        <span class="s2">elif </span><span class="s1">char == </span><span class="s4">&quot;[&quot;</span><span class="s1">:</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">second_char: str | </span><span class="s2">None </span><span class="s1">= src[pos + </span><span class="s3">1</span><span class="s1">]</span>
+            <span class="s2">except </span><span class="s1">IndexError:</span>
+                <span class="s1">second_char = </span><span class="s2">None</span>
+            <span class="s1">out.flags.finalize_pending()</span>
+            <span class="s2">if </span><span class="s1">second_char == </span><span class="s4">&quot;[&quot;</span><span class="s1">:</span>
+                <span class="s1">pos</span><span class="s2">, </span><span class="s1">header = create_list_rule(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">out)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">pos</span><span class="s2">, </span><span class="s1">header = create_dict_rule(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">out)</span>
+            <span class="s1">pos = skip_chars(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">TOML_WS)</span>
+        <span class="s2">elif </span><span class="s1">char != </span><span class="s4">&quot;#&quot;</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Invalid statement&quot;</span><span class="s1">)</span>
+
+        <span class="s0"># 3. Skip comment</span>
+        <span class="s1">pos = skip_comment(src</span><span class="s2">, </span><span class="s1">pos)</span>
+
+        <span class="s0"># 4. Expect end of line or end of file</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">char = src[pos]</span>
+        <span class="s2">except </span><span class="s1">IndexError:</span>
+            <span class="s2">break</span>
+        <span class="s2">if </span><span class="s1">char != </span><span class="s4">&quot;</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">suffixed_err(</span>
+                <span class="s1">src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Expected newline or end of document after a statement&quot;</span>
+            <span class="s1">)</span>
+        <span class="s1">pos += </span><span class="s3">1</span>
+
+    <span class="s2">return </span><span class="s1">out.data.dict</span>
+
+
+<span class="s2">class </span><span class="s1">Flags:</span>
+    <span class="s5">&quot;&quot;&quot;Flags that map to parsed keys/namespaces.&quot;&quot;&quot;</span>
+
+    <span class="s0"># Marks an immutable namespace (inline array or inline table).</span>
+    <span class="s1">FROZEN = </span><span class="s3">0</span>
+    <span class="s0"># Marks a nest that has been explicitly created and can no longer</span>
+    <span class="s0"># be opened using the &quot;[table]&quot; syntax.</span>
+    <span class="s1">EXPLICIT_NEST = </span><span class="s3">1</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">self._flags: dict[str</span><span class="s2">, </span><span class="s1">dict] = {}</span>
+        <span class="s1">self._pending_flags: set[tuple[Key</span><span class="s2">, </span><span class="s1">int]] = set()</span>
+
+    <span class="s2">def </span><span class="s1">add_pending(self</span><span class="s2">, </span><span class="s1">key: Key</span><span class="s2">, </span><span class="s1">flag: int) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">self._pending_flags.add((key</span><span class="s2">, </span><span class="s1">flag))</span>
+
+    <span class="s2">def </span><span class="s1">finalize_pending(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s2">for </span><span class="s1">key</span><span class="s2">, </span><span class="s1">flag </span><span class="s2">in </span><span class="s1">self._pending_flags:</span>
+            <span class="s1">self.set(key</span><span class="s2">, </span><span class="s1">flag</span><span class="s2">, </span><span class="s1">recursive=</span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s1">self._pending_flags.clear()</span>
+
+    <span class="s2">def </span><span class="s1">unset_all(self</span><span class="s2">, </span><span class="s1">key: Key) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">cont = self._flags</span>
+        <span class="s2">for </span><span class="s1">k </span><span class="s2">in </span><span class="s1">key[:-</span><span class="s3">1</span><span class="s1">]:</span>
+            <span class="s2">if </span><span class="s1">k </span><span class="s2">not in </span><span class="s1">cont:</span>
+                <span class="s2">return</span>
+            <span class="s1">cont = cont[k][</span><span class="s4">&quot;nested&quot;</span><span class="s1">]</span>
+        <span class="s1">cont.pop(key[-</span><span class="s3">1</span><span class="s1">]</span><span class="s2">, None</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">set(self</span><span class="s2">, </span><span class="s1">key: Key</span><span class="s2">, </span><span class="s1">flag: int</span><span class="s2">, </span><span class="s1">*</span><span class="s2">, </span><span class="s1">recursive: bool) -&gt; </span><span class="s2">None</span><span class="s1">:  </span><span class="s0"># noqa: A003</span>
+        <span class="s1">cont = self._flags</span>
+        <span class="s1">key_parent</span><span class="s2">, </span><span class="s1">key_stem = key[:-</span><span class="s3">1</span><span class="s1">]</span><span class="s2">, </span><span class="s1">key[-</span><span class="s3">1</span><span class="s1">]</span>
+        <span class="s2">for </span><span class="s1">k </span><span class="s2">in </span><span class="s1">key_parent:</span>
+            <span class="s2">if </span><span class="s1">k </span><span class="s2">not in </span><span class="s1">cont:</span>
+                <span class="s1">cont[k] = {</span><span class="s4">&quot;flags&quot;</span><span class="s1">: set()</span><span class="s2">, </span><span class="s4">&quot;recursive_flags&quot;</span><span class="s1">: set()</span><span class="s2">, </span><span class="s4">&quot;nested&quot;</span><span class="s1">: {}}</span>
+            <span class="s1">cont = cont[k][</span><span class="s4">&quot;nested&quot;</span><span class="s1">]</span>
+        <span class="s2">if </span><span class="s1">key_stem </span><span class="s2">not in </span><span class="s1">cont:</span>
+            <span class="s1">cont[key_stem] = {</span><span class="s4">&quot;flags&quot;</span><span class="s1">: set()</span><span class="s2">, </span><span class="s4">&quot;recursive_flags&quot;</span><span class="s1">: set()</span><span class="s2">, </span><span class="s4">&quot;nested&quot;</span><span class="s1">: {}}</span>
+        <span class="s1">cont[key_stem][</span><span class="s4">&quot;recursive_flags&quot; </span><span class="s2">if </span><span class="s1">recursive </span><span class="s2">else </span><span class="s4">&quot;flags&quot;</span><span class="s1">].add(flag)</span>
+
+    <span class="s2">def </span><span class="s1">is_(self</span><span class="s2">, </span><span class="s1">key: Key</span><span class="s2">, </span><span class="s1">flag: int) -&gt; bool:</span>
+        <span class="s2">if not </span><span class="s1">key:</span>
+            <span class="s2">return False  </span><span class="s0"># document root has no flags</span>
+        <span class="s1">cont = self._flags</span>
+        <span class="s2">for </span><span class="s1">k </span><span class="s2">in </span><span class="s1">key[:-</span><span class="s3">1</span><span class="s1">]:</span>
+            <span class="s2">if </span><span class="s1">k </span><span class="s2">not in </span><span class="s1">cont:</span>
+                <span class="s2">return False</span>
+            <span class="s1">inner_cont = cont[k]</span>
+            <span class="s2">if </span><span class="s1">flag </span><span class="s2">in </span><span class="s1">inner_cont[</span><span class="s4">&quot;recursive_flags&quot;</span><span class="s1">]:</span>
+                <span class="s2">return True</span>
+            <span class="s1">cont = inner_cont[</span><span class="s4">&quot;nested&quot;</span><span class="s1">]</span>
+        <span class="s1">key_stem = key[-</span><span class="s3">1</span><span class="s1">]</span>
+        <span class="s2">if </span><span class="s1">key_stem </span><span class="s2">in </span><span class="s1">cont:</span>
+            <span class="s1">cont = cont[key_stem]</span>
+            <span class="s2">return </span><span class="s1">flag </span><span class="s2">in </span><span class="s1">cont[</span><span class="s4">&quot;flags&quot;</span><span class="s1">] </span><span class="s2">or </span><span class="s1">flag </span><span class="s2">in </span><span class="s1">cont[</span><span class="s4">&quot;recursive_flags&quot;</span><span class="s1">]</span>
+        <span class="s2">return False</span>
+
+
+<span class="s2">class </span><span class="s1">NestedDict:</span>
+    <span class="s2">def </span><span class="s1">__init__(self) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s0"># The parsed content of the TOML document</span>
+        <span class="s1">self.dict: dict[str</span><span class="s2">, </span><span class="s1">Any] = {}</span>
+
+    <span class="s2">def </span><span class="s1">get_or_create_nest(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">key: Key</span><span class="s2">,</span>
+        <span class="s1">*</span><span class="s2">,</span>
+        <span class="s1">access_lists: bool = </span><span class="s2">True,</span>
+    <span class="s1">) -&gt; dict:</span>
+        <span class="s1">cont: Any = self.dict</span>
+        <span class="s2">for </span><span class="s1">k </span><span class="s2">in </span><span class="s1">key:</span>
+            <span class="s2">if </span><span class="s1">k </span><span class="s2">not in </span><span class="s1">cont:</span>
+                <span class="s1">cont[k] = {}</span>
+            <span class="s1">cont = cont[k]</span>
+            <span class="s2">if </span><span class="s1">access_lists </span><span class="s2">and </span><span class="s1">isinstance(cont</span><span class="s2">, </span><span class="s1">list):</span>
+                <span class="s1">cont = cont[-</span><span class="s3">1</span><span class="s1">]</span>
+            <span class="s2">if not </span><span class="s1">isinstance(cont</span><span class="s2">, </span><span class="s1">dict):</span>
+                <span class="s2">raise </span><span class="s1">KeyError(</span><span class="s4">&quot;There is no nest behind this key&quot;</span><span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">cont</span>
+
+    <span class="s2">def </span><span class="s1">append_nest_to_list(self</span><span class="s2">, </span><span class="s1">key: Key) -&gt; </span><span class="s2">None</span><span class="s1">:</span>
+        <span class="s1">cont = self.get_or_create_nest(key[:-</span><span class="s3">1</span><span class="s1">])</span>
+        <span class="s1">last_key = key[-</span><span class="s3">1</span><span class="s1">]</span>
+        <span class="s2">if </span><span class="s1">last_key </span><span class="s2">in </span><span class="s1">cont:</span>
+            <span class="s1">list_ = cont[last_key]</span>
+            <span class="s2">if not </span><span class="s1">isinstance(list_</span><span class="s2">, </span><span class="s1">list):</span>
+                <span class="s2">raise </span><span class="s1">KeyError(</span><span class="s4">&quot;An object other than list found behind this key&quot;</span><span class="s1">)</span>
+            <span class="s1">list_.append({})</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">cont[last_key] = [{}]</span>
+
+
+<span class="s2">class </span><span class="s1">Output(NamedTuple):</span>
+    <span class="s1">data: NestedDict</span>
+    <span class="s1">flags: Flags</span>
+
+
+<span class="s2">def </span><span class="s1">skip_chars(src: str</span><span class="s2">, </span><span class="s1">pos: Pos</span><span class="s2">, </span><span class="s1">chars: Iterable[str]) -&gt; Pos:</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">while </span><span class="s1">src[pos] </span><span class="s2">in </span><span class="s1">chars:</span>
+            <span class="s1">pos += </span><span class="s3">1</span>
+    <span class="s2">except </span><span class="s1">IndexError:</span>
+        <span class="s2">pass</span>
+    <span class="s2">return </span><span class="s1">pos</span>
+
+
+<span class="s2">def </span><span class="s1">skip_until(</span>
+    <span class="s1">src: str</span><span class="s2">,</span>
+    <span class="s1">pos: Pos</span><span class="s2">,</span>
+    <span class="s1">expect: str</span><span class="s2">,</span>
+    <span class="s1">*</span><span class="s2">,</span>
+    <span class="s1">error_on: frozenset[str]</span><span class="s2">,</span>
+    <span class="s1">error_on_eof: bool</span><span class="s2">,</span>
+<span class="s1">) -&gt; Pos:</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">new_pos = src.index(expect</span><span class="s2">, </span><span class="s1">pos)</span>
+    <span class="s2">except </span><span class="s1">ValueError:</span>
+        <span class="s1">new_pos = len(src)</span>
+        <span class="s2">if </span><span class="s1">error_on_eof:</span>
+            <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">new_pos</span><span class="s2">, </span><span class="s4">f&quot;Expected </span><span class="s2">{</span><span class="s1">expect</span><span class="s2">!r}</span><span class="s4">&quot;</span><span class="s1">) </span><span class="s2">from None</span>
+
+    <span class="s2">if not </span><span class="s1">error_on.isdisjoint(src[pos:new_pos]):</span>
+        <span class="s2">while </span><span class="s1">src[pos] </span><span class="s2">not in </span><span class="s1">error_on:</span>
+            <span class="s1">pos += </span><span class="s3">1</span>
+        <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">f&quot;Found invalid character </span><span class="s2">{</span><span class="s1">src[pos]</span><span class="s2">!r}</span><span class="s4">&quot;</span><span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">new_pos</span>
+
+
+<span class="s2">def </span><span class="s1">skip_comment(src: str</span><span class="s2">, </span><span class="s1">pos: Pos) -&gt; Pos:</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">char: str | </span><span class="s2">None </span><span class="s1">= src[pos]</span>
+    <span class="s2">except </span><span class="s1">IndexError:</span>
+        <span class="s1">char = </span><span class="s2">None</span>
+    <span class="s2">if </span><span class="s1">char == </span><span class="s4">&quot;#&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">skip_until(</span>
+            <span class="s1">src</span><span class="s2">, </span><span class="s1">pos + </span><span class="s3">1</span><span class="s2">, </span><span class="s4">&quot;</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s2">, </span><span class="s1">error_on=ILLEGAL_COMMENT_CHARS</span><span class="s2">, </span><span class="s1">error_on_eof=</span><span class="s2">False</span>
+        <span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">pos</span>
+
+
+<span class="s2">def </span><span class="s1">skip_comments_and_array_ws(src: str</span><span class="s2">, </span><span class="s1">pos: Pos) -&gt; Pos:</span>
+    <span class="s2">while True</span><span class="s1">:</span>
+        <span class="s1">pos_before_skip = pos</span>
+        <span class="s1">pos = skip_chars(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">TOML_WS_AND_NEWLINE)</span>
+        <span class="s1">pos = skip_comment(src</span><span class="s2">, </span><span class="s1">pos)</span>
+        <span class="s2">if </span><span class="s1">pos == pos_before_skip:</span>
+            <span class="s2">return </span><span class="s1">pos</span>
+
+
+<span class="s2">def </span><span class="s1">create_dict_rule(src: str</span><span class="s2">, </span><span class="s1">pos: Pos</span><span class="s2">, </span><span class="s1">out: Output) -&gt; tuple[Pos</span><span class="s2">, </span><span class="s1">Key]:</span>
+    <span class="s1">pos += </span><span class="s3">1  </span><span class="s0"># Skip &quot;[&quot;</span>
+    <span class="s1">pos = skip_chars(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">TOML_WS)</span>
+    <span class="s1">pos</span><span class="s2">, </span><span class="s1">key = parse_key(src</span><span class="s2">, </span><span class="s1">pos)</span>
+
+    <span class="s2">if </span><span class="s1">out.flags.is_(key</span><span class="s2">, </span><span class="s1">Flags.EXPLICIT_NEST) </span><span class="s2">or </span><span class="s1">out.flags.is_(key</span><span class="s2">, </span><span class="s1">Flags.FROZEN):</span>
+        <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">f&quot;Cannot declare </span><span class="s2">{</span><span class="s1">key</span><span class="s2">} </span><span class="s4">twice&quot;</span><span class="s1">)</span>
+    <span class="s1">out.flags.set(key</span><span class="s2">, </span><span class="s1">Flags.EXPLICIT_NEST</span><span class="s2">, </span><span class="s1">recursive=</span><span class="s2">False</span><span class="s1">)</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">out.data.get_or_create_nest(key)</span>
+    <span class="s2">except </span><span class="s1">KeyError:</span>
+        <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Cannot overwrite a value&quot;</span><span class="s1">) </span><span class="s2">from None</span>
+
+    <span class="s2">if not </span><span class="s1">src.startswith(</span><span class="s4">&quot;]&quot;</span><span class="s2">, </span><span class="s1">pos):</span>
+        <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Expected ']' at the end of a table declaration&quot;</span><span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">pos + </span><span class="s3">1</span><span class="s2">, </span><span class="s1">key</span>
+
+
+<span class="s2">def </span><span class="s1">create_list_rule(src: str</span><span class="s2">, </span><span class="s1">pos: Pos</span><span class="s2">, </span><span class="s1">out: Output) -&gt; tuple[Pos</span><span class="s2">, </span><span class="s1">Key]:</span>
+    <span class="s1">pos += </span><span class="s3">2  </span><span class="s0"># Skip &quot;[[&quot;</span>
+    <span class="s1">pos = skip_chars(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">TOML_WS)</span>
+    <span class="s1">pos</span><span class="s2">, </span><span class="s1">key = parse_key(src</span><span class="s2">, </span><span class="s1">pos)</span>
+
+    <span class="s2">if </span><span class="s1">out.flags.is_(key</span><span class="s2">, </span><span class="s1">Flags.FROZEN):</span>
+        <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">f&quot;Cannot mutate immutable namespace </span><span class="s2">{</span><span class="s1">key</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+    <span class="s0"># Free the namespace now that it points to another empty list item...</span>
+    <span class="s1">out.flags.unset_all(key)</span>
+    <span class="s0"># ...but this key precisely is still prohibited from table declaration</span>
+    <span class="s1">out.flags.set(key</span><span class="s2">, </span><span class="s1">Flags.EXPLICIT_NEST</span><span class="s2">, </span><span class="s1">recursive=</span><span class="s2">False</span><span class="s1">)</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">out.data.append_nest_to_list(key)</span>
+    <span class="s2">except </span><span class="s1">KeyError:</span>
+        <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Cannot overwrite a value&quot;</span><span class="s1">) </span><span class="s2">from None</span>
+
+    <span class="s2">if not </span><span class="s1">src.startswith(</span><span class="s4">&quot;]]&quot;</span><span class="s2">, </span><span class="s1">pos):</span>
+        <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Expected ']]' at the end of an array declaration&quot;</span><span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">pos + </span><span class="s3">2</span><span class="s2">, </span><span class="s1">key</span>
+
+
+<span class="s2">def </span><span class="s1">key_value_rule(</span>
+    <span class="s1">src: str</span><span class="s2">, </span><span class="s1">pos: Pos</span><span class="s2">, </span><span class="s1">out: Output</span><span class="s2">, </span><span class="s1">header: Key</span><span class="s2">, </span><span class="s1">parse_float: ParseFloat</span>
+<span class="s1">) -&gt; Pos:</span>
+    <span class="s1">pos</span><span class="s2">, </span><span class="s1">key</span><span class="s2">, </span><span class="s1">value = parse_key_value_pair(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">parse_float)</span>
+    <span class="s1">key_parent</span><span class="s2">, </span><span class="s1">key_stem = key[:-</span><span class="s3">1</span><span class="s1">]</span><span class="s2">, </span><span class="s1">key[-</span><span class="s3">1</span><span class="s1">]</span>
+    <span class="s1">abs_key_parent = header + key_parent</span>
+
+    <span class="s1">relative_path_cont_keys = (header + key[:i] </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">1</span><span class="s2">, </span><span class="s1">len(key)))</span>
+    <span class="s2">for </span><span class="s1">cont_key </span><span class="s2">in </span><span class="s1">relative_path_cont_keys:</span>
+        <span class="s0"># Check that dotted key syntax does not redefine an existing table</span>
+        <span class="s2">if </span><span class="s1">out.flags.is_(cont_key</span><span class="s2">, </span><span class="s1">Flags.EXPLICIT_NEST):</span>
+            <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">f&quot;Cannot redefine namespace </span><span class="s2">{</span><span class="s1">cont_key</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+        <span class="s0"># Containers in the relative path can't be opened with the table syntax or</span>
+        <span class="s0"># dotted key/value syntax in following table sections.</span>
+        <span class="s1">out.flags.add_pending(cont_key</span><span class="s2">, </span><span class="s1">Flags.EXPLICIT_NEST)</span>
+
+    <span class="s2">if </span><span class="s1">out.flags.is_(abs_key_parent</span><span class="s2">, </span><span class="s1">Flags.FROZEN):</span>
+        <span class="s2">raise </span><span class="s1">suffixed_err(</span>
+            <span class="s1">src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">f&quot;Cannot mutate immutable namespace </span><span class="s2">{</span><span class="s1">abs_key_parent</span><span class="s2">}</span><span class="s4">&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">nest = out.data.get_or_create_nest(abs_key_parent)</span>
+    <span class="s2">except </span><span class="s1">KeyError:</span>
+        <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Cannot overwrite a value&quot;</span><span class="s1">) </span><span class="s2">from None</span>
+    <span class="s2">if </span><span class="s1">key_stem </span><span class="s2">in </span><span class="s1">nest:</span>
+        <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Cannot overwrite a value&quot;</span><span class="s1">)</span>
+    <span class="s0"># Mark inline table and array namespaces recursively immutable</span>
+    <span class="s2">if </span><span class="s1">isinstance(value</span><span class="s2">, </span><span class="s1">(dict</span><span class="s2">, </span><span class="s1">list)):</span>
+        <span class="s1">out.flags.set(header + key</span><span class="s2">, </span><span class="s1">Flags.FROZEN</span><span class="s2">, </span><span class="s1">recursive=</span><span class="s2">True</span><span class="s1">)</span>
+    <span class="s1">nest[key_stem] = value</span>
+    <span class="s2">return </span><span class="s1">pos</span>
+
+
+<span class="s2">def </span><span class="s1">parse_key_value_pair(</span>
+    <span class="s1">src: str</span><span class="s2">, </span><span class="s1">pos: Pos</span><span class="s2">, </span><span class="s1">parse_float: ParseFloat</span>
+<span class="s1">) -&gt; tuple[Pos</span><span class="s2">, </span><span class="s1">Key</span><span class="s2">, </span><span class="s1">Any]:</span>
+    <span class="s1">pos</span><span class="s2">, </span><span class="s1">key = parse_key(src</span><span class="s2">, </span><span class="s1">pos)</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">char: str | </span><span class="s2">None </span><span class="s1">= src[pos]</span>
+    <span class="s2">except </span><span class="s1">IndexError:</span>
+        <span class="s1">char = </span><span class="s2">None</span>
+    <span class="s2">if </span><span class="s1">char != </span><span class="s4">&quot;=&quot;</span><span class="s1">:</span>
+        <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Expected '=' after a key in a key/value pair&quot;</span><span class="s1">)</span>
+    <span class="s1">pos += </span><span class="s3">1</span>
+    <span class="s1">pos = skip_chars(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">TOML_WS)</span>
+    <span class="s1">pos</span><span class="s2">, </span><span class="s1">value = parse_value(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">parse_float)</span>
+    <span class="s2">return </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">key</span><span class="s2">, </span><span class="s1">value</span>
+
+
+<span class="s2">def </span><span class="s1">parse_key(src: str</span><span class="s2">, </span><span class="s1">pos: Pos) -&gt; tuple[Pos</span><span class="s2">, </span><span class="s1">Key]:</span>
+    <span class="s1">pos</span><span class="s2">, </span><span class="s1">key_part = parse_key_part(src</span><span class="s2">, </span><span class="s1">pos)</span>
+    <span class="s1">key: Key = (key_part</span><span class="s2">,</span><span class="s1">)</span>
+    <span class="s1">pos = skip_chars(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">TOML_WS)</span>
+    <span class="s2">while True</span><span class="s1">:</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">char: str | </span><span class="s2">None </span><span class="s1">= src[pos]</span>
+        <span class="s2">except </span><span class="s1">IndexError:</span>
+            <span class="s1">char = </span><span class="s2">None</span>
+        <span class="s2">if </span><span class="s1">char != </span><span class="s4">&quot;.&quot;</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">key</span>
+        <span class="s1">pos += </span><span class="s3">1</span>
+        <span class="s1">pos = skip_chars(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">TOML_WS)</span>
+        <span class="s1">pos</span><span class="s2">, </span><span class="s1">key_part = parse_key_part(src</span><span class="s2">, </span><span class="s1">pos)</span>
+        <span class="s1">key += (key_part</span><span class="s2">,</span><span class="s1">)</span>
+        <span class="s1">pos = skip_chars(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">TOML_WS)</span>
+
+
+<span class="s2">def </span><span class="s1">parse_key_part(src: str</span><span class="s2">, </span><span class="s1">pos: Pos) -&gt; tuple[Pos</span><span class="s2">, </span><span class="s1">str]:</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">char: str | </span><span class="s2">None </span><span class="s1">= src[pos]</span>
+    <span class="s2">except </span><span class="s1">IndexError:</span>
+        <span class="s1">char = </span><span class="s2">None</span>
+    <span class="s2">if </span><span class="s1">char </span><span class="s2">in </span><span class="s1">BARE_KEY_CHARS:</span>
+        <span class="s1">start_pos = pos</span>
+        <span class="s1">pos = skip_chars(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">BARE_KEY_CHARS)</span>
+        <span class="s2">return </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">src[start_pos:pos]</span>
+    <span class="s2">if </span><span class="s1">char == </span><span class="s4">&quot;'&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">parse_literal_str(src</span><span class="s2">, </span><span class="s1">pos)</span>
+    <span class="s2">if </span><span class="s1">char == </span><span class="s4">'&quot;'</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">parse_one_line_basic_str(src</span><span class="s2">, </span><span class="s1">pos)</span>
+    <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Invalid initial character for a key part&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">parse_one_line_basic_str(src: str</span><span class="s2">, </span><span class="s1">pos: Pos) -&gt; tuple[Pos</span><span class="s2">, </span><span class="s1">str]:</span>
+    <span class="s1">pos += </span><span class="s3">1</span>
+    <span class="s2">return </span><span class="s1">parse_basic_str(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">multiline=</span><span class="s2">False</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">parse_array(src: str</span><span class="s2">, </span><span class="s1">pos: Pos</span><span class="s2">, </span><span class="s1">parse_float: ParseFloat) -&gt; tuple[Pos</span><span class="s2">, </span><span class="s1">list]:</span>
+    <span class="s1">pos += </span><span class="s3">1</span>
+    <span class="s1">array: list = []</span>
+
+    <span class="s1">pos = skip_comments_and_array_ws(src</span><span class="s2">, </span><span class="s1">pos)</span>
+    <span class="s2">if </span><span class="s1">src.startswith(</span><span class="s4">&quot;]&quot;</span><span class="s2">, </span><span class="s1">pos):</span>
+        <span class="s2">return </span><span class="s1">pos + </span><span class="s3">1</span><span class="s2">, </span><span class="s1">array</span>
+    <span class="s2">while True</span><span class="s1">:</span>
+        <span class="s1">pos</span><span class="s2">, </span><span class="s1">val = parse_value(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">parse_float)</span>
+        <span class="s1">array.append(val)</span>
+        <span class="s1">pos = skip_comments_and_array_ws(src</span><span class="s2">, </span><span class="s1">pos)</span>
+
+        <span class="s1">c = src[pos : pos + </span><span class="s3">1</span><span class="s1">]</span>
+        <span class="s2">if </span><span class="s1">c == </span><span class="s4">&quot;]&quot;</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">pos + </span><span class="s3">1</span><span class="s2">, </span><span class="s1">array</span>
+        <span class="s2">if </span><span class="s1">c != </span><span class="s4">&quot;,&quot;</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Unclosed array&quot;</span><span class="s1">)</span>
+        <span class="s1">pos += </span><span class="s3">1</span>
+
+        <span class="s1">pos = skip_comments_and_array_ws(src</span><span class="s2">, </span><span class="s1">pos)</span>
+        <span class="s2">if </span><span class="s1">src.startswith(</span><span class="s4">&quot;]&quot;</span><span class="s2">, </span><span class="s1">pos):</span>
+            <span class="s2">return </span><span class="s1">pos + </span><span class="s3">1</span><span class="s2">, </span><span class="s1">array</span>
+
+
+<span class="s2">def </span><span class="s1">parse_inline_table(src: str</span><span class="s2">, </span><span class="s1">pos: Pos</span><span class="s2">, </span><span class="s1">parse_float: ParseFloat) -&gt; tuple[Pos</span><span class="s2">, </span><span class="s1">dict]:</span>
+    <span class="s1">pos += </span><span class="s3">1</span>
+    <span class="s1">nested_dict = NestedDict()</span>
+    <span class="s1">flags = Flags()</span>
+
+    <span class="s1">pos = skip_chars(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">TOML_WS)</span>
+    <span class="s2">if </span><span class="s1">src.startswith(</span><span class="s4">&quot;}&quot;</span><span class="s2">, </span><span class="s1">pos):</span>
+        <span class="s2">return </span><span class="s1">pos + </span><span class="s3">1</span><span class="s2">, </span><span class="s1">nested_dict.dict</span>
+    <span class="s2">while True</span><span class="s1">:</span>
+        <span class="s1">pos</span><span class="s2">, </span><span class="s1">key</span><span class="s2">, </span><span class="s1">value = parse_key_value_pair(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">parse_float)</span>
+        <span class="s1">key_parent</span><span class="s2">, </span><span class="s1">key_stem = key[:-</span><span class="s3">1</span><span class="s1">]</span><span class="s2">, </span><span class="s1">key[-</span><span class="s3">1</span><span class="s1">]</span>
+        <span class="s2">if </span><span class="s1">flags.is_(key</span><span class="s2">, </span><span class="s1">Flags.FROZEN):</span>
+            <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">f&quot;Cannot mutate immutable namespace </span><span class="s2">{</span><span class="s1">key</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">nest = nested_dict.get_or_create_nest(key_parent</span><span class="s2">, </span><span class="s1">access_lists=</span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s2">except </span><span class="s1">KeyError:</span>
+            <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Cannot overwrite a value&quot;</span><span class="s1">) </span><span class="s2">from None</span>
+        <span class="s2">if </span><span class="s1">key_stem </span><span class="s2">in </span><span class="s1">nest:</span>
+            <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">f&quot;Duplicate inline table key </span><span class="s2">{</span><span class="s1">key_stem</span><span class="s2">!r}</span><span class="s4">&quot;</span><span class="s1">)</span>
+        <span class="s1">nest[key_stem] = value</span>
+        <span class="s1">pos = skip_chars(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">TOML_WS)</span>
+        <span class="s1">c = src[pos : pos + </span><span class="s3">1</span><span class="s1">]</span>
+        <span class="s2">if </span><span class="s1">c == </span><span class="s4">&quot;}&quot;</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">pos + </span><span class="s3">1</span><span class="s2">, </span><span class="s1">nested_dict.dict</span>
+        <span class="s2">if </span><span class="s1">c != </span><span class="s4">&quot;,&quot;</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Unclosed inline table&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">isinstance(value</span><span class="s2">, </span><span class="s1">(dict</span><span class="s2">, </span><span class="s1">list)):</span>
+            <span class="s1">flags.set(key</span><span class="s2">, </span><span class="s1">Flags.FROZEN</span><span class="s2">, </span><span class="s1">recursive=</span><span class="s2">True</span><span class="s1">)</span>
+        <span class="s1">pos += </span><span class="s3">1</span>
+        <span class="s1">pos = skip_chars(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">TOML_WS)</span>
+
+
+<span class="s2">def </span><span class="s1">parse_basic_str_escape(</span>
+    <span class="s1">src: str</span><span class="s2">, </span><span class="s1">pos: Pos</span><span class="s2">, </span><span class="s1">*</span><span class="s2">, </span><span class="s1">multiline: bool = </span><span class="s2">False</span>
+<span class="s1">) -&gt; tuple[Pos</span><span class="s2">, </span><span class="s1">str]:</span>
+    <span class="s1">escape_id = src[pos : pos + </span><span class="s3">2</span><span class="s1">]</span>
+    <span class="s1">pos += </span><span class="s3">2</span>
+    <span class="s2">if </span><span class="s1">multiline </span><span class="s2">and </span><span class="s1">escape_id </span><span class="s2">in </span><span class="s1">{</span><span class="s4">&quot;</span><span class="s2">\\ </span><span class="s4">&quot;</span><span class="s2">, </span><span class="s4">&quot;</span><span class="s2">\\\t</span><span class="s4">&quot;</span><span class="s2">, </span><span class="s4">&quot;</span><span class="s2">\\\n</span><span class="s4">&quot;</span><span class="s1">}:</span>
+        <span class="s0"># Skip whitespace until next non-whitespace character or end of</span>
+        <span class="s0"># the doc. Error if non-whitespace is found before newline.</span>
+        <span class="s2">if </span><span class="s1">escape_id != </span><span class="s4">&quot;</span><span class="s2">\\\n</span><span class="s4">&quot;</span><span class="s1">:</span>
+            <span class="s1">pos = skip_chars(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">TOML_WS)</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">char = src[pos]</span>
+            <span class="s2">except </span><span class="s1">IndexError:</span>
+                <span class="s2">return </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;&quot;</span>
+            <span class="s2">if </span><span class="s1">char != </span><span class="s4">&quot;</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Unescaped '</span><span class="s2">\\</span><span class="s4">' in a string&quot;</span><span class="s1">)</span>
+            <span class="s1">pos += </span><span class="s3">1</span>
+        <span class="s1">pos = skip_chars(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">TOML_WS_AND_NEWLINE)</span>
+        <span class="s2">return </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">escape_id == </span><span class="s4">&quot;</span><span class="s2">\\</span><span class="s4">u&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">parse_hex_char(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s3">4</span><span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">escape_id == </span><span class="s4">&quot;</span><span class="s2">\\</span><span class="s4">U&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">parse_hex_char(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s3">8</span><span class="s1">)</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">BASIC_STR_ESCAPE_REPLACEMENTS[escape_id]</span>
+    <span class="s2">except </span><span class="s1">KeyError:</span>
+        <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Unescaped '</span><span class="s2">\\</span><span class="s4">' in a string&quot;</span><span class="s1">) </span><span class="s2">from None</span>
+
+
+<span class="s2">def </span><span class="s1">parse_basic_str_escape_multiline(src: str</span><span class="s2">, </span><span class="s1">pos: Pos) -&gt; tuple[Pos</span><span class="s2">, </span><span class="s1">str]:</span>
+    <span class="s2">return </span><span class="s1">parse_basic_str_escape(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">multiline=</span><span class="s2">True</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">parse_hex_char(src: str</span><span class="s2">, </span><span class="s1">pos: Pos</span><span class="s2">, </span><span class="s1">hex_len: int) -&gt; tuple[Pos</span><span class="s2">, </span><span class="s1">str]:</span>
+    <span class="s1">hex_str = src[pos : pos + hex_len]</span>
+    <span class="s2">if </span><span class="s1">len(hex_str) != hex_len </span><span class="s2">or not </span><span class="s1">HEXDIGIT_CHARS.issuperset(hex_str):</span>
+        <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Invalid hex value&quot;</span><span class="s1">)</span>
+    <span class="s1">pos += hex_len</span>
+    <span class="s1">hex_int = int(hex_str</span><span class="s2">, </span><span class="s3">16</span><span class="s1">)</span>
+    <span class="s2">if not </span><span class="s1">is_unicode_scalar_value(hex_int):</span>
+        <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Escaped character is not a Unicode scalar value&quot;</span><span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">chr(hex_int)</span>
+
+
+<span class="s2">def </span><span class="s1">parse_literal_str(src: str</span><span class="s2">, </span><span class="s1">pos: Pos) -&gt; tuple[Pos</span><span class="s2">, </span><span class="s1">str]:</span>
+    <span class="s1">pos += </span><span class="s3">1  </span><span class="s0"># Skip starting apostrophe</span>
+    <span class="s1">start_pos = pos</span>
+    <span class="s1">pos = skip_until(</span>
+        <span class="s1">src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;'&quot;</span><span class="s2">, </span><span class="s1">error_on=ILLEGAL_LITERAL_STR_CHARS</span><span class="s2">, </span><span class="s1">error_on_eof=</span><span class="s2">True</span>
+    <span class="s1">)</span>
+    <span class="s2">return </span><span class="s1">pos + </span><span class="s3">1</span><span class="s2">, </span><span class="s1">src[start_pos:pos]  </span><span class="s0"># Skip ending apostrophe</span>
+
+
+<span class="s2">def </span><span class="s1">parse_multiline_str(src: str</span><span class="s2">, </span><span class="s1">pos: Pos</span><span class="s2">, </span><span class="s1">*</span><span class="s2">, </span><span class="s1">literal: bool) -&gt; tuple[Pos</span><span class="s2">, </span><span class="s1">str]:</span>
+    <span class="s1">pos += </span><span class="s3">3</span>
+    <span class="s2">if </span><span class="s1">src.startswith(</span><span class="s4">&quot;</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s2">, </span><span class="s1">pos):</span>
+        <span class="s1">pos += </span><span class="s3">1</span>
+
+    <span class="s2">if </span><span class="s1">literal:</span>
+        <span class="s1">delim = </span><span class="s4">&quot;'&quot;</span>
+        <span class="s1">end_pos = skip_until(</span>
+            <span class="s1">src</span><span class="s2">,</span>
+            <span class="s1">pos</span><span class="s2">,</span>
+            <span class="s4">&quot;'''&quot;</span><span class="s2">,</span>
+            <span class="s1">error_on=ILLEGAL_MULTILINE_LITERAL_STR_CHARS</span><span class="s2">,</span>
+            <span class="s1">error_on_eof=</span><span class="s2">True,</span>
+        <span class="s1">)</span>
+        <span class="s1">result = src[pos:end_pos]</span>
+        <span class="s1">pos = end_pos + </span><span class="s3">3</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">delim = </span><span class="s4">'&quot;'</span>
+        <span class="s1">pos</span><span class="s2">, </span><span class="s1">result = parse_basic_str(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">multiline=</span><span class="s2">True</span><span class="s1">)</span>
+
+    <span class="s0"># Add at maximum two extra apostrophes/quotes if the end sequence</span>
+    <span class="s0"># is 4 or 5 chars long instead of just 3.</span>
+    <span class="s2">if not </span><span class="s1">src.startswith(delim</span><span class="s2">, </span><span class="s1">pos):</span>
+        <span class="s2">return </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">result</span>
+    <span class="s1">pos += </span><span class="s3">1</span>
+    <span class="s2">if not </span><span class="s1">src.startswith(delim</span><span class="s2">, </span><span class="s1">pos):</span>
+        <span class="s2">return </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">result + delim</span>
+    <span class="s1">pos += </span><span class="s3">1</span>
+    <span class="s2">return </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">result + (delim * </span><span class="s3">2</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">parse_basic_str(src: str</span><span class="s2">, </span><span class="s1">pos: Pos</span><span class="s2">, </span><span class="s1">*</span><span class="s2">, </span><span class="s1">multiline: bool) -&gt; tuple[Pos</span><span class="s2">, </span><span class="s1">str]:</span>
+    <span class="s2">if </span><span class="s1">multiline:</span>
+        <span class="s1">error_on = ILLEGAL_MULTILINE_BASIC_STR_CHARS</span>
+        <span class="s1">parse_escapes = parse_basic_str_escape_multiline</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">error_on = ILLEGAL_BASIC_STR_CHARS</span>
+        <span class="s1">parse_escapes = parse_basic_str_escape</span>
+    <span class="s1">result = </span><span class="s4">&quot;&quot;</span>
+    <span class="s1">start_pos = pos</span>
+    <span class="s2">while True</span><span class="s1">:</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">char = src[pos]</span>
+        <span class="s2">except </span><span class="s1">IndexError:</span>
+            <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Unterminated string&quot;</span><span class="s1">) </span><span class="s2">from None</span>
+        <span class="s2">if </span><span class="s1">char == </span><span class="s4">'&quot;'</span><span class="s1">:</span>
+            <span class="s2">if not </span><span class="s1">multiline:</span>
+                <span class="s2">return </span><span class="s1">pos + </span><span class="s3">1</span><span class="s2">, </span><span class="s1">result + src[start_pos:pos]</span>
+            <span class="s2">if </span><span class="s1">src.startswith(</span><span class="s4">'&quot;&quot;&quot;'</span><span class="s2">, </span><span class="s1">pos):</span>
+                <span class="s2">return </span><span class="s1">pos + </span><span class="s3">3</span><span class="s2">, </span><span class="s1">result + src[start_pos:pos]</span>
+            <span class="s1">pos += </span><span class="s3">1</span>
+            <span class="s2">continue</span>
+        <span class="s2">if </span><span class="s1">char == </span><span class="s4">&quot;</span><span class="s2">\\</span><span class="s4">&quot;</span><span class="s1">:</span>
+            <span class="s1">result += src[start_pos:pos]</span>
+            <span class="s1">pos</span><span class="s2">, </span><span class="s1">parsed_escape = parse_escapes(src</span><span class="s2">, </span><span class="s1">pos)</span>
+            <span class="s1">result += parsed_escape</span>
+            <span class="s1">start_pos = pos</span>
+            <span class="s2">continue</span>
+        <span class="s2">if </span><span class="s1">char </span><span class="s2">in </span><span class="s1">error_on:</span>
+            <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">f&quot;Illegal character </span><span class="s2">{</span><span class="s1">char</span><span class="s2">!r}</span><span class="s4">&quot;</span><span class="s1">)</span>
+        <span class="s1">pos += </span><span class="s3">1</span>
+
+
+<span class="s2">def </span><span class="s1">parse_value(  </span><span class="s0"># noqa: C901</span>
+    <span class="s1">src: str</span><span class="s2">, </span><span class="s1">pos: Pos</span><span class="s2">, </span><span class="s1">parse_float: ParseFloat</span>
+<span class="s1">) -&gt; tuple[Pos</span><span class="s2">, </span><span class="s1">Any]:</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">char: str | </span><span class="s2">None </span><span class="s1">= src[pos]</span>
+    <span class="s2">except </span><span class="s1">IndexError:</span>
+        <span class="s1">char = </span><span class="s2">None</span>
+
+    <span class="s0"># IMPORTANT: order conditions based on speed of checking and likelihood</span>
+
+    <span class="s0"># Basic strings</span>
+    <span class="s2">if </span><span class="s1">char == </span><span class="s4">'&quot;'</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">src.startswith(</span><span class="s4">'&quot;&quot;&quot;'</span><span class="s2">, </span><span class="s1">pos):</span>
+            <span class="s2">return </span><span class="s1">parse_multiline_str(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">literal=</span><span class="s2">False</span><span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">parse_one_line_basic_str(src</span><span class="s2">, </span><span class="s1">pos)</span>
+
+    <span class="s0"># Literal strings</span>
+    <span class="s2">if </span><span class="s1">char == </span><span class="s4">&quot;'&quot;</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">src.startswith(</span><span class="s4">&quot;'''&quot;</span><span class="s2">, </span><span class="s1">pos):</span>
+            <span class="s2">return </span><span class="s1">parse_multiline_str(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">literal=</span><span class="s2">True</span><span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">parse_literal_str(src</span><span class="s2">, </span><span class="s1">pos)</span>
+
+    <span class="s0"># Booleans</span>
+    <span class="s2">if </span><span class="s1">char == </span><span class="s4">&quot;t&quot;</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">src.startswith(</span><span class="s4">&quot;true&quot;</span><span class="s2">, </span><span class="s1">pos):</span>
+            <span class="s2">return </span><span class="s1">pos + </span><span class="s3">4</span><span class="s2">, True</span>
+    <span class="s2">if </span><span class="s1">char == </span><span class="s4">&quot;f&quot;</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">src.startswith(</span><span class="s4">&quot;false&quot;</span><span class="s2">, </span><span class="s1">pos):</span>
+            <span class="s2">return </span><span class="s1">pos + </span><span class="s3">5</span><span class="s2">, False</span>
+
+    <span class="s0"># Arrays</span>
+    <span class="s2">if </span><span class="s1">char == </span><span class="s4">&quot;[&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">parse_array(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">parse_float)</span>
+
+    <span class="s0"># Inline tables</span>
+    <span class="s2">if </span><span class="s1">char == </span><span class="s4">&quot;{&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">parse_inline_table(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s1">parse_float)</span>
+
+    <span class="s0"># Dates and times</span>
+    <span class="s1">datetime_match = RE_DATETIME.match(src</span><span class="s2">, </span><span class="s1">pos)</span>
+    <span class="s2">if </span><span class="s1">datetime_match:</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">datetime_obj = match_to_datetime(datetime_match)</span>
+        <span class="s2">except </span><span class="s1">ValueError </span><span class="s2">as </span><span class="s1">e:</span>
+            <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Invalid date or datetime&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+        <span class="s2">return </span><span class="s1">datetime_match.end()</span><span class="s2">, </span><span class="s1">datetime_obj</span>
+    <span class="s1">localtime_match = RE_LOCALTIME.match(src</span><span class="s2">, </span><span class="s1">pos)</span>
+    <span class="s2">if </span><span class="s1">localtime_match:</span>
+        <span class="s2">return </span><span class="s1">localtime_match.end()</span><span class="s2">, </span><span class="s1">match_to_localtime(localtime_match)</span>
+
+    <span class="s0"># Integers and &quot;normal&quot; floats.</span>
+    <span class="s0"># The regex will greedily match any type starting with a decimal</span>
+    <span class="s0"># char, so needs to be located after handling of dates and times.</span>
+    <span class="s1">number_match = RE_NUMBER.match(src</span><span class="s2">, </span><span class="s1">pos)</span>
+    <span class="s2">if </span><span class="s1">number_match:</span>
+        <span class="s2">return </span><span class="s1">number_match.end()</span><span class="s2">, </span><span class="s1">match_to_number(number_match</span><span class="s2">, </span><span class="s1">parse_float)</span>
+
+    <span class="s0"># Special floats</span>
+    <span class="s1">first_three = src[pos : pos + </span><span class="s3">3</span><span class="s1">]</span>
+    <span class="s2">if </span><span class="s1">first_three </span><span class="s2">in </span><span class="s1">{</span><span class="s4">&quot;inf&quot;</span><span class="s2">, </span><span class="s4">&quot;nan&quot;</span><span class="s1">}:</span>
+        <span class="s2">return </span><span class="s1">pos + </span><span class="s3">3</span><span class="s2">, </span><span class="s1">parse_float(first_three)</span>
+    <span class="s1">first_four = src[pos : pos + </span><span class="s3">4</span><span class="s1">]</span>
+    <span class="s2">if </span><span class="s1">first_four </span><span class="s2">in </span><span class="s1">{</span><span class="s4">&quot;-inf&quot;</span><span class="s2">, </span><span class="s4">&quot;+inf&quot;</span><span class="s2">, </span><span class="s4">&quot;-nan&quot;</span><span class="s2">, </span><span class="s4">&quot;+nan&quot;</span><span class="s1">}:</span>
+        <span class="s2">return </span><span class="s1">pos + </span><span class="s3">4</span><span class="s2">, </span><span class="s1">parse_float(first_four)</span>
+
+    <span class="s2">raise </span><span class="s1">suffixed_err(src</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">, </span><span class="s4">&quot;Invalid value&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">suffixed_err(src: str</span><span class="s2">, </span><span class="s1">pos: Pos</span><span class="s2">, </span><span class="s1">msg: str) -&gt; TOMLDecodeError:</span>
+    <span class="s5">&quot;&quot;&quot;Return a `TOMLDecodeError` where error message is suffixed with 
+    coordinates in source.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">coord_repr(src: str</span><span class="s2">, </span><span class="s1">pos: Pos) -&gt; str:</span>
+        <span class="s2">if </span><span class="s1">pos &gt;= len(src):</span>
+            <span class="s2">return </span><span class="s4">&quot;end of document&quot;</span>
+        <span class="s1">line = src.count(</span><span class="s4">&quot;</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">pos) + </span><span class="s3">1</span>
+        <span class="s2">if </span><span class="s1">line == </span><span class="s3">1</span><span class="s1">:</span>
+            <span class="s1">column = pos + </span><span class="s3">1</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">column = pos - src.rindex(</span><span class="s4">&quot;</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">pos)</span>
+        <span class="s2">return </span><span class="s4">f&quot;line </span><span class="s2">{</span><span class="s1">line</span><span class="s2">}</span><span class="s4">, column </span><span class="s2">{</span><span class="s1">column</span><span class="s2">}</span><span class="s4">&quot;</span>
+
+    <span class="s2">return </span><span class="s1">TOMLDecodeError(</span><span class="s4">f&quot;</span><span class="s2">{</span><span class="s1">msg</span><span class="s2">} </span><span class="s4">(at </span><span class="s2">{</span><span class="s1">coord_repr(src</span><span class="s2">, </span><span class="s1">pos)</span><span class="s2">}</span><span class="s4">)&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">is_unicode_scalar_value(codepoint: int) -&gt; bool:</span>
+    <span class="s2">return </span><span class="s1">(</span><span class="s3">0 </span><span class="s1">&lt;= codepoint &lt;= </span><span class="s3">55295</span><span class="s1">) </span><span class="s2">or </span><span class="s1">(</span><span class="s3">57344 </span><span class="s1">&lt;= codepoint &lt;= </span><span class="s3">1114111</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">make_safe_parse_float(parse_float: ParseFloat) -&gt; ParseFloat:</span>
+    <span class="s5">&quot;&quot;&quot;A decorator to make `parse_float` safe. 
+ 
+    `parse_float` must not return dicts or lists, because these types 
+    would be mixed with parsed TOML tables and arrays, thus confusing 
+    the parser. The returned decorated callable raises `ValueError` 
+    instead of returning illegal types. 
+    &quot;&quot;&quot;</span>
+    <span class="s0"># The default `float` callable never returns illegal types. Optimize it.</span>
+    <span class="s2">if </span><span class="s1">parse_float </span><span class="s2">is </span><span class="s1">float:  </span><span class="s0"># type: ignore[comparison-overlap]</span>
+        <span class="s2">return </span><span class="s1">float</span>
+
+    <span class="s2">def </span><span class="s1">safe_parse_float(float_str: str) -&gt; Any:</span>
+        <span class="s1">float_value = parse_float(float_str)</span>
+        <span class="s2">if </span><span class="s1">isinstance(float_value</span><span class="s2">, </span><span class="s1">(dict</span><span class="s2">, </span><span class="s1">list)):</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;parse_float must not return dicts or lists&quot;</span><span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">float_value</span>
+
+    <span class="s2">return </span><span class="s1">safe_parse_float</span>
+</pre>
+</body>
+</html>

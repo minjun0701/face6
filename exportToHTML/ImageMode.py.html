@@ -1,0 +1,112 @@
+<html>
+<head>
+<title>ImageMode.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #629755; font-style: italic;}
+.s4 { color: #6a8759;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageMode.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># standard mode descriptors</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 2006-03-20 fl   Added</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 2006 by Secret Labs AB.</span>
+<span class="s0"># Copyright (c) 2006 by Fredrik Lundh.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">import </span><span class="s1">sys</span>
+
+<span class="s0"># mode descriptor cache</span>
+<span class="s1">_modes = </span><span class="s2">None</span>
+
+
+<span class="s2">class </span><span class="s1">ModeDescriptor:</span>
+    <span class="s3">&quot;&quot;&quot;Wrapper for mode strings.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">bands</span><span class="s2">, </span><span class="s1">basemode</span><span class="s2">, </span><span class="s1">basetype</span><span class="s2">, </span><span class="s1">typestr):</span>
+        <span class="s1">self.mode = mode</span>
+        <span class="s1">self.bands = bands</span>
+        <span class="s1">self.basemode = basemode</span>
+        <span class="s1">self.basetype = basetype</span>
+        <span class="s1">self.typestr = typestr</span>
+
+    <span class="s2">def </span><span class="s1">__str__(self):</span>
+        <span class="s2">return </span><span class="s1">self.mode</span>
+
+
+<span class="s2">def </span><span class="s1">getmode(mode):</span>
+    <span class="s3">&quot;&quot;&quot;Gets a mode descriptor for the given mode.&quot;&quot;&quot;</span>
+    <span class="s2">global </span><span class="s1">_modes</span>
+    <span class="s2">if not </span><span class="s1">_modes:</span>
+        <span class="s0"># initialize mode cache</span>
+        <span class="s1">modes = {}</span>
+        <span class="s1">endian = </span><span class="s4">&quot;&lt;&quot; </span><span class="s2">if </span><span class="s1">sys.byteorder == </span><span class="s4">&quot;little&quot; </span><span class="s2">else </span><span class="s4">&quot;&gt;&quot;</span>
+        <span class="s2">for </span><span class="s1">m</span><span class="s2">, </span><span class="s1">(basemode</span><span class="s2">, </span><span class="s1">basetype</span><span class="s2">, </span><span class="s1">bands</span><span class="s2">, </span><span class="s1">typestr) </span><span class="s2">in </span><span class="s1">{</span>
+            <span class="s0"># core modes</span>
+            <span class="s0"># Bits need to be extended to bytes</span>
+            <span class="s4">&quot;1&quot;</span><span class="s1">: (</span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;1&quot;</span><span class="s2">,</span><span class="s1">)</span><span class="s2">, </span><span class="s4">&quot;|b1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;L&quot;</span><span class="s1">: (</span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;L&quot;</span><span class="s2">,</span><span class="s1">)</span><span class="s2">, </span><span class="s4">&quot;|u1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;I&quot;</span><span class="s1">: (</span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s4">&quot;I&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;I&quot;</span><span class="s2">,</span><span class="s1">)</span><span class="s2">, </span><span class="s1">endian + </span><span class="s4">&quot;i4&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;F&quot;</span><span class="s1">: (</span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s4">&quot;F&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;F&quot;</span><span class="s2">,</span><span class="s1">)</span><span class="s2">, </span><span class="s1">endian + </span><span class="s4">&quot;f4&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;P&quot;</span><span class="s1">: (</span><span class="s4">&quot;P&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;P&quot;</span><span class="s2">,</span><span class="s1">)</span><span class="s2">, </span><span class="s4">&quot;|u1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;RGB&quot;</span><span class="s1">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;R&quot;</span><span class="s2">, </span><span class="s4">&quot;G&quot;</span><span class="s2">, </span><span class="s4">&quot;B&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s4">&quot;|u1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;RGBX&quot;</span><span class="s1">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;R&quot;</span><span class="s2">, </span><span class="s4">&quot;G&quot;</span><span class="s2">, </span><span class="s4">&quot;B&quot;</span><span class="s2">, </span><span class="s4">&quot;X&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s4">&quot;|u1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;RGBA&quot;</span><span class="s1">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;R&quot;</span><span class="s2">, </span><span class="s4">&quot;G&quot;</span><span class="s2">, </span><span class="s4">&quot;B&quot;</span><span class="s2">, </span><span class="s4">&quot;A&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s4">&quot;|u1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;CMYK&quot;</span><span class="s1">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;C&quot;</span><span class="s2">, </span><span class="s4">&quot;M&quot;</span><span class="s2">, </span><span class="s4">&quot;Y&quot;</span><span class="s2">, </span><span class="s4">&quot;K&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s4">&quot;|u1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;YCbCr&quot;</span><span class="s1">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;Y&quot;</span><span class="s2">, </span><span class="s4">&quot;Cb&quot;</span><span class="s2">, </span><span class="s4">&quot;Cr&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s4">&quot;|u1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s0"># UNDONE - unsigned |u1i1i1</span>
+            <span class="s4">&quot;LAB&quot;</span><span class="s1">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s4">&quot;A&quot;</span><span class="s2">, </span><span class="s4">&quot;B&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s4">&quot;|u1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;HSV&quot;</span><span class="s1">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;H&quot;</span><span class="s2">, </span><span class="s4">&quot;S&quot;</span><span class="s2">, </span><span class="s4">&quot;V&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s4">&quot;|u1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s0"># extra experimental modes</span>
+            <span class="s4">&quot;RGBa&quot;</span><span class="s1">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;R&quot;</span><span class="s2">, </span><span class="s4">&quot;G&quot;</span><span class="s2">, </span><span class="s4">&quot;B&quot;</span><span class="s2">, </span><span class="s4">&quot;a&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s4">&quot;|u1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;BGR;15&quot;</span><span class="s1">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;B&quot;</span><span class="s2">, </span><span class="s4">&quot;G&quot;</span><span class="s2">, </span><span class="s4">&quot;R&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s1">endian + </span><span class="s4">&quot;u2&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;BGR;16&quot;</span><span class="s1">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;B&quot;</span><span class="s2">, </span><span class="s4">&quot;G&quot;</span><span class="s2">, </span><span class="s4">&quot;R&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s1">endian + </span><span class="s4">&quot;u2&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;BGR;24&quot;</span><span class="s1">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;B&quot;</span><span class="s2">, </span><span class="s4">&quot;G&quot;</span><span class="s2">, </span><span class="s4">&quot;R&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s1">endian + </span><span class="s4">&quot;u3&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;BGR;32&quot;</span><span class="s1">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;B&quot;</span><span class="s2">, </span><span class="s4">&quot;G&quot;</span><span class="s2">, </span><span class="s4">&quot;R&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s1">endian + </span><span class="s4">&quot;u4&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;LA&quot;</span><span class="s1">: (</span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s4">&quot;A&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s4">&quot;|u1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;La&quot;</span><span class="s1">: (</span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s4">&quot;a&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s4">&quot;|u1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s4">&quot;PA&quot;</span><span class="s1">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;P&quot;</span><span class="s2">, </span><span class="s4">&quot;A&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s4">&quot;|u1&quot;</span><span class="s1">)</span><span class="s2">,</span>
+        <span class="s1">}.items():</span>
+            <span class="s1">modes[m] = ModeDescriptor(m</span><span class="s2">, </span><span class="s1">bands</span><span class="s2">, </span><span class="s1">basemode</span><span class="s2">, </span><span class="s1">basetype</span><span class="s2">, </span><span class="s1">typestr)</span>
+        <span class="s0"># mapping modes</span>
+        <span class="s2">for </span><span class="s1">i16mode</span><span class="s2">, </span><span class="s1">typestr </span><span class="s2">in </span><span class="s1">{</span>
+            <span class="s0"># I;16 == I;16L, and I;32 == I;32L</span>
+            <span class="s4">&quot;I;16&quot;</span><span class="s1">: </span><span class="s4">&quot;&lt;u2&quot;</span><span class="s2">,</span>
+            <span class="s4">&quot;I;16S&quot;</span><span class="s1">: </span><span class="s4">&quot;&lt;i2&quot;</span><span class="s2">,</span>
+            <span class="s4">&quot;I;16L&quot;</span><span class="s1">: </span><span class="s4">&quot;&lt;u2&quot;</span><span class="s2">,</span>
+            <span class="s4">&quot;I;16LS&quot;</span><span class="s1">: </span><span class="s4">&quot;&lt;i2&quot;</span><span class="s2">,</span>
+            <span class="s4">&quot;I;16B&quot;</span><span class="s1">: </span><span class="s4">&quot;&gt;u2&quot;</span><span class="s2">,</span>
+            <span class="s4">&quot;I;16BS&quot;</span><span class="s1">: </span><span class="s4">&quot;&gt;i2&quot;</span><span class="s2">,</span>
+            <span class="s4">&quot;I;16N&quot;</span><span class="s1">: endian + </span><span class="s4">&quot;u2&quot;</span><span class="s2">,</span>
+            <span class="s4">&quot;I;16NS&quot;</span><span class="s1">: endian + </span><span class="s4">&quot;i2&quot;</span><span class="s2">,</span>
+            <span class="s4">&quot;I;32&quot;</span><span class="s1">: </span><span class="s4">&quot;&lt;u4&quot;</span><span class="s2">,</span>
+            <span class="s4">&quot;I;32B&quot;</span><span class="s1">: </span><span class="s4">&quot;&gt;u4&quot;</span><span class="s2">,</span>
+            <span class="s4">&quot;I;32L&quot;</span><span class="s1">: </span><span class="s4">&quot;&lt;u4&quot;</span><span class="s2">,</span>
+            <span class="s4">&quot;I;32S&quot;</span><span class="s1">: </span><span class="s4">&quot;&lt;i4&quot;</span><span class="s2">,</span>
+            <span class="s4">&quot;I;32BS&quot;</span><span class="s1">: </span><span class="s4">&quot;&gt;i4&quot;</span><span class="s2">,</span>
+            <span class="s4">&quot;I;32LS&quot;</span><span class="s1">: </span><span class="s4">&quot;&lt;i4&quot;</span><span class="s2">,</span>
+        <span class="s1">}.items():</span>
+            <span class="s1">modes[i16mode] = ModeDescriptor(i16mode</span><span class="s2">, </span><span class="s1">(</span><span class="s4">&quot;I&quot;</span><span class="s2">,</span><span class="s1">)</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s4">&quot;L&quot;</span><span class="s2">, </span><span class="s1">typestr)</span>
+        <span class="s0"># set global mode cache atomically</span>
+        <span class="s1">_modes = modes</span>
+    <span class="s2">return </span><span class="s1">_modes[mode]</span>
+</pre>
+</body>
+</html>

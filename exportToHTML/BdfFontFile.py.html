@@ -1,0 +1,133 @@
+<html>
+<head>
+<title>BdfFontFile.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #629755; font-style: italic;}
+.s3 { color: #cc7832;}
+.s4 { color: #6a8759;}
+.s5 { color: #6897bb;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+BdfFontFile.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># bitmap distribution font (bdf) file parser</span>
+<span class="s0">#</span>
+<span class="s0"># history:</span>
+<span class="s0"># 1996-05-16 fl   created (as bdf2pil)</span>
+<span class="s0"># 1997-08-25 fl   converted to FontFile driver</span>
+<span class="s0"># 2001-05-25 fl   removed bogus __init__ call</span>
+<span class="s0"># 2002-11-20 fl   robustification (from Kevin Cazabon, Dmitry Vasiliev)</span>
+<span class="s0"># 2003-04-22 fl   more robustification (from Graham Dumpleton)</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2003 by Secret Labs AB.</span>
+<span class="s0"># Copyright (c) 1997-2003 by Fredrik Lundh.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">&quot;&quot;&quot; 
+Parse X Bitmap Distribution Format (BDF) 
+&quot;&quot;&quot;</span>
+
+
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">FontFile</span><span class="s3">, </span><span class="s1">Image</span>
+
+<span class="s1">bdf_slant = {</span>
+    <span class="s4">&quot;R&quot;</span><span class="s1">: </span><span class="s4">&quot;Roman&quot;</span><span class="s3">,</span>
+    <span class="s4">&quot;I&quot;</span><span class="s1">: </span><span class="s4">&quot;Italic&quot;</span><span class="s3">,</span>
+    <span class="s4">&quot;O&quot;</span><span class="s1">: </span><span class="s4">&quot;Oblique&quot;</span><span class="s3">,</span>
+    <span class="s4">&quot;RI&quot;</span><span class="s1">: </span><span class="s4">&quot;Reverse Italic&quot;</span><span class="s3">,</span>
+    <span class="s4">&quot;RO&quot;</span><span class="s1">: </span><span class="s4">&quot;Reverse Oblique&quot;</span><span class="s3">,</span>
+    <span class="s4">&quot;OT&quot;</span><span class="s1">: </span><span class="s4">&quot;Other&quot;</span><span class="s3">,</span>
+<span class="s1">}</span>
+
+<span class="s1">bdf_spacing = {</span><span class="s4">&quot;P&quot;</span><span class="s1">: </span><span class="s4">&quot;Proportional&quot;</span><span class="s3">, </span><span class="s4">&quot;M&quot;</span><span class="s1">: </span><span class="s4">&quot;Monospaced&quot;</span><span class="s3">, </span><span class="s4">&quot;C&quot;</span><span class="s1">: </span><span class="s4">&quot;Cell&quot;</span><span class="s1">}</span>
+
+
+<span class="s3">def </span><span class="s1">bdf_char(f):</span>
+    <span class="s0"># skip to STARTCHAR</span>
+    <span class="s3">while True</span><span class="s1">:</span>
+        <span class="s1">s = f.readline()</span>
+        <span class="s3">if not </span><span class="s1">s:</span>
+            <span class="s3">return None</span>
+        <span class="s3">if </span><span class="s1">s[:</span><span class="s5">9</span><span class="s1">] == </span><span class="s6">b&quot;STARTCHAR&quot;</span><span class="s1">:</span>
+            <span class="s3">break</span>
+    <span class="s1">id = s[</span><span class="s5">9</span><span class="s1">:].strip().decode(</span><span class="s4">&quot;ascii&quot;</span><span class="s1">)</span>
+
+    <span class="s0"># load symbol properties</span>
+    <span class="s1">props = {}</span>
+    <span class="s3">while True</span><span class="s1">:</span>
+        <span class="s1">s = f.readline()</span>
+        <span class="s3">if not </span><span class="s1">s </span><span class="s3">or </span><span class="s1">s[:</span><span class="s5">6</span><span class="s1">] == </span><span class="s6">b&quot;BITMAP&quot;</span><span class="s1">:</span>
+            <span class="s3">break</span>
+        <span class="s1">i = s.find(</span><span class="s6">b&quot; &quot;</span><span class="s1">)</span>
+        <span class="s1">props[s[:i].decode(</span><span class="s4">&quot;ascii&quot;</span><span class="s1">)] = s[i + </span><span class="s5">1 </span><span class="s1">: -</span><span class="s5">1</span><span class="s1">].decode(</span><span class="s4">&quot;ascii&quot;</span><span class="s1">)</span>
+
+    <span class="s0"># load bitmap</span>
+    <span class="s1">bitmap = []</span>
+    <span class="s3">while True</span><span class="s1">:</span>
+        <span class="s1">s = f.readline()</span>
+        <span class="s3">if not </span><span class="s1">s </span><span class="s3">or </span><span class="s1">s[:</span><span class="s5">7</span><span class="s1">] == </span><span class="s6">b&quot;ENDCHAR&quot;</span><span class="s1">:</span>
+            <span class="s3">break</span>
+        <span class="s1">bitmap.append(s[:-</span><span class="s5">1</span><span class="s1">])</span>
+    <span class="s1">bitmap = </span><span class="s6">b&quot;&quot;</span><span class="s1">.join(bitmap)</span>
+
+    <span class="s1">[x</span><span class="s3">, </span><span class="s1">y</span><span class="s3">, </span><span class="s1">l</span><span class="s3">, </span><span class="s1">d] = [int(p) </span><span class="s3">for </span><span class="s1">p </span><span class="s3">in </span><span class="s1">props[</span><span class="s4">&quot;BBX&quot;</span><span class="s1">].split()]</span>
+    <span class="s1">[dx</span><span class="s3">, </span><span class="s1">dy] = [int(p) </span><span class="s3">for </span><span class="s1">p </span><span class="s3">in </span><span class="s1">props[</span><span class="s4">&quot;DWIDTH&quot;</span><span class="s1">].split()]</span>
+
+    <span class="s1">bbox = (dx</span><span class="s3">, </span><span class="s1">dy)</span><span class="s3">, </span><span class="s1">(l</span><span class="s3">, </span><span class="s1">-d - y</span><span class="s3">, </span><span class="s1">x + l</span><span class="s3">, </span><span class="s1">-d)</span><span class="s3">, </span><span class="s1">(</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s1">x</span><span class="s3">, </span><span class="s1">y)</span>
+
+    <span class="s3">try</span><span class="s1">:</span>
+        <span class="s1">im = Image.frombytes(</span><span class="s4">&quot;1&quot;</span><span class="s3">, </span><span class="s1">(x</span><span class="s3">, </span><span class="s1">y)</span><span class="s3">, </span><span class="s1">bitmap</span><span class="s3">, </span><span class="s4">&quot;hex&quot;</span><span class="s3">, </span><span class="s4">&quot;1&quot;</span><span class="s1">)</span>
+    <span class="s3">except </span><span class="s1">ValueError:</span>
+        <span class="s0"># deal with zero-width characters</span>
+        <span class="s1">im = Image.new(</span><span class="s4">&quot;1&quot;</span><span class="s3">, </span><span class="s1">(x</span><span class="s3">, </span><span class="s1">y))</span>
+
+    <span class="s3">return </span><span class="s1">id</span><span class="s3">, </span><span class="s1">int(props[</span><span class="s4">&quot;ENCODING&quot;</span><span class="s1">])</span><span class="s3">, </span><span class="s1">bbox</span><span class="s3">, </span><span class="s1">im</span>
+
+
+<span class="s3">class </span><span class="s1">BdfFontFile(FontFile.FontFile):</span>
+    <span class="s2">&quot;&quot;&quot;Font file plugin for the X11 BDF format.&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__(self</span><span class="s3">, </span><span class="s1">fp):</span>
+        <span class="s1">super().__init__()</span>
+
+        <span class="s1">s = fp.readline()</span>
+        <span class="s3">if </span><span class="s1">s[:</span><span class="s5">13</span><span class="s1">] != </span><span class="s6">b&quot;STARTFONT 2.1&quot;</span><span class="s1">:</span>
+            <span class="s3">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;not a valid BDF file&quot;</span><span class="s1">)</span>
+
+        <span class="s1">props = {}</span>
+        <span class="s1">comments = []</span>
+
+        <span class="s3">while True</span><span class="s1">:</span>
+            <span class="s1">s = fp.readline()</span>
+            <span class="s3">if not </span><span class="s1">s </span><span class="s3">or </span><span class="s1">s[:</span><span class="s5">13</span><span class="s1">] == </span><span class="s6">b&quot;ENDPROPERTIES&quot;</span><span class="s1">:</span>
+                <span class="s3">break</span>
+            <span class="s1">i = s.find(</span><span class="s6">b&quot; &quot;</span><span class="s1">)</span>
+            <span class="s1">props[s[:i].decode(</span><span class="s4">&quot;ascii&quot;</span><span class="s1">)] = s[i + </span><span class="s5">1 </span><span class="s1">: -</span><span class="s5">1</span><span class="s1">].decode(</span><span class="s4">&quot;ascii&quot;</span><span class="s1">)</span>
+            <span class="s3">if </span><span class="s1">s[:i] </span><span class="s3">in </span><span class="s1">[</span><span class="s6">b&quot;COMMENT&quot;</span><span class="s3">, </span><span class="s6">b&quot;COPYRIGHT&quot;</span><span class="s1">]:</span>
+                <span class="s3">if </span><span class="s1">s.find(</span><span class="s6">b&quot;LogicalFontDescription&quot;</span><span class="s1">) &lt; </span><span class="s5">0</span><span class="s1">:</span>
+                    <span class="s1">comments.append(s[i + </span><span class="s5">1 </span><span class="s1">: -</span><span class="s5">1</span><span class="s1">].decode(</span><span class="s4">&quot;ascii&quot;</span><span class="s1">))</span>
+
+        <span class="s3">while True</span><span class="s1">:</span>
+            <span class="s1">c = bdf_char(fp)</span>
+            <span class="s3">if not </span><span class="s1">c:</span>
+                <span class="s3">break</span>
+            <span class="s1">id</span><span class="s3">, </span><span class="s1">ch</span><span class="s3">, </span><span class="s1">(xy</span><span class="s3">, </span><span class="s1">dst</span><span class="s3">, </span><span class="s1">src)</span><span class="s3">, </span><span class="s1">im = c</span>
+            <span class="s3">if </span><span class="s5">0 </span><span class="s1">&lt;= ch &lt; len(self.glyph):</span>
+                <span class="s1">self.glyph[ch] = xy</span><span class="s3">, </span><span class="s1">dst</span><span class="s3">, </span><span class="s1">src</span><span class="s3">, </span><span class="s1">im</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,101 @@
+<html>
+<head>
+<title>DcxImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6897bb;}
+.s4 { color: #6a8759;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+DcxImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># DCX file handling</span>
+<span class="s0">#</span>
+<span class="s0"># DCX is a container file format defined by Intel, commonly used</span>
+<span class="s0"># for fax applications.  Each DCX file consists of a directory</span>
+<span class="s0"># (a list of file offsets) followed by a set of (usually 1-bit)</span>
+<span class="s0"># PCX files.</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1995-09-09 fl   Created</span>
+<span class="s0"># 1996-03-20 fl   Properly derived from PcxImageFile.</span>
+<span class="s0"># 1998-07-15 fl   Renamed offset attribute to avoid name clash</span>
+<span class="s0"># 2002-07-30 fl   Fixed file handling</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-98 by Secret Labs AB.</span>
+<span class="s0"># Copyright (c) 1995-96 by Fredrik Lundh.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">i32le </span><span class="s2">as </span><span class="s1">i32</span>
+<span class="s2">from </span><span class="s1">.PcxImagePlugin </span><span class="s2">import </span><span class="s1">PcxImageFile</span>
+
+<span class="s1">MAGIC = </span><span class="s3">0x3ADE68B1  </span><span class="s0"># QUIZ: what's this value, then?</span>
+
+
+<span class="s2">def </span><span class="s1">_accept(prefix):</span>
+    <span class="s2">return </span><span class="s1">len(prefix) &gt;= </span><span class="s3">4 </span><span class="s2">and </span><span class="s1">i32(prefix) == MAGIC</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for the Intel DCX format.</span>
+
+
+<span class="s2">class </span><span class="s1">DcxImageFile(PcxImageFile):</span>
+
+    <span class="s1">format = </span><span class="s4">&quot;DCX&quot;</span>
+    <span class="s1">format_description = </span><span class="s4">&quot;Intel DCX&quot;</span>
+    <span class="s1">_close_exclusive_fp_after_loading = </span><span class="s2">False</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+
+        <span class="s0"># Header</span>
+        <span class="s1">s = self.fp.read(</span><span class="s3">4</span><span class="s1">)</span>
+        <span class="s2">if not </span><span class="s1">_accept(s):</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;not a DCX file&quot;</span><span class="s1">)</span>
+
+        <span class="s0"># Component directory</span>
+        <span class="s1">self._offset = []</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s3">1024</span><span class="s1">):</span>
+            <span class="s1">offset = i32(self.fp.read(</span><span class="s3">4</span><span class="s1">))</span>
+            <span class="s2">if not </span><span class="s1">offset:</span>
+                <span class="s2">break</span>
+            <span class="s1">self._offset.append(offset)</span>
+
+        <span class="s1">self._fp = self.fp</span>
+        <span class="s1">self.frame = </span><span class="s2">None</span>
+        <span class="s1">self.n_frames = len(self._offset)</span>
+        <span class="s1">self.is_animated = self.n_frames &gt; </span><span class="s3">1</span>
+        <span class="s1">self.seek(</span><span class="s3">0</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">seek(self</span><span class="s2">, </span><span class="s1">frame):</span>
+        <span class="s2">if not </span><span class="s1">self._seek_check(frame):</span>
+            <span class="s2">return</span>
+        <span class="s1">self.frame = frame</span>
+        <span class="s1">self.fp = self._fp</span>
+        <span class="s1">self.fp.seek(self._offset[frame])</span>
+        <span class="s1">PcxImageFile._open(self)</span>
+
+    <span class="s2">def </span><span class="s1">tell(self):</span>
+        <span class="s2">return </span><span class="s1">self.frame</span>
+
+
+<span class="s1">Image.register_open(DcxImageFile.format</span><span class="s2">, </span><span class="s1">DcxImageFile</span><span class="s2">, </span><span class="s1">_accept)</span>
+
+<span class="s1">Image.register_extension(DcxImageFile.format</span><span class="s2">, </span><span class="s4">&quot;.dcx&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

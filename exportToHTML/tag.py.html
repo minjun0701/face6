@@ -1,0 +1,129 @@
+<html>
+<head>
+<title>tag.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #629755; font-style: italic;}
+.s3 { color: #cc7832;}
+.s4 { color: #6a8759;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+tag.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># objects.py</span>
+<span class="s0"># Copyright (C) 2008, 2009 Michael Trier (mtrier@gmail.com) and contributors</span>
+<span class="s0">#</span>
+<span class="s0"># This module is part of GitPython and is released under</span>
+<span class="s0"># the BSD License: http://www.opensource.org/licenses/bsd-license.php</span>
+<span class="s2">&quot;&quot;&quot; Module containing all object based types. &quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">. </span><span class="s3">import </span><span class="s1">base</span>
+<span class="s3">from </span><span class="s1">.util </span><span class="s3">import </span><span class="s1">get_object_type_by_name</span><span class="s3">, </span><span class="s1">parse_actor_and_date</span>
+<span class="s3">from </span><span class="s1">..util </span><span class="s3">import </span><span class="s1">hex_to_bin</span>
+<span class="s3">from </span><span class="s1">..compat </span><span class="s3">import </span><span class="s1">defenc</span>
+
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">List</span><span class="s3">, </span><span class="s1">TYPE_CHECKING</span><span class="s3">, </span><span class="s1">Union</span>
+
+<span class="s3">from </span><span class="s1">git.types </span><span class="s3">import </span><span class="s1">Literal</span>
+
+<span class="s3">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s3">from </span><span class="s1">git.repo </span><span class="s3">import </span><span class="s1">Repo</span>
+    <span class="s3">from </span><span class="s1">git.util </span><span class="s3">import </span><span class="s1">Actor</span>
+    <span class="s3">from </span><span class="s1">.commit </span><span class="s3">import </span><span class="s1">Commit</span>
+    <span class="s3">from </span><span class="s1">.blob </span><span class="s3">import </span><span class="s1">Blob</span>
+    <span class="s3">from </span><span class="s1">.tree </span><span class="s3">import </span><span class="s1">Tree</span>
+
+<span class="s1">__all__ = (</span><span class="s4">&quot;TagObject&quot;</span><span class="s3">,</span><span class="s1">)</span>
+
+
+<span class="s3">class </span><span class="s1">TagObject(base.Object):</span>
+
+    <span class="s2">&quot;&quot;&quot;Non-Lightweight tag carrying additional information about an object we are pointing to.&quot;&quot;&quot;</span>
+
+    <span class="s1">type: Literal[</span><span class="s4">&quot;tag&quot;</span><span class="s1">] = </span><span class="s4">&quot;tag&quot;</span>
+    <span class="s1">__slots__ = (</span>
+        <span class="s4">&quot;object&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;tag&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;tagger&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;tagged_date&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;tagger_tz_offset&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;message&quot;</span><span class="s3">,</span>
+    <span class="s1">)</span>
+
+    <span class="s3">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">repo: </span><span class="s4">&quot;Repo&quot;</span><span class="s3">,</span>
+        <span class="s1">binsha: bytes</span><span class="s3">,</span>
+        <span class="s1">object: Union[</span><span class="s3">None, </span><span class="s1">base.Object] = </span><span class="s3">None,</span>
+        <span class="s1">tag: Union[</span><span class="s3">None, </span><span class="s1">str] = </span><span class="s3">None,</span>
+        <span class="s1">tagger: Union[</span><span class="s3">None, </span><span class="s4">&quot;Actor&quot;</span><span class="s1">] = </span><span class="s3">None,</span>
+        <span class="s1">tagged_date: Union[int</span><span class="s3">, None</span><span class="s1">] = </span><span class="s3">None,</span>
+        <span class="s1">tagger_tz_offset: Union[int</span><span class="s3">, None</span><span class="s1">] = </span><span class="s3">None,</span>
+        <span class="s1">message: Union[str</span><span class="s3">, None</span><span class="s1">] = </span><span class="s3">None,</span>
+    <span class="s1">) -&gt; </span><span class="s3">None</span><span class="s1">:  </span><span class="s0"># @ReservedAssignment</span>
+        <span class="s2">&quot;&quot;&quot;Initialize a tag object with additional data 
+ 
+        :param repo: repository this object is located in 
+        :param binsha: 20 byte SHA1 
+        :param object: Object instance of object we are pointing to 
+        :param tag: name of this tag 
+        :param tagger: Actor identifying the tagger 
+        :param tagged_date: int_seconds_since_epoch 
+            is the DateTime of the tag creation - use time.gmtime to convert 
+            it into a different format 
+        :param tagged_tz_offset: int_seconds_west_of_utc is the timezone that the 
+            authored_date is in, in a format similar to time.altzone&quot;&quot;&quot;</span>
+        <span class="s1">super(TagObject</span><span class="s3">, </span><span class="s1">self).__init__(repo</span><span class="s3">, </span><span class="s1">binsha)</span>
+        <span class="s3">if </span><span class="s1">object </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self.object: Union[</span><span class="s4">&quot;Commit&quot;</span><span class="s3">, </span><span class="s4">&quot;Blob&quot;</span><span class="s3">, </span><span class="s4">&quot;Tree&quot;</span><span class="s3">, </span><span class="s4">&quot;TagObject&quot;</span><span class="s1">] = object</span>
+        <span class="s3">if </span><span class="s1">tag </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self.tag = tag</span>
+        <span class="s3">if </span><span class="s1">tagger </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self.tagger = tagger</span>
+        <span class="s3">if </span><span class="s1">tagged_date </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self.tagged_date = tagged_date</span>
+        <span class="s3">if </span><span class="s1">tagger_tz_offset </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self.tagger_tz_offset = tagger_tz_offset</span>
+        <span class="s3">if </span><span class="s1">message </span><span class="s3">is not None</span><span class="s1">:</span>
+            <span class="s1">self.message = message</span>
+
+    <span class="s3">def </span><span class="s1">_set_cache_(self</span><span class="s3">, </span><span class="s1">attr: str) -&gt; </span><span class="s3">None</span><span class="s1">:</span>
+        <span class="s2">&quot;&quot;&quot;Cache all our attributes at once&quot;&quot;&quot;</span>
+        <span class="s3">if </span><span class="s1">attr </span><span class="s3">in </span><span class="s1">TagObject.__slots__:</span>
+            <span class="s1">ostream = self.repo.odb.stream(self.binsha)</span>
+            <span class="s1">lines: List[str] = ostream.read().decode(defenc</span><span class="s3">, </span><span class="s4">&quot;replace&quot;</span><span class="s1">).splitlines()</span>
+
+            <span class="s1">_obj</span><span class="s3">, </span><span class="s1">hexsha = lines[</span><span class="s5">0</span><span class="s1">].split(</span><span class="s4">&quot; &quot;</span><span class="s1">)</span>
+            <span class="s1">_type_token</span><span class="s3">, </span><span class="s1">type_name = lines[</span><span class="s5">1</span><span class="s1">].split(</span><span class="s4">&quot; &quot;</span><span class="s1">)</span>
+            <span class="s1">object_type = get_object_type_by_name(type_name.encode(</span><span class="s4">&quot;ascii&quot;</span><span class="s1">))</span>
+            <span class="s1">self.object = object_type(self.repo</span><span class="s3">, </span><span class="s1">hex_to_bin(hexsha))</span>
+
+            <span class="s1">self.tag = lines[</span><span class="s5">2</span><span class="s1">][</span><span class="s5">4</span><span class="s1">:]  </span><span class="s0"># tag &lt;tag name&gt;</span>
+
+            <span class="s3">if </span><span class="s1">len(lines) &gt; </span><span class="s5">3</span><span class="s1">:</span>
+                <span class="s1">tagger_info = lines[</span><span class="s5">3</span><span class="s1">]  </span><span class="s0"># tagger &lt;actor&gt; &lt;date&gt;</span>
+                <span class="s1">(</span>
+                    <span class="s1">self.tagger</span><span class="s3">,</span>
+                    <span class="s1">self.tagged_date</span><span class="s3">,</span>
+                    <span class="s1">self.tagger_tz_offset</span><span class="s3">,</span>
+                <span class="s1">) = parse_actor_and_date(tagger_info)</span>
+
+            <span class="s0"># line 4 empty - it could mark the beginning of the next header</span>
+            <span class="s0"># in case there really is no message, it would not exist. Otherwise</span>
+            <span class="s0"># a newline separates header from message</span>
+            <span class="s3">if </span><span class="s1">len(lines) &gt; </span><span class="s5">5</span><span class="s1">:</span>
+                <span class="s1">self.message = </span><span class="s4">&quot;</span><span class="s3">\n</span><span class="s4">&quot;</span><span class="s1">.join(lines[</span><span class="s5">5</span><span class="s1">:])</span>
+            <span class="s3">else</span><span class="s1">:</span>
+                <span class="s1">self.message = </span><span class="s4">&quot;&quot;</span>
+        <span class="s0"># END check our attributes</span>
+        <span class="s3">else</span><span class="s1">:</span>
+            <span class="s1">super(TagObject</span><span class="s3">, </span><span class="s1">self)._set_cache_(attr)</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,290 @@
+<html>
+<head>
+<title>ImagePalette.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #629755; font-style: italic;}
+.s4 { color: #6a8759;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImagePalette.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># image palette object</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1996-03-11 fl   Rewritten.</span>
+<span class="s0"># 1997-01-03 fl   Up and running.</span>
+<span class="s0"># 1997-08-23 fl   Added load hack</span>
+<span class="s0"># 2001-04-16 fl   Fixed randint shadow bug in random()</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2001 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 1996-1997 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">import </span><span class="s1">array</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">GimpGradientFile</span><span class="s2">, </span><span class="s1">GimpPaletteFile</span><span class="s2">, </span><span class="s1">ImageColor</span><span class="s2">, </span><span class="s1">PaletteFile</span>
+<span class="s2">from </span><span class="s1">._deprecate </span><span class="s2">import </span><span class="s1">deprecate</span>
+
+
+<span class="s2">class </span><span class="s1">ImagePalette:</span>
+    <span class="s3">&quot;&quot;&quot; 
+    Color palette for palette mapped images 
+ 
+    :param mode: The mode to use for the palette. See: 
+        :ref:`concept-modes`. Defaults to &quot;RGB&quot; 
+    :param palette: An optional palette. If given, it must be a bytearray, 
+        an array or a list of ints between 0-255. The list must consist of 
+        all channels for one color followed by the next color (e.g. RGBRGBRGB). 
+        Defaults to an empty palette. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">mode=</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s1">palette=</span><span class="s2">None, </span><span class="s1">size=</span><span class="s5">0</span><span class="s1">):</span>
+        <span class="s1">self.mode = mode</span>
+        <span class="s1">self.rawmode = </span><span class="s2">None  </span><span class="s0"># if set, palette contains raw data</span>
+        <span class="s1">self.palette = palette </span><span class="s2">or </span><span class="s1">bytearray()</span>
+        <span class="s1">self.dirty = </span><span class="s2">None</span>
+        <span class="s2">if </span><span class="s1">size != </span><span class="s5">0</span><span class="s1">:</span>
+            <span class="s1">deprecate(</span><span class="s4">&quot;The size parameter&quot;</span><span class="s2">, </span><span class="s5">10</span><span class="s2">, None</span><span class="s1">)</span>
+            <span class="s2">if </span><span class="s1">size != len(self.palette):</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;wrong palette size&quot;</span><span class="s1">)</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">palette(self):</span>
+        <span class="s2">return </span><span class="s1">self._palette</span>
+
+    <span class="s1">@palette.setter</span>
+    <span class="s2">def </span><span class="s1">palette(self</span><span class="s2">, </span><span class="s1">palette):</span>
+        <span class="s1">self._colors = </span><span class="s2">None</span>
+        <span class="s1">self._palette = palette</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">colors(self):</span>
+        <span class="s2">if </span><span class="s1">self._colors </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">mode_len = len(self.mode)</span>
+            <span class="s1">self._colors = {}</span>
+            <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">0</span><span class="s2">, </span><span class="s1">len(self.palette)</span><span class="s2">, </span><span class="s1">mode_len):</span>
+                <span class="s1">color = tuple(self.palette[i : i + mode_len])</span>
+                <span class="s2">if </span><span class="s1">color </span><span class="s2">in </span><span class="s1">self._colors:</span>
+                    <span class="s2">continue</span>
+                <span class="s1">self._colors[color] = i // mode_len</span>
+        <span class="s2">return </span><span class="s1">self._colors</span>
+
+    <span class="s1">@colors.setter</span>
+    <span class="s2">def </span><span class="s1">colors(self</span><span class="s2">, </span><span class="s1">colors):</span>
+        <span class="s1">self._colors = colors</span>
+
+    <span class="s2">def </span><span class="s1">copy(self):</span>
+        <span class="s1">new = ImagePalette()</span>
+
+        <span class="s1">new.mode = self.mode</span>
+        <span class="s1">new.rawmode = self.rawmode</span>
+        <span class="s2">if </span><span class="s1">self.palette </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">new.palette = self.palette[:]</span>
+        <span class="s1">new.dirty = self.dirty</span>
+
+        <span class="s2">return </span><span class="s1">new</span>
+
+    <span class="s2">def </span><span class="s1">getdata(self):</span>
+        <span class="s3">&quot;&quot;&quot; 
+        Get palette contents in format suitable for the low-level 
+        ``im.putpalette`` primitive. 
+ 
+        .. warning:: This method is experimental. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">self.rawmode:</span>
+            <span class="s2">return </span><span class="s1">self.rawmode</span><span class="s2">, </span><span class="s1">self.palette</span>
+        <span class="s2">return </span><span class="s1">self.mode</span><span class="s2">, </span><span class="s1">self.tobytes()</span>
+
+    <span class="s2">def </span><span class="s1">tobytes(self):</span>
+        <span class="s3">&quot;&quot;&quot;Convert palette to bytes. 
+ 
+        .. warning:: This method is experimental. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">self.rawmode:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;palette contains raw palette data&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">isinstance(self.palette</span><span class="s2">, </span><span class="s1">bytes):</span>
+            <span class="s2">return </span><span class="s1">self.palette</span>
+        <span class="s1">arr = array.array(</span><span class="s4">&quot;B&quot;</span><span class="s2">, </span><span class="s1">self.palette)</span>
+        <span class="s2">return </span><span class="s1">arr.tobytes()</span>
+
+    <span class="s0"># Declare tostring as an alias for tobytes</span>
+    <span class="s1">tostring = tobytes</span>
+
+    <span class="s2">def </span><span class="s1">getcolor(self</span><span class="s2">, </span><span class="s1">color</span><span class="s2">, </span><span class="s1">image=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s3">&quot;&quot;&quot;Given an rgb tuple, allocate palette entry. 
+ 
+        .. warning:: This method is experimental. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">self.rawmode:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;palette contains raw palette data&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">isinstance(color</span><span class="s2">, </span><span class="s1">tuple):</span>
+            <span class="s2">if </span><span class="s1">self.mode == </span><span class="s4">&quot;RGB&quot;</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">len(color) == </span><span class="s5">4</span><span class="s1">:</span>
+                    <span class="s2">if </span><span class="s1">color[</span><span class="s5">3</span><span class="s1">] != </span><span class="s5">255</span><span class="s1">:</span>
+                        <span class="s2">raise </span><span class="s1">ValueError(</span>
+                            <span class="s4">&quot;cannot add non-opaque RGBA color to RGB palette&quot;</span>
+                        <span class="s1">)</span>
+                    <span class="s1">color = color[:</span><span class="s5">3</span><span class="s1">]</span>
+            <span class="s2">elif </span><span class="s1">self.mode == </span><span class="s4">&quot;RGBA&quot;</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">len(color) == </span><span class="s5">3</span><span class="s1">:</span>
+                    <span class="s1">color += (</span><span class="s5">255</span><span class="s2">,</span><span class="s1">)</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">self.colors[color]</span>
+            <span class="s2">except </span><span class="s1">KeyError </span><span class="s2">as </span><span class="s1">e:</span>
+                <span class="s0"># allocate new color slot</span>
+                <span class="s2">if not </span><span class="s1">isinstance(self.palette</span><span class="s2">, </span><span class="s1">bytearray):</span>
+                    <span class="s1">self._palette = bytearray(self.palette)</span>
+                <span class="s1">index = len(self.palette) // </span><span class="s5">3</span>
+                <span class="s1">special_colors = ()</span>
+                <span class="s2">if </span><span class="s1">image:</span>
+                    <span class="s1">special_colors = (</span>
+                        <span class="s1">image.info.get(</span><span class="s4">&quot;background&quot;</span><span class="s1">)</span><span class="s2">,</span>
+                        <span class="s1">image.info.get(</span><span class="s4">&quot;transparency&quot;</span><span class="s1">)</span><span class="s2">,</span>
+                    <span class="s1">)</span>
+                <span class="s2">while </span><span class="s1">index </span><span class="s2">in </span><span class="s1">special_colors:</span>
+                    <span class="s1">index += </span><span class="s5">1</span>
+                <span class="s2">if </span><span class="s1">index &gt;= </span><span class="s5">256</span><span class="s1">:</span>
+                    <span class="s2">if </span><span class="s1">image:</span>
+                        <span class="s0"># Search for an unused index</span>
+                        <span class="s2">for </span><span class="s1">i</span><span class="s2">, </span><span class="s1">count </span><span class="s2">in </span><span class="s1">reversed(list(enumerate(image.histogram()))):</span>
+                            <span class="s2">if </span><span class="s1">count == </span><span class="s5">0 </span><span class="s2">and </span><span class="s1">i </span><span class="s2">not in </span><span class="s1">special_colors:</span>
+                                <span class="s1">index = i</span>
+                                <span class="s2">break</span>
+                    <span class="s2">if </span><span class="s1">index &gt;= </span><span class="s5">256</span><span class="s1">:</span>
+                        <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;cannot allocate more than 256 colors&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+                <span class="s1">self.colors[color] = index</span>
+                <span class="s2">if </span><span class="s1">index * </span><span class="s5">3 </span><span class="s1">&lt; len(self.palette):</span>
+                    <span class="s1">self._palette = (</span>
+                        <span class="s1">self.palette[: index * </span><span class="s5">3</span><span class="s1">]</span>
+                        <span class="s1">+ bytes(color)</span>
+                        <span class="s1">+ self.palette[index * </span><span class="s5">3 </span><span class="s1">+ </span><span class="s5">3 </span><span class="s1">:]</span>
+                    <span class="s1">)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">self._palette += bytes(color)</span>
+                <span class="s1">self.dirty = </span><span class="s5">1</span>
+                <span class="s2">return </span><span class="s1">index</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">f&quot;unknown color specifier: </span><span class="s2">{</span><span class="s1">repr(color)</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">save(self</span><span class="s2">, </span><span class="s1">fp):</span>
+        <span class="s3">&quot;&quot;&quot;Save palette to text file. 
+ 
+        .. warning:: This method is experimental. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">self.rawmode:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;palette contains raw palette data&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">isinstance(fp</span><span class="s2">, </span><span class="s1">str):</span>
+            <span class="s1">fp = open(fp</span><span class="s2">, </span><span class="s4">&quot;w&quot;</span><span class="s1">)</span>
+        <span class="s1">fp.write(</span><span class="s4">&quot;# Palette</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s1">)</span>
+        <span class="s1">fp.write(</span><span class="s4">f&quot;# Mode: </span><span class="s2">{</span><span class="s1">self.mode</span><span class="s2">}\n</span><span class="s4">&quot;</span><span class="s1">)</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">256</span><span class="s1">):</span>
+            <span class="s1">fp.write(</span><span class="s4">f&quot;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+            <span class="s2">for </span><span class="s1">j </span><span class="s2">in </span><span class="s1">range(i * len(self.mode)</span><span class="s2">, </span><span class="s1">(i + </span><span class="s5">1</span><span class="s1">) * len(self.mode)):</span>
+                <span class="s2">try</span><span class="s1">:</span>
+                    <span class="s1">fp.write(</span><span class="s4">f&quot; </span><span class="s2">{</span><span class="s1">self.palette[j]</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+                <span class="s2">except </span><span class="s1">IndexError:</span>
+                    <span class="s1">fp.write(</span><span class="s4">&quot; 0&quot;</span><span class="s1">)</span>
+            <span class="s1">fp.write(</span><span class="s4">&quot;</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s1">)</span>
+        <span class="s1">fp.close()</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Internal</span>
+
+
+<span class="s2">def </span><span class="s1">raw(rawmode</span><span class="s2">, </span><span class="s1">data):</span>
+    <span class="s1">palette = ImagePalette()</span>
+    <span class="s1">palette.rawmode = rawmode</span>
+    <span class="s1">palette.palette = data</span>
+    <span class="s1">palette.dirty = </span><span class="s5">1</span>
+    <span class="s2">return </span><span class="s1">palette</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Factories</span>
+
+
+<span class="s2">def </span><span class="s1">make_linear_lut(black</span><span class="s2">, </span><span class="s1">white):</span>
+    <span class="s1">lut = []</span>
+    <span class="s2">if </span><span class="s1">black == </span><span class="s5">0</span><span class="s1">:</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">256</span><span class="s1">):</span>
+            <span class="s1">lut.append(white * i // </span><span class="s5">255</span><span class="s1">)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError  </span><span class="s0"># FIXME</span>
+    <span class="s2">return </span><span class="s1">lut</span>
+
+
+<span class="s2">def </span><span class="s1">make_gamma_lut(exp):</span>
+    <span class="s1">lut = []</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">256</span><span class="s1">):</span>
+        <span class="s1">lut.append(int(((i / </span><span class="s5">255.0</span><span class="s1">) ** exp) * </span><span class="s5">255.0 </span><span class="s1">+ </span><span class="s5">0.5</span><span class="s1">))</span>
+    <span class="s2">return </span><span class="s1">lut</span>
+
+
+<span class="s2">def </span><span class="s1">negative(mode=</span><span class="s4">&quot;RGB&quot;</span><span class="s1">):</span>
+    <span class="s1">palette = list(range(</span><span class="s5">256 </span><span class="s1">* len(mode)))</span>
+    <span class="s1">palette.reverse()</span>
+    <span class="s2">return </span><span class="s1">ImagePalette(mode</span><span class="s2">, </span><span class="s1">[i // len(mode) </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">palette])</span>
+
+
+<span class="s2">def </span><span class="s1">random(mode=</span><span class="s4">&quot;RGB&quot;</span><span class="s1">):</span>
+    <span class="s2">from </span><span class="s1">random </span><span class="s2">import </span><span class="s1">randint</span>
+
+    <span class="s1">palette = []</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">256 </span><span class="s1">* len(mode)):</span>
+        <span class="s1">palette.append(randint(</span><span class="s5">0</span><span class="s2">, </span><span class="s5">255</span><span class="s1">))</span>
+    <span class="s2">return </span><span class="s1">ImagePalette(mode</span><span class="s2">, </span><span class="s1">palette)</span>
+
+
+<span class="s2">def </span><span class="s1">sepia(white=</span><span class="s4">&quot;#fff0c0&quot;</span><span class="s1">):</span>
+    <span class="s1">bands = [make_linear_lut(</span><span class="s5">0</span><span class="s2">, </span><span class="s1">band) </span><span class="s2">for </span><span class="s1">band </span><span class="s2">in </span><span class="s1">ImageColor.getrgb(white)]</span>
+    <span class="s2">return </span><span class="s1">ImagePalette(</span><span class="s4">&quot;RGB&quot;</span><span class="s2">, </span><span class="s1">[bands[i % </span><span class="s5">3</span><span class="s1">][i // </span><span class="s5">3</span><span class="s1">] </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s5">256 </span><span class="s1">* </span><span class="s5">3</span><span class="s1">)])</span>
+
+
+<span class="s2">def </span><span class="s1">wedge(mode=</span><span class="s4">&quot;RGB&quot;</span><span class="s1">):</span>
+    <span class="s1">palette = list(range(</span><span class="s5">256 </span><span class="s1">* len(mode)))</span>
+    <span class="s2">return </span><span class="s1">ImagePalette(mode</span><span class="s2">, </span><span class="s1">[i // len(mode) </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">palette])</span>
+
+
+<span class="s2">def </span><span class="s1">load(filename):</span>
+
+    <span class="s0"># FIXME: supports GIMP gradients only</span>
+
+    <span class="s2">with </span><span class="s1">open(filename</span><span class="s2">, </span><span class="s4">&quot;rb&quot;</span><span class="s1">) </span><span class="s2">as </span><span class="s1">fp:</span>
+
+        <span class="s2">for </span><span class="s1">paletteHandler </span><span class="s2">in </span><span class="s1">[</span>
+            <span class="s1">GimpPaletteFile.GimpPaletteFile</span><span class="s2">,</span>
+            <span class="s1">GimpGradientFile.GimpGradientFile</span><span class="s2">,</span>
+            <span class="s1">PaletteFile.PaletteFile</span><span class="s2">,</span>
+        <span class="s1">]:</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">fp.seek(</span><span class="s5">0</span><span class="s1">)</span>
+                <span class="s1">lut = paletteHandler(fp).getpalette()</span>
+                <span class="s2">if </span><span class="s1">lut:</span>
+                    <span class="s2">break</span>
+            <span class="s2">except </span><span class="s1">(SyntaxError</span><span class="s2">, </span><span class="s1">ValueError):</span>
+                <span class="s0"># import traceback</span>
+                <span class="s0"># traceback.print_exc()</span>
+                <span class="s2">pass</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">&quot;cannot load palette&quot;</span><span class="s1">)</span>
+
+    <span class="s2">return </span><span class="s1">lut  </span><span class="s0"># data, rawmode</span>
+</pre>
+</body>
+</html>

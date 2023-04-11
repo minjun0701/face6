@@ -1,0 +1,335 @@
+<html>
+<head>
+<title>SpiderImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6897bb;}
+.s4 { color: #6a8759;}
+.s5 { color: #629755; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+SpiderImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0">#</span>
+<span class="s0"># SPIDER image file handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 2004-08-02    Created BB</span>
+<span class="s0"># 2006-03-02    added save method</span>
+<span class="s0"># 2006-03-13    added support for stack images</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 2004 by Health Research Inc. (HRI) RENSSELAER, NY 12144.</span>
+<span class="s0"># Copyright (c) 2004 by William Baxter.</span>
+<span class="s0"># Copyright (c) 2004 by Secret Labs AB.</span>
+<span class="s0"># Copyright (c) 2004 by Fredrik Lundh.</span>
+<span class="s0">#</span>
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for the Spider image format. This format is used</span>
+<span class="s0"># by the SPIDER software, in processing image data from electron</span>
+<span class="s0"># microscopy and tomography.</span>
+<span class="s0">##</span>
+
+<span class="s0">#</span>
+<span class="s0"># SpiderImagePlugin.py</span>
+<span class="s0">#</span>
+<span class="s0"># The Spider image format is used by SPIDER software, in processing</span>
+<span class="s0"># image data from electron microscopy and tomography.</span>
+<span class="s0">#</span>
+<span class="s0"># Spider home page:</span>
+<span class="s0"># https://spider.wadsworth.org/spider_doc/spider/docs/spider.html</span>
+<span class="s0">#</span>
+<span class="s0"># Details about the Spider image format:</span>
+<span class="s0"># https://spider.wadsworth.org/spider_doc/spider/docs/image_doc.html</span>
+<span class="s0">#</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">struct</span>
+<span class="s2">import </span><span class="s1">sys</span>
+
+<span class="s2">from </span><span class="s1">PIL </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span>
+
+
+<span class="s2">def </span><span class="s1">isInt(f):</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">i = int(f)</span>
+        <span class="s2">if </span><span class="s1">f - i == </span><span class="s3">0</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s3">1</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s3">0</span>
+    <span class="s2">except </span><span class="s1">(ValueError</span><span class="s2">, </span><span class="s1">OverflowError):</span>
+        <span class="s2">return </span><span class="s3">0</span>
+
+
+<span class="s1">iforms = [</span><span class="s3">1</span><span class="s2">, </span><span class="s3">3</span><span class="s2">, </span><span class="s1">-</span><span class="s3">11</span><span class="s2">, </span><span class="s1">-</span><span class="s3">12</span><span class="s2">, </span><span class="s1">-</span><span class="s3">21</span><span class="s2">, </span><span class="s1">-</span><span class="s3">22</span><span class="s1">]</span>
+
+
+<span class="s0"># There is no magic number to identify Spider files, so just check a</span>
+<span class="s0"># series of header locations to see if they have reasonable values.</span>
+<span class="s0"># Returns no. of bytes in the header, if it is a valid Spider header,</span>
+<span class="s0"># otherwise returns 0</span>
+
+
+<span class="s2">def </span><span class="s1">isSpiderHeader(t):</span>
+    <span class="s1">h = (</span><span class="s3">99</span><span class="s2">,</span><span class="s1">) + t  </span><span class="s0"># add 1 value so can use spider header index start=1</span>
+    <span class="s0"># header values 1,2,5,12,13,22,23 should be integers</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">[</span><span class="s3">1</span><span class="s2">, </span><span class="s3">2</span><span class="s2">, </span><span class="s3">5</span><span class="s2">, </span><span class="s3">12</span><span class="s2">, </span><span class="s3">13</span><span class="s2">, </span><span class="s3">22</span><span class="s2">, </span><span class="s3">23</span><span class="s1">]:</span>
+        <span class="s2">if not </span><span class="s1">isInt(h[i]):</span>
+            <span class="s2">return </span><span class="s3">0</span>
+    <span class="s0"># check iform</span>
+    <span class="s1">iform = int(h[</span><span class="s3">5</span><span class="s1">])</span>
+    <span class="s2">if </span><span class="s1">iform </span><span class="s2">not in </span><span class="s1">iforms:</span>
+        <span class="s2">return </span><span class="s3">0</span>
+    <span class="s0"># check other header values</span>
+    <span class="s1">labrec = int(h[</span><span class="s3">13</span><span class="s1">])  </span><span class="s0"># no. records in file header</span>
+    <span class="s1">labbyt = int(h[</span><span class="s3">22</span><span class="s1">])  </span><span class="s0"># total no. of bytes in header</span>
+    <span class="s1">lenbyt = int(h[</span><span class="s3">23</span><span class="s1">])  </span><span class="s0"># record length in bytes</span>
+    <span class="s2">if </span><span class="s1">labbyt != (labrec * lenbyt):</span>
+        <span class="s2">return </span><span class="s3">0</span>
+    <span class="s0"># looks like a valid header</span>
+    <span class="s2">return </span><span class="s1">labbyt</span>
+
+
+<span class="s2">def </span><span class="s1">isSpiderImage(filename):</span>
+    <span class="s2">with </span><span class="s1">open(filename</span><span class="s2">, </span><span class="s4">&quot;rb&quot;</span><span class="s1">) </span><span class="s2">as </span><span class="s1">fp:</span>
+        <span class="s1">f = fp.read(</span><span class="s3">92</span><span class="s1">)  </span><span class="s0"># read 23 * 4 bytes</span>
+    <span class="s1">t = struct.unpack(</span><span class="s4">&quot;&gt;23f&quot;</span><span class="s2">, </span><span class="s1">f)  </span><span class="s0"># try big-endian first</span>
+    <span class="s1">hdrlen = isSpiderHeader(t)</span>
+    <span class="s2">if </span><span class="s1">hdrlen == </span><span class="s3">0</span><span class="s1">:</span>
+        <span class="s1">t = struct.unpack(</span><span class="s4">&quot;&lt;23f&quot;</span><span class="s2">, </span><span class="s1">f)  </span><span class="s0"># little-endian</span>
+        <span class="s1">hdrlen = isSpiderHeader(t)</span>
+    <span class="s2">return </span><span class="s1">hdrlen</span>
+
+
+<span class="s2">class </span><span class="s1">SpiderImageFile(ImageFile.ImageFile):</span>
+
+    <span class="s1">format = </span><span class="s4">&quot;SPIDER&quot;</span>
+    <span class="s1">format_description = </span><span class="s4">&quot;Spider 2D image&quot;</span>
+    <span class="s1">_close_exclusive_fp_after_loading = </span><span class="s2">False</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+        <span class="s0"># check header</span>
+        <span class="s1">n = </span><span class="s3">27 </span><span class="s1">* </span><span class="s3">4  </span><span class="s0"># read 27 float values</span>
+        <span class="s1">f = self.fp.read(n)</span>
+
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">self.bigendian = </span><span class="s3">1</span>
+            <span class="s1">t = struct.unpack(</span><span class="s4">&quot;&gt;27f&quot;</span><span class="s2">, </span><span class="s1">f)  </span><span class="s0"># try big-endian first</span>
+            <span class="s1">hdrlen = isSpiderHeader(t)</span>
+            <span class="s2">if </span><span class="s1">hdrlen == </span><span class="s3">0</span><span class="s1">:</span>
+                <span class="s1">self.bigendian = </span><span class="s3">0</span>
+                <span class="s1">t = struct.unpack(</span><span class="s4">&quot;&lt;27f&quot;</span><span class="s2">, </span><span class="s1">f)  </span><span class="s0"># little-endian</span>
+                <span class="s1">hdrlen = isSpiderHeader(t)</span>
+            <span class="s2">if </span><span class="s1">hdrlen == </span><span class="s3">0</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;not a valid Spider file&quot;</span><span class="s1">)</span>
+        <span class="s2">except </span><span class="s1">struct.error </span><span class="s2">as </span><span class="s1">e:</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;not a valid Spider file&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+
+        <span class="s1">h = (</span><span class="s3">99</span><span class="s2">,</span><span class="s1">) + t  </span><span class="s0"># add 1 value : spider header index starts at 1</span>
+        <span class="s1">iform = int(h[</span><span class="s3">5</span><span class="s1">])</span>
+        <span class="s2">if </span><span class="s1">iform != </span><span class="s3">1</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;not a Spider 2D image&quot;</span><span class="s1">)</span>
+
+        <span class="s1">self._size = int(h[</span><span class="s3">12</span><span class="s1">])</span><span class="s2">, </span><span class="s1">int(h[</span><span class="s3">2</span><span class="s1">])  </span><span class="s0"># size in pixels (width, height)</span>
+        <span class="s1">self.istack = int(h[</span><span class="s3">24</span><span class="s1">])</span>
+        <span class="s1">self.imgnumber = int(h[</span><span class="s3">27</span><span class="s1">])</span>
+
+        <span class="s2">if </span><span class="s1">self.istack == </span><span class="s3">0 </span><span class="s2">and </span><span class="s1">self.imgnumber == </span><span class="s3">0</span><span class="s1">:</span>
+            <span class="s0"># stk=0, img=0: a regular 2D image</span>
+            <span class="s1">offset = hdrlen</span>
+            <span class="s1">self._nimages = </span><span class="s3">1</span>
+        <span class="s2">elif </span><span class="s1">self.istack &gt; </span><span class="s3">0 </span><span class="s2">and </span><span class="s1">self.imgnumber == </span><span class="s3">0</span><span class="s1">:</span>
+            <span class="s0"># stk&gt;0, img=0: Opening the stack for the first time</span>
+            <span class="s1">self.imgbytes = int(h[</span><span class="s3">12</span><span class="s1">]) * int(h[</span><span class="s3">2</span><span class="s1">]) * </span><span class="s3">4</span>
+            <span class="s1">self.hdrlen = hdrlen</span>
+            <span class="s1">self._nimages = int(h[</span><span class="s3">26</span><span class="s1">])</span>
+            <span class="s0"># Point to the first image in the stack</span>
+            <span class="s1">offset = hdrlen * </span><span class="s3">2</span>
+            <span class="s1">self.imgnumber = </span><span class="s3">1</span>
+        <span class="s2">elif </span><span class="s1">self.istack == </span><span class="s3">0 </span><span class="s2">and </span><span class="s1">self.imgnumber &gt; </span><span class="s3">0</span><span class="s1">:</span>
+            <span class="s0"># stk=0, img&gt;0: an image within the stack</span>
+            <span class="s1">offset = hdrlen + self.stkoffset</span>
+            <span class="s1">self.istack = </span><span class="s3">2  </span><span class="s0"># So Image knows it's still a stack</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;inconsistent stack header values&quot;</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">self.bigendian:</span>
+            <span class="s1">self.rawmode = </span><span class="s4">&quot;F;32BF&quot;</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.rawmode = </span><span class="s4">&quot;F;32F&quot;</span>
+        <span class="s1">self.mode = </span><span class="s4">&quot;F&quot;</span>
+
+        <span class="s1">self.tile = [(</span><span class="s4">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s1">offset</span><span class="s2">, </span><span class="s1">(self.rawmode</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s3">1</span><span class="s1">))]</span>
+        <span class="s1">self._fp = self.fp  </span><span class="s0"># FIXME: hack</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">n_frames(self):</span>
+        <span class="s2">return </span><span class="s1">self._nimages</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">is_animated(self):</span>
+        <span class="s2">return </span><span class="s1">self._nimages &gt; </span><span class="s3">1</span>
+
+    <span class="s0"># 1st image index is zero (although SPIDER imgnumber starts at 1)</span>
+    <span class="s2">def </span><span class="s1">tell(self):</span>
+        <span class="s2">if </span><span class="s1">self.imgnumber &lt; </span><span class="s3">1</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s3">0</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">self.imgnumber - </span><span class="s3">1</span>
+
+    <span class="s2">def </span><span class="s1">seek(self</span><span class="s2">, </span><span class="s1">frame):</span>
+        <span class="s2">if </span><span class="s1">self.istack == </span><span class="s3">0</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">EOFError(</span><span class="s4">&quot;attempt to seek in a non-stack file&quot;</span><span class="s1">)</span>
+        <span class="s2">if not </span><span class="s1">self._seek_check(frame):</span>
+            <span class="s2">return</span>
+        <span class="s1">self.stkoffset = self.hdrlen + frame * (self.hdrlen + self.imgbytes)</span>
+        <span class="s1">self.fp = self._fp</span>
+        <span class="s1">self.fp.seek(self.stkoffset)</span>
+        <span class="s1">self._open()</span>
+
+    <span class="s0"># returns a byte image after rescaling to 0..255</span>
+    <span class="s2">def </span><span class="s1">convert2byte(self</span><span class="s2">, </span><span class="s1">depth=</span><span class="s3">255</span><span class="s1">):</span>
+        <span class="s1">(minimum</span><span class="s2">, </span><span class="s1">maximum) = self.getextrema()</span>
+        <span class="s1">m = </span><span class="s3">1</span>
+        <span class="s2">if </span><span class="s1">maximum != minimum:</span>
+            <span class="s1">m = depth / (maximum - minimum)</span>
+        <span class="s1">b = -m * minimum</span>
+        <span class="s2">return </span><span class="s1">self.point(</span><span class="s2">lambda </span><span class="s1">i</span><span class="s2">, </span><span class="s1">m=m</span><span class="s2">, </span><span class="s1">b=b: i * m + b).convert(</span><span class="s4">&quot;L&quot;</span><span class="s1">)</span>
+
+    <span class="s0"># returns a ImageTk.PhotoImage object, after rescaling to 0..255</span>
+    <span class="s2">def </span><span class="s1">tkPhotoImage(self):</span>
+        <span class="s2">from </span><span class="s1">PIL </span><span class="s2">import </span><span class="s1">ImageTk</span>
+
+        <span class="s2">return </span><span class="s1">ImageTk.PhotoImage(self.convert2byte()</span><span class="s2">, </span><span class="s1">palette=</span><span class="s3">256</span><span class="s1">)</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Image series</span>
+
+<span class="s0"># given a list of filenames, return a list of images</span>
+<span class="s2">def </span><span class="s1">loadImageSeries(filelist=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot;create a list of :py:class:`~PIL.Image.Image` objects for use in a montage&quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">filelist </span><span class="s2">is None or </span><span class="s1">len(filelist) &lt; </span><span class="s3">1</span><span class="s1">:</span>
+        <span class="s2">return</span>
+
+    <span class="s1">imglist = []</span>
+    <span class="s2">for </span><span class="s1">img </span><span class="s2">in </span><span class="s1">filelist:</span>
+        <span class="s2">if not </span><span class="s1">os.path.exists(img):</span>
+            <span class="s1">print(</span><span class="s4">f&quot;unable to find </span><span class="s2">{</span><span class="s1">img</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s1">)</span>
+            <span class="s2">continue</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s2">with </span><span class="s1">Image.open(img) </span><span class="s2">as </span><span class="s1">im:</span>
+                <span class="s1">im = im.convert2byte()</span>
+        <span class="s2">except </span><span class="s1">Exception:</span>
+            <span class="s2">if not </span><span class="s1">isSpiderImage(img):</span>
+                <span class="s1">print(img + </span><span class="s4">&quot; is not a Spider image file&quot;</span><span class="s1">)</span>
+            <span class="s2">continue</span>
+        <span class="s1">im.info[</span><span class="s4">&quot;filename&quot;</span><span class="s1">] = img</span>
+        <span class="s1">imglist.append(im)</span>
+    <span class="s2">return </span><span class="s1">imglist</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># For saving images in Spider format</span>
+
+
+<span class="s2">def </span><span class="s1">makeSpiderHeader(im):</span>
+    <span class="s1">nsam</span><span class="s2">, </span><span class="s1">nrow = im.size</span>
+    <span class="s1">lenbyt = nsam * </span><span class="s3">4  </span><span class="s0"># There are labrec records in the header</span>
+    <span class="s1">labrec = int(</span><span class="s3">1024 </span><span class="s1">/ lenbyt)</span>
+    <span class="s2">if </span><span class="s3">1024 </span><span class="s1">% lenbyt != </span><span class="s3">0</span><span class="s1">:</span>
+        <span class="s1">labrec += </span><span class="s3">1</span>
+    <span class="s1">labbyt = labrec * lenbyt</span>
+    <span class="s1">nvalues = int(labbyt / </span><span class="s3">4</span><span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">nvalues &lt; </span><span class="s3">23</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">[]</span>
+
+    <span class="s1">hdr = []</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(nvalues):</span>
+        <span class="s1">hdr.append(</span><span class="s3">0.0</span><span class="s1">)</span>
+
+    <span class="s0"># NB these are Fortran indices</span>
+    <span class="s1">hdr[</span><span class="s3">1</span><span class="s1">] = </span><span class="s3">1.0  </span><span class="s0"># nslice (=1 for an image)</span>
+    <span class="s1">hdr[</span><span class="s3">2</span><span class="s1">] = float(nrow)  </span><span class="s0"># number of rows per slice</span>
+    <span class="s1">hdr[</span><span class="s3">3</span><span class="s1">] = float(nrow)  </span><span class="s0"># number of records in the image</span>
+    <span class="s1">hdr[</span><span class="s3">5</span><span class="s1">] = </span><span class="s3">1.0  </span><span class="s0"># iform for 2D image</span>
+    <span class="s1">hdr[</span><span class="s3">12</span><span class="s1">] = float(nsam)  </span><span class="s0"># number of pixels per line</span>
+    <span class="s1">hdr[</span><span class="s3">13</span><span class="s1">] = float(labrec)  </span><span class="s0"># number of records in file header</span>
+    <span class="s1">hdr[</span><span class="s3">22</span><span class="s1">] = float(labbyt)  </span><span class="s0"># total number of bytes in header</span>
+    <span class="s1">hdr[</span><span class="s3">23</span><span class="s1">] = float(lenbyt)  </span><span class="s0"># record length in bytes</span>
+
+    <span class="s0"># adjust for Fortran indexing</span>
+    <span class="s1">hdr = hdr[</span><span class="s3">1</span><span class="s1">:]</span>
+    <span class="s1">hdr.append(</span><span class="s3">0.0</span><span class="s1">)</span>
+    <span class="s0"># pack binary data into a string</span>
+    <span class="s2">return </span><span class="s1">[struct.pack(</span><span class="s4">&quot;f&quot;</span><span class="s2">, </span><span class="s1">v) </span><span class="s2">for </span><span class="s1">v </span><span class="s2">in </span><span class="s1">hdr]</span>
+
+
+<span class="s2">def </span><span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename):</span>
+    <span class="s2">if </span><span class="s1">im.mode[</span><span class="s3">0</span><span class="s1">] != </span><span class="s4">&quot;F&quot;</span><span class="s1">:</span>
+        <span class="s1">im = im.convert(</span><span class="s4">&quot;F&quot;</span><span class="s1">)</span>
+
+    <span class="s1">hdr = makeSpiderHeader(im)</span>
+    <span class="s2">if </span><span class="s1">len(hdr) &lt; </span><span class="s3">256</span><span class="s1">:</span>
+        <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">&quot;Error creating Spider header&quot;</span><span class="s1">)</span>
+
+    <span class="s0"># write the SPIDER header</span>
+    <span class="s1">fp.writelines(hdr)</span>
+
+    <span class="s1">rawmode = </span><span class="s4">&quot;F;32NF&quot;  </span><span class="s0"># 32-bit native floating point</span>
+    <span class="s1">ImageFile._save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">[(</span><span class="s4">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s1">) + im.size</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">(rawmode</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s3">1</span><span class="s1">))])</span>
+
+
+<span class="s2">def </span><span class="s1">_save_spider(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename):</span>
+    <span class="s0"># get the filename extension and register it with Image</span>
+    <span class="s1">ext = os.path.splitext(filename)[</span><span class="s3">1</span><span class="s1">]</span>
+    <span class="s1">Image.register_extension(SpiderImageFile.format</span><span class="s2">, </span><span class="s1">ext)</span>
+    <span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename)</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+
+
+<span class="s1">Image.register_open(SpiderImageFile.format</span><span class="s2">, </span><span class="s1">SpiderImageFile)</span>
+<span class="s1">Image.register_save(SpiderImageFile.format</span><span class="s2">, </span><span class="s1">_save_spider)</span>
+
+<span class="s2">if </span><span class="s1">__name__ == </span><span class="s4">&quot;__main__&quot;</span><span class="s1">:</span>
+
+    <span class="s2">if </span><span class="s1">len(sys.argv) &lt; </span><span class="s3">2</span><span class="s1">:</span>
+        <span class="s1">print(</span><span class="s4">&quot;Syntax: python3 SpiderImagePlugin.py [infile] [outfile]&quot;</span><span class="s1">)</span>
+        <span class="s1">sys.exit()</span>
+
+    <span class="s1">filename = sys.argv[</span><span class="s3">1</span><span class="s1">]</span>
+    <span class="s2">if not </span><span class="s1">isSpiderImage(filename):</span>
+        <span class="s1">print(</span><span class="s4">&quot;input image must be in Spider format&quot;</span><span class="s1">)</span>
+        <span class="s1">sys.exit()</span>
+
+    <span class="s2">with </span><span class="s1">Image.open(filename) </span><span class="s2">as </span><span class="s1">im:</span>
+        <span class="s1">print(</span><span class="s4">&quot;image: &quot; </span><span class="s1">+ str(im))</span>
+        <span class="s1">print(</span><span class="s4">&quot;format: &quot; </span><span class="s1">+ str(im.format))</span>
+        <span class="s1">print(</span><span class="s4">&quot;size: &quot; </span><span class="s1">+ str(im.size))</span>
+        <span class="s1">print(</span><span class="s4">&quot;mode: &quot; </span><span class="s1">+ str(im.mode))</span>
+        <span class="s1">print(</span><span class="s4">&quot;max, min: &quot;</span><span class="s2">, </span><span class="s1">end=</span><span class="s4">&quot; &quot;</span><span class="s1">)</span>
+        <span class="s1">print(im.getextrema())</span>
+
+        <span class="s2">if </span><span class="s1">len(sys.argv) &gt; </span><span class="s3">2</span><span class="s1">:</span>
+            <span class="s1">outfile = sys.argv[</span><span class="s3">2</span><span class="s1">]</span>
+
+            <span class="s0"># perform some image operation</span>
+            <span class="s1">im = im.transpose(Image.Transpose.FLIP_LEFT_RIGHT)</span>
+            <span class="s1">print(</span>
+                <span class="s4">f&quot;saving a flipped version of </span><span class="s2">{</span><span class="s1">os.path.basename(filename)</span><span class="s2">} </span><span class="s4">&quot;</span>
+                <span class="s4">f&quot;as </span><span class="s2">{</span><span class="s1">outfile</span><span class="s2">} </span><span class="s4">&quot;</span>
+            <span class="s1">)</span>
+            <span class="s1">im.save(outfile</span><span class="s2">, </span><span class="s1">SpiderImageFile.format)</span>
+</pre>
+</body>
+</html>

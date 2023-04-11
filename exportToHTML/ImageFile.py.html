@@ -1,0 +1,777 @@
+<html>
+<head>
+<title>ImageFile.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #6897bb;}
+.s4 { color: #6a8759;}
+.s5 { color: #629755; font-style: italic;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageFile.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># base class for image file handlers</span>
+<span class="s0">#</span>
+<span class="s0"># history:</span>
+<span class="s0"># 1995-09-09 fl   Created</span>
+<span class="s0"># 1996-03-11 fl   Fixed load mechanism.</span>
+<span class="s0"># 1996-04-15 fl   Added pcx/xbm decoders.</span>
+<span class="s0"># 1996-04-30 fl   Added encoders.</span>
+<span class="s0"># 1996-12-14 fl   Added load helpers</span>
+<span class="s0"># 1997-01-11 fl   Use encode_to_file where possible</span>
+<span class="s0"># 1997-08-27 fl   Flush output in _save</span>
+<span class="s0"># 1998-03-05 fl   Use memory mapping for some modes</span>
+<span class="s0"># 1999-02-04 fl   Use memory mapping also for &quot;I;16&quot; and &quot;I;16B&quot;</span>
+<span class="s0"># 1999-05-31 fl   Added image parser</span>
+<span class="s0"># 2000-10-12 fl   Set readonly flag on memory-mapped images</span>
+<span class="s0"># 2002-03-20 fl   Use better messages for common decoder errors</span>
+<span class="s0"># 2003-04-21 fl   Fall back on mmap/map_buffer if map is not available</span>
+<span class="s0"># 2003-10-30 fl   Added StubImageFile class</span>
+<span class="s0"># 2004-02-25 fl   Made incremental parser more robust</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2004 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 1995-2004 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">import </span><span class="s1">io</span>
+<span class="s2">import </span><span class="s1">itertools</span>
+<span class="s2">import </span><span class="s1">struct</span>
+<span class="s2">import </span><span class="s1">sys</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span>
+<span class="s2">from </span><span class="s1">._util </span><span class="s2">import </span><span class="s1">is_path</span>
+
+<span class="s1">MAXBLOCK = </span><span class="s3">65536</span>
+
+<span class="s1">SAFEBLOCK = </span><span class="s3">1024 </span><span class="s1">* </span><span class="s3">1024</span>
+
+<span class="s1">LOAD_TRUNCATED_IMAGES = </span><span class="s2">False</span>
+<span class="s4">&quot;&quot;&quot;Whether or not to load truncated image files. User code may change this.&quot;&quot;&quot;</span>
+
+<span class="s1">ERRORS = {</span>
+    <span class="s1">-</span><span class="s3">1</span><span class="s1">: </span><span class="s4">&quot;image buffer overrun error&quot;</span><span class="s2">,</span>
+    <span class="s1">-</span><span class="s3">2</span><span class="s1">: </span><span class="s4">&quot;decoding error&quot;</span><span class="s2">,</span>
+    <span class="s1">-</span><span class="s3">3</span><span class="s1">: </span><span class="s4">&quot;unknown error&quot;</span><span class="s2">,</span>
+    <span class="s1">-</span><span class="s3">8</span><span class="s1">: </span><span class="s4">&quot;bad configuration&quot;</span><span class="s2">,</span>
+    <span class="s1">-</span><span class="s3">9</span><span class="s1">: </span><span class="s4">&quot;out of memory error&quot;</span><span class="s2">,</span>
+<span class="s1">}</span>
+<span class="s4">&quot;&quot;&quot; 
+Dict of known error codes returned from :meth:`.PyDecoder.decode`, 
+:meth:`.PyEncoder.encode` :meth:`.PyEncoder.encode_to_pyfd` and 
+:meth:`.PyEncoder.encode_to_file`. 
+&quot;&quot;&quot;</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Helpers</span>
+
+
+<span class="s2">def </span><span class="s1">raise_oserror(error):</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">message = Image.core.getcodecstatus(error)</span>
+    <span class="s2">except </span><span class="s1">AttributeError:</span>
+        <span class="s1">message = ERRORS.get(error)</span>
+    <span class="s2">if not </span><span class="s1">message:</span>
+        <span class="s1">message = </span><span class="s4">f&quot;decoder error </span><span class="s2">{</span><span class="s1">error</span><span class="s2">}</span><span class="s4">&quot;</span>
+    <span class="s2">raise </span><span class="s1">OSError(message + </span><span class="s4">&quot; when reading image file&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">_tilesort(t):</span>
+    <span class="s0"># sort on offset</span>
+    <span class="s2">return </span><span class="s1">t[</span><span class="s3">2</span><span class="s1">]</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># ImageFile base class</span>
+
+
+<span class="s2">class </span><span class="s1">ImageFile(Image.Image):</span>
+    <span class="s5">&quot;&quot;&quot;Base class for image file format handlers.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">fp=</span><span class="s2">None, </span><span class="s1">filename=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s1">super().__init__()</span>
+
+        <span class="s1">self._min_frame = </span><span class="s3">0</span>
+
+        <span class="s1">self.custom_mimetype = </span><span class="s2">None</span>
+
+        <span class="s1">self.tile = </span><span class="s2">None</span>
+        <span class="s4">&quot;&quot;&quot; A list of tile descriptors, or ``None`` &quot;&quot;&quot;</span>
+
+        <span class="s1">self.readonly = </span><span class="s3">1  </span><span class="s0"># until we know better</span>
+
+        <span class="s1">self.decoderconfig = ()</span>
+        <span class="s1">self.decodermaxblock = MAXBLOCK</span>
+
+        <span class="s2">if </span><span class="s1">is_path(fp):</span>
+            <span class="s0"># filename</span>
+            <span class="s1">self.fp = open(fp</span><span class="s2">, </span><span class="s4">&quot;rb&quot;</span><span class="s1">)</span>
+            <span class="s1">self.filename = fp</span>
+            <span class="s1">self._exclusive_fp = </span><span class="s2">True</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s0"># stream</span>
+            <span class="s1">self.fp = fp</span>
+            <span class="s1">self.filename = filename</span>
+            <span class="s0"># can be overridden</span>
+            <span class="s1">self._exclusive_fp = </span><span class="s2">None</span>
+
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">self._open()</span>
+            <span class="s2">except </span><span class="s1">(</span>
+                <span class="s1">IndexError</span><span class="s2">,  </span><span class="s0"># end of data</span>
+                <span class="s1">TypeError</span><span class="s2">,  </span><span class="s0"># end of data (ord)</span>
+                <span class="s1">KeyError</span><span class="s2">,  </span><span class="s0"># unsupported mode</span>
+                <span class="s1">EOFError</span><span class="s2">,  </span><span class="s0"># got header but not the first frame</span>
+                <span class="s1">struct.error</span><span class="s2">,</span>
+            <span class="s1">) </span><span class="s2">as </span><span class="s1">v:</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError(v) </span><span class="s2">from </span><span class="s1">v</span>
+
+            <span class="s2">if not </span><span class="s1">self.mode </span><span class="s2">or </span><span class="s1">self.size[</span><span class="s3">0</span><span class="s1">] &lt;= </span><span class="s3">0 </span><span class="s2">or </span><span class="s1">self.size[</span><span class="s3">1</span><span class="s1">] &lt;= </span><span class="s3">0</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s4">&quot;not identified by this driver&quot;</span><span class="s1">)</span>
+        <span class="s2">except </span><span class="s1">BaseException:</span>
+            <span class="s0"># close the file only if we have opened it this constructor</span>
+            <span class="s2">if </span><span class="s1">self._exclusive_fp:</span>
+                <span class="s1">self.fp.close()</span>
+            <span class="s2">raise</span>
+
+    <span class="s2">def </span><span class="s1">get_format_mimetype(self):</span>
+        <span class="s2">if </span><span class="s1">self.custom_mimetype:</span>
+            <span class="s2">return </span><span class="s1">self.custom_mimetype</span>
+        <span class="s2">if </span><span class="s1">self.format </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">Image.MIME.get(self.format.upper())</span>
+
+    <span class="s2">def </span><span class="s1">verify(self):</span>
+        <span class="s5">&quot;&quot;&quot;Check file integrity&quot;&quot;&quot;</span>
+
+        <span class="s0"># raise exception if something's wrong.  must be called</span>
+        <span class="s0"># directly after open, and closes file when finished.</span>
+        <span class="s2">if </span><span class="s1">self._exclusive_fp:</span>
+            <span class="s1">self.fp.close()</span>
+        <span class="s1">self.fp = </span><span class="s2">None</span>
+
+    <span class="s2">def </span><span class="s1">load(self):</span>
+        <span class="s5">&quot;&quot;&quot;Load image data based on tile list&quot;&quot;&quot;</span>
+
+        <span class="s2">if </span><span class="s1">self.tile </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">&quot;cannot load this image&quot;</span><span class="s1">)</span>
+
+        <span class="s1">pixel = Image.Image.load(self)</span>
+        <span class="s2">if not </span><span class="s1">self.tile:</span>
+            <span class="s2">return </span><span class="s1">pixel</span>
+
+        <span class="s1">self.map = </span><span class="s2">None</span>
+        <span class="s1">use_mmap = self.filename </span><span class="s2">and </span><span class="s1">len(self.tile) == </span><span class="s3">1</span>
+        <span class="s0"># As of pypy 2.1.0, memory mapping was failing here.</span>
+        <span class="s1">use_mmap = use_mmap </span><span class="s2">and not </span><span class="s1">hasattr(sys</span><span class="s2">, </span><span class="s4">&quot;pypy_version_info&quot;</span><span class="s1">)</span>
+
+        <span class="s1">readonly = </span><span class="s3">0</span>
+
+        <span class="s0"># look for read/seek overrides</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">read = self.load_read</span>
+            <span class="s0"># don't use mmap if there are custom read/seek functions</span>
+            <span class="s1">use_mmap = </span><span class="s2">False</span>
+        <span class="s2">except </span><span class="s1">AttributeError:</span>
+            <span class="s1">read = self.fp.read</span>
+
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">seek = self.load_seek</span>
+            <span class="s1">use_mmap = </span><span class="s2">False</span>
+        <span class="s2">except </span><span class="s1">AttributeError:</span>
+            <span class="s1">seek = self.fp.seek</span>
+
+        <span class="s2">if </span><span class="s1">use_mmap:</span>
+            <span class="s0"># try memory mapping</span>
+            <span class="s1">decoder_name</span><span class="s2">, </span><span class="s1">extents</span><span class="s2">, </span><span class="s1">offset</span><span class="s2">, </span><span class="s1">args = self.tile[</span><span class="s3">0</span><span class="s1">]</span>
+            <span class="s2">if </span><span class="s1">(</span>
+                <span class="s1">decoder_name == </span><span class="s4">&quot;raw&quot;</span>
+                <span class="s2">and </span><span class="s1">len(args) &gt;= </span><span class="s3">3</span>
+                <span class="s2">and </span><span class="s1">args[</span><span class="s3">0</span><span class="s1">] == self.mode</span>
+                <span class="s2">and </span><span class="s1">args[</span><span class="s3">0</span><span class="s1">] </span><span class="s2">in </span><span class="s1">Image._MAPMODES</span>
+            <span class="s1">):</span>
+                <span class="s2">try</span><span class="s1">:</span>
+                    <span class="s0"># use mmap, if possible</span>
+                    <span class="s2">import </span><span class="s1">mmap</span>
+
+                    <span class="s2">with </span><span class="s1">open(self.filename) </span><span class="s2">as </span><span class="s1">fp:</span>
+                        <span class="s1">self.map = mmap.mmap(fp.fileno()</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s1">access=mmap.ACCESS_READ)</span>
+                    <span class="s2">if </span><span class="s1">offset + self.size[</span><span class="s3">1</span><span class="s1">] * args[</span><span class="s3">1</span><span class="s1">] &gt; self.map.size():</span>
+                        <span class="s0"># buffer is not large enough</span>
+                        <span class="s2">raise </span><span class="s1">OSError</span>
+                    <span class="s1">self.im = Image.core.map_buffer(</span>
+                        <span class="s1">self.map</span><span class="s2">, </span><span class="s1">self.size</span><span class="s2">, </span><span class="s1">decoder_name</span><span class="s2">, </span><span class="s1">offset</span><span class="s2">, </span><span class="s1">args</span>
+                    <span class="s1">)</span>
+                    <span class="s1">readonly = </span><span class="s3">1</span>
+                    <span class="s0"># After trashing self.im,</span>
+                    <span class="s0"># we might need to reload the palette data.</span>
+                    <span class="s2">if </span><span class="s1">self.palette:</span>
+                        <span class="s1">self.palette.dirty = </span><span class="s3">1</span>
+                <span class="s2">except </span><span class="s1">(AttributeError</span><span class="s2">, </span><span class="s1">OSError</span><span class="s2">, </span><span class="s1">ImportError):</span>
+                    <span class="s1">self.map = </span><span class="s2">None</span>
+
+        <span class="s1">self.load_prepare()</span>
+        <span class="s1">err_code = -</span><span class="s3">3  </span><span class="s0"># initialize to unknown error</span>
+        <span class="s2">if not </span><span class="s1">self.map:</span>
+            <span class="s0"># sort tiles in file order</span>
+            <span class="s1">self.tile.sort(key=_tilesort)</span>
+
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s0"># FIXME: This is a hack to handle TIFF's JpegTables tag.</span>
+                <span class="s1">prefix = self.tile_prefix</span>
+            <span class="s2">except </span><span class="s1">AttributeError:</span>
+                <span class="s1">prefix = </span><span class="s6">b&quot;&quot;</span>
+
+            <span class="s0"># Remove consecutive duplicates that only differ by their offset</span>
+            <span class="s1">self.tile = [</span>
+                <span class="s1">list(tiles)[-</span><span class="s3">1</span><span class="s1">]</span>
+                <span class="s2">for </span><span class="s1">_</span><span class="s2">, </span><span class="s1">tiles </span><span class="s2">in </span><span class="s1">itertools.groupby(</span>
+                    <span class="s1">self.tile</span><span class="s2">, lambda </span><span class="s1">tile: (tile[</span><span class="s3">0</span><span class="s1">]</span><span class="s2">, </span><span class="s1">tile[</span><span class="s3">1</span><span class="s1">]</span><span class="s2">, </span><span class="s1">tile[</span><span class="s3">3</span><span class="s1">])</span>
+                <span class="s1">)</span>
+            <span class="s1">]</span>
+            <span class="s2">for </span><span class="s1">decoder_name</span><span class="s2">, </span><span class="s1">extents</span><span class="s2">, </span><span class="s1">offset</span><span class="s2">, </span><span class="s1">args </span><span class="s2">in </span><span class="s1">self.tile:</span>
+                <span class="s1">seek(offset)</span>
+                <span class="s1">decoder = Image._getdecoder(</span>
+                    <span class="s1">self.mode</span><span class="s2">, </span><span class="s1">decoder_name</span><span class="s2">, </span><span class="s1">args</span><span class="s2">, </span><span class="s1">self.decoderconfig</span>
+                <span class="s1">)</span>
+                <span class="s2">try</span><span class="s1">:</span>
+                    <span class="s1">decoder.setimage(self.im</span><span class="s2">, </span><span class="s1">extents)</span>
+                    <span class="s2">if </span><span class="s1">decoder.pulls_fd:</span>
+                        <span class="s1">decoder.setfd(self.fp)</span>
+                        <span class="s1">err_code = decoder.decode(</span><span class="s6">b&quot;&quot;</span><span class="s1">)[</span><span class="s3">1</span><span class="s1">]</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">b = prefix</span>
+                        <span class="s2">while True</span><span class="s1">:</span>
+                            <span class="s2">try</span><span class="s1">:</span>
+                                <span class="s1">s = read(self.decodermaxblock)</span>
+                            <span class="s2">except </span><span class="s1">(IndexError</span><span class="s2">, </span><span class="s1">struct.error) </span><span class="s2">as </span><span class="s1">e:</span>
+                                <span class="s0"># truncated png/gif</span>
+                                <span class="s2">if </span><span class="s1">LOAD_TRUNCATED_IMAGES:</span>
+                                    <span class="s2">break</span>
+                                <span class="s2">else</span><span class="s1">:</span>
+                                    <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">&quot;image file is truncated&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+
+                            <span class="s2">if not </span><span class="s1">s:  </span><span class="s0"># truncated jpeg</span>
+                                <span class="s2">if </span><span class="s1">LOAD_TRUNCATED_IMAGES:</span>
+                                    <span class="s2">break</span>
+                                <span class="s2">else</span><span class="s1">:</span>
+                                    <span class="s2">raise </span><span class="s1">OSError(</span>
+                                        <span class="s4">&quot;image file is truncated &quot;</span>
+                                        <span class="s4">f&quot;(</span><span class="s2">{</span><span class="s1">len(b)</span><span class="s2">} </span><span class="s4">bytes not processed)&quot;</span>
+                                    <span class="s1">)</span>
+
+                            <span class="s1">b = b + s</span>
+                            <span class="s1">n</span><span class="s2">, </span><span class="s1">err_code = decoder.decode(b)</span>
+                            <span class="s2">if </span><span class="s1">n &lt; </span><span class="s3">0</span><span class="s1">:</span>
+                                <span class="s2">break</span>
+                            <span class="s1">b = b[n:]</span>
+                <span class="s2">finally</span><span class="s1">:</span>
+                    <span class="s0"># Need to cleanup here to prevent leaks</span>
+                    <span class="s1">decoder.cleanup()</span>
+
+        <span class="s1">self.tile = []</span>
+        <span class="s1">self.readonly = readonly</span>
+
+        <span class="s1">self.load_end()</span>
+
+        <span class="s2">if </span><span class="s1">self._exclusive_fp </span><span class="s2">and </span><span class="s1">self._close_exclusive_fp_after_loading:</span>
+            <span class="s1">self.fp.close()</span>
+        <span class="s1">self.fp = </span><span class="s2">None</span>
+
+        <span class="s2">if not </span><span class="s1">self.map </span><span class="s2">and not </span><span class="s1">LOAD_TRUNCATED_IMAGES </span><span class="s2">and </span><span class="s1">err_code &lt; </span><span class="s3">0</span><span class="s1">:</span>
+            <span class="s0"># still raised if decoder fails to return anything</span>
+            <span class="s1">raise_oserror(err_code)</span>
+
+        <span class="s2">return </span><span class="s1">Image.Image.load(self)</span>
+
+    <span class="s2">def </span><span class="s1">load_prepare(self):</span>
+        <span class="s0"># create image memory if necessary</span>
+        <span class="s2">if not </span><span class="s1">self.im </span><span class="s2">or </span><span class="s1">self.im.mode != self.mode </span><span class="s2">or </span><span class="s1">self.im.size != self.size:</span>
+            <span class="s1">self.im = Image.core.new(self.mode</span><span class="s2">, </span><span class="s1">self.size)</span>
+        <span class="s0"># create palette (optional)</span>
+        <span class="s2">if </span><span class="s1">self.mode == </span><span class="s4">&quot;P&quot;</span><span class="s1">:</span>
+            <span class="s1">Image.Image.load(self)</span>
+
+    <span class="s2">def </span><span class="s1">load_end(self):</span>
+        <span class="s0"># may be overridden</span>
+        <span class="s2">pass</span>
+
+    <span class="s0"># may be defined for contained formats</span>
+    <span class="s0"># def load_seek(self, pos):</span>
+    <span class="s0">#     pass</span>
+
+    <span class="s0"># may be defined for blocked formats (e.g. PNG)</span>
+    <span class="s0"># def load_read(self, bytes):</span>
+    <span class="s0">#     pass</span>
+
+    <span class="s2">def </span><span class="s1">_seek_check(self</span><span class="s2">, </span><span class="s1">frame):</span>
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s1">frame &lt; self._min_frame</span>
+            <span class="s0"># Only check upper limit on frames if additional seek operations</span>
+            <span class="s0"># are not required to do so</span>
+            <span class="s2">or </span><span class="s1">(</span>
+                <span class="s2">not </span><span class="s1">(hasattr(self</span><span class="s2">, </span><span class="s4">&quot;_n_frames&quot;</span><span class="s1">) </span><span class="s2">and </span><span class="s1">self._n_frames </span><span class="s2">is None</span><span class="s1">)</span>
+                <span class="s2">and </span><span class="s1">frame &gt;= self.n_frames + self._min_frame</span>
+            <span class="s1">)</span>
+        <span class="s1">):</span>
+            <span class="s2">raise </span><span class="s1">EOFError(</span><span class="s4">&quot;attempt to seek outside sequence&quot;</span><span class="s1">)</span>
+
+        <span class="s2">return </span><span class="s1">self.tell() != frame</span>
+
+
+<span class="s2">class </span><span class="s1">StubImageFile(ImageFile):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Base class for stub image loaders. 
+ 
+    A stub loader is an image loader that can identify files of a 
+    certain format, but relies on external code to load the file. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError(</span><span class="s4">&quot;StubImageFile subclass must implement _open&quot;</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">load(self):</span>
+        <span class="s1">loader = self._load()</span>
+        <span class="s2">if </span><span class="s1">loader </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">f&quot;cannot find loader for this </span><span class="s2">{</span><span class="s1">self.format</span><span class="s2">} </span><span class="s4">file&quot;</span><span class="s1">)</span>
+        <span class="s1">image = loader.load(self)</span>
+        <span class="s2">assert </span><span class="s1">image </span><span class="s2">is not None</span>
+        <span class="s0"># become the other object (!)</span>
+        <span class="s1">self.__class__ = image.__class__</span>
+        <span class="s1">self.__dict__ = image.__dict__</span>
+        <span class="s2">return </span><span class="s1">image.load()</span>
+
+    <span class="s2">def </span><span class="s1">_load(self):</span>
+        <span class="s5">&quot;&quot;&quot;(Hook) Find actual image loader.&quot;&quot;&quot;</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError(</span><span class="s4">&quot;StubImageFile subclass must implement _load&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">Parser:</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Incremental image parser.  This class implements the standard 
+    feed/close consumer interface. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">incremental = </span><span class="s2">None</span>
+    <span class="s1">image = </span><span class="s2">None</span>
+    <span class="s1">data = </span><span class="s2">None</span>
+    <span class="s1">decoder = </span><span class="s2">None</span>
+    <span class="s1">offset = </span><span class="s3">0</span>
+    <span class="s1">finished = </span><span class="s3">0</span>
+
+    <span class="s2">def </span><span class="s1">reset(self):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        (Consumer) Reset the parser.  Note that you can only call this 
+        method immediately after you've created a parser; parser 
+        instances cannot be reused. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">assert </span><span class="s1">self.data </span><span class="s2">is None, </span><span class="s4">&quot;cannot reuse parsers&quot;</span>
+
+    <span class="s2">def </span><span class="s1">feed(self</span><span class="s2">, </span><span class="s1">data):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        (Consumer) Feed data to the parser. 
+ 
+        :param data: A string buffer. 
+        :exception OSError: If the parser failed to parse the image file. 
+        &quot;&quot;&quot;</span>
+        <span class="s0"># collect data</span>
+
+        <span class="s2">if </span><span class="s1">self.finished:</span>
+            <span class="s2">return</span>
+
+        <span class="s2">if </span><span class="s1">self.data </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">self.data = data</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.data = self.data + data</span>
+
+        <span class="s0"># parse what we have</span>
+        <span class="s2">if </span><span class="s1">self.decoder:</span>
+
+            <span class="s2">if </span><span class="s1">self.offset &gt; </span><span class="s3">0</span><span class="s1">:</span>
+                <span class="s0"># skip header</span>
+                <span class="s1">skip = min(len(self.data)</span><span class="s2">, </span><span class="s1">self.offset)</span>
+                <span class="s1">self.data = self.data[skip:]</span>
+                <span class="s1">self.offset = self.offset - skip</span>
+                <span class="s2">if </span><span class="s1">self.offset &gt; </span><span class="s3">0 </span><span class="s2">or not </span><span class="s1">self.data:</span>
+                    <span class="s2">return</span>
+
+            <span class="s1">n</span><span class="s2">, </span><span class="s1">e = self.decoder.decode(self.data)</span>
+
+            <span class="s2">if </span><span class="s1">n &lt; </span><span class="s3">0</span><span class="s1">:</span>
+                <span class="s0"># end of stream</span>
+                <span class="s1">self.data = </span><span class="s2">None</span>
+                <span class="s1">self.finished = </span><span class="s3">1</span>
+                <span class="s2">if </span><span class="s1">e &lt; </span><span class="s3">0</span><span class="s1">:</span>
+                    <span class="s0"># decoding error</span>
+                    <span class="s1">self.image = </span><span class="s2">None</span>
+                    <span class="s1">raise_oserror(e)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s0"># end of image</span>
+                    <span class="s2">return</span>
+            <span class="s1">self.data = self.data[n:]</span>
+
+        <span class="s2">elif </span><span class="s1">self.image:</span>
+
+            <span class="s0"># if we end up here with no decoder, this file cannot</span>
+            <span class="s0"># be incrementally parsed.  wait until we've gotten all</span>
+            <span class="s0"># available data</span>
+            <span class="s2">pass</span>
+
+        <span class="s2">else</span><span class="s1">:</span>
+
+            <span class="s0"># attempt to open this file</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s2">with </span><span class="s1">io.BytesIO(self.data) </span><span class="s2">as </span><span class="s1">fp:</span>
+                    <span class="s1">im = Image.open(fp)</span>
+            <span class="s2">except </span><span class="s1">OSError:</span>
+                <span class="s0"># traceback.print_exc()</span>
+                <span class="s2">pass  </span><span class="s0"># not enough data</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">flag = hasattr(im</span><span class="s2">, </span><span class="s4">&quot;load_seek&quot;</span><span class="s1">) </span><span class="s2">or </span><span class="s1">hasattr(im</span><span class="s2">, </span><span class="s4">&quot;load_read&quot;</span><span class="s1">)</span>
+                <span class="s2">if </span><span class="s1">flag </span><span class="s2">or </span><span class="s1">len(im.tile) != </span><span class="s3">1</span><span class="s1">:</span>
+                    <span class="s0"># custom load code, or multiple tiles</span>
+                    <span class="s1">self.decode = </span><span class="s2">None</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s0"># initialize decoder</span>
+                    <span class="s1">im.load_prepare()</span>
+                    <span class="s1">d</span><span class="s2">, </span><span class="s1">e</span><span class="s2">, </span><span class="s1">o</span><span class="s2">, </span><span class="s1">a = im.tile[</span><span class="s3">0</span><span class="s1">]</span>
+                    <span class="s1">im.tile = []</span>
+                    <span class="s1">self.decoder = Image._getdecoder(im.mode</span><span class="s2">, </span><span class="s1">d</span><span class="s2">, </span><span class="s1">a</span><span class="s2">, </span><span class="s1">im.decoderconfig)</span>
+                    <span class="s1">self.decoder.setimage(im.im</span><span class="s2">, </span><span class="s1">e)</span>
+
+                    <span class="s0"># calculate decoder offset</span>
+                    <span class="s1">self.offset = o</span>
+                    <span class="s2">if </span><span class="s1">self.offset &lt;= len(self.data):</span>
+                        <span class="s1">self.data = self.data[self.offset :]</span>
+                        <span class="s1">self.offset = </span><span class="s3">0</span>
+
+                <span class="s1">self.image = im</span>
+
+    <span class="s2">def </span><span class="s1">__enter__(self):</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">def </span><span class="s1">__exit__(self</span><span class="s2">, </span><span class="s1">*args):</span>
+        <span class="s1">self.close()</span>
+
+    <span class="s2">def </span><span class="s1">close(self):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        (Consumer) Close the stream. 
+ 
+        :returns: An image object. 
+        :exception OSError: If the parser failed to parse the image file either 
+                            because it cannot be identified or cannot be 
+                            decoded. 
+        &quot;&quot;&quot;</span>
+        <span class="s0"># finish decoding</span>
+        <span class="s2">if </span><span class="s1">self.decoder:</span>
+            <span class="s0"># get rid of what's left in the buffers</span>
+            <span class="s1">self.feed(</span><span class="s6">b&quot;&quot;</span><span class="s1">)</span>
+            <span class="s1">self.data = self.decoder = </span><span class="s2">None</span>
+            <span class="s2">if not </span><span class="s1">self.finished:</span>
+                <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">&quot;image was incomplete&quot;</span><span class="s1">)</span>
+        <span class="s2">if not </span><span class="s1">self.image:</span>
+            <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">&quot;cannot parse this image&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">self.data:</span>
+            <span class="s0"># incremental parsing not possible; reopen the file</span>
+            <span class="s0"># not that we have all data</span>
+            <span class="s2">with </span><span class="s1">io.BytesIO(self.data) </span><span class="s2">as </span><span class="s1">fp:</span>
+                <span class="s2">try</span><span class="s1">:</span>
+                    <span class="s1">self.image = Image.open(fp)</span>
+                <span class="s2">finally</span><span class="s1">:</span>
+                    <span class="s1">self.image.load()</span>
+        <span class="s2">return </span><span class="s1">self.image</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+
+
+<span class="s2">def </span><span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">tile</span><span class="s2">, </span><span class="s1">bufsize=</span><span class="s3">0</span><span class="s1">):</span>
+    <span class="s5">&quot;&quot;&quot;Helper to save image based on tile list 
+ 
+    :param im: Image object. 
+    :param fp: File object. 
+    :param tile: Tile list. 
+    :param bufsize: Optional buffer size 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">im.load()</span>
+    <span class="s2">if not </span><span class="s1">hasattr(im</span><span class="s2">, </span><span class="s4">&quot;encoderconfig&quot;</span><span class="s1">):</span>
+        <span class="s1">im.encoderconfig = ()</span>
+    <span class="s1">tile.sort(key=_tilesort)</span>
+    <span class="s0"># FIXME: make MAXBLOCK a configuration parameter</span>
+    <span class="s0"># It would be great if we could have the encoder specify what it needs</span>
+    <span class="s0"># But, it would need at least the image size in most cases. RawEncode is</span>
+    <span class="s0"># a tricky case.</span>
+    <span class="s1">bufsize = max(MAXBLOCK</span><span class="s2">, </span><span class="s1">bufsize</span><span class="s2">, </span><span class="s1">im.size[</span><span class="s3">0</span><span class="s1">] * </span><span class="s3">4</span><span class="s1">)  </span><span class="s0"># see RawEncode.c</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">fh = fp.fileno()</span>
+        <span class="s1">fp.flush()</span>
+        <span class="s1">_encode_tile(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">tile</span><span class="s2">, </span><span class="s1">bufsize</span><span class="s2">, </span><span class="s1">fh)</span>
+    <span class="s2">except </span><span class="s1">(AttributeError</span><span class="s2">, </span><span class="s1">io.UnsupportedOperation) </span><span class="s2">as </span><span class="s1">exc:</span>
+        <span class="s1">_encode_tile(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">tile</span><span class="s2">, </span><span class="s1">bufsize</span><span class="s2">, None, </span><span class="s1">exc)</span>
+    <span class="s2">if </span><span class="s1">hasattr(fp</span><span class="s2">, </span><span class="s4">&quot;flush&quot;</span><span class="s1">):</span>
+        <span class="s1">fp.flush()</span>
+
+
+<span class="s2">def </span><span class="s1">_encode_tile(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">tile</span><span class="s2">, </span><span class="s1">bufsize</span><span class="s2">, </span><span class="s1">fh</span><span class="s2">, </span><span class="s1">exc=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s2">for </span><span class="s1">e</span><span class="s2">, </span><span class="s1">b</span><span class="s2">, </span><span class="s1">o</span><span class="s2">, </span><span class="s1">a </span><span class="s2">in </span><span class="s1">tile:</span>
+        <span class="s2">if </span><span class="s1">o &gt; </span><span class="s3">0</span><span class="s1">:</span>
+            <span class="s1">fp.seek(o)</span>
+        <span class="s1">encoder = Image._getencoder(im.mode</span><span class="s2">, </span><span class="s1">e</span><span class="s2">, </span><span class="s1">a</span><span class="s2">, </span><span class="s1">im.encoderconfig)</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">encoder.setimage(im.im</span><span class="s2">, </span><span class="s1">b)</span>
+            <span class="s2">if </span><span class="s1">encoder.pushes_fd:</span>
+                <span class="s1">encoder.setfd(fp)</span>
+                <span class="s1">l</span><span class="s2">, </span><span class="s1">s = encoder.encode_to_pyfd()</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">exc:</span>
+                    <span class="s0"># compress to Python file-compatible object</span>
+                    <span class="s2">while True</span><span class="s1">:</span>
+                        <span class="s1">l</span><span class="s2">, </span><span class="s1">s</span><span class="s2">, </span><span class="s1">d = encoder.encode(bufsize)</span>
+                        <span class="s1">fp.write(d)</span>
+                        <span class="s2">if </span><span class="s1">s:</span>
+                            <span class="s2">break</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s0"># slight speedup: compress to real file object</span>
+                    <span class="s1">s = encoder.encode_to_file(fh</span><span class="s2">, </span><span class="s1">bufsize)</span>
+            <span class="s2">if </span><span class="s1">s &lt; </span><span class="s3">0</span><span class="s1">:</span>
+                <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">f&quot;encoder error </span><span class="s2">{</span><span class="s1">s</span><span class="s2">} </span><span class="s4">when writing image file&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">exc</span>
+        <span class="s2">finally</span><span class="s1">:</span>
+            <span class="s1">encoder.cleanup()</span>
+
+
+<span class="s2">def </span><span class="s1">_safe_read(fp</span><span class="s2">, </span><span class="s1">size):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Reads large blocks in a safe way.  Unlike fp.read(n), this function 
+    doesn't trust the user.  If the requested size is larger than 
+    SAFEBLOCK, the file is read block by block. 
+ 
+    :param fp: File handle.  Must implement a &lt;b&gt;read&lt;/b&gt; method. 
+    :param size: Number of bytes to read. 
+    :returns: A string containing &lt;i&gt;size&lt;/i&gt; bytes of data. 
+ 
+    Raises an OSError if the file is truncated and the read cannot be completed 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">size &lt;= </span><span class="s3">0</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s6">b&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">size &lt;= SAFEBLOCK:</span>
+        <span class="s1">data = fp.read(size)</span>
+        <span class="s2">if </span><span class="s1">len(data) &lt; size:</span>
+            <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">&quot;Truncated File Read&quot;</span><span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">data</span>
+    <span class="s1">data = []</span>
+    <span class="s1">remaining_size = size</span>
+    <span class="s2">while </span><span class="s1">remaining_size &gt; </span><span class="s3">0</span><span class="s1">:</span>
+        <span class="s1">block = fp.read(min(remaining_size</span><span class="s2">, </span><span class="s1">SAFEBLOCK))</span>
+        <span class="s2">if not </span><span class="s1">block:</span>
+            <span class="s2">break</span>
+        <span class="s1">data.append(block)</span>
+        <span class="s1">remaining_size -= len(block)</span>
+    <span class="s2">if </span><span class="s1">sum(len(d) </span><span class="s2">for </span><span class="s1">d </span><span class="s2">in </span><span class="s1">data) &lt; size:</span>
+        <span class="s2">raise </span><span class="s1">OSError(</span><span class="s4">&quot;Truncated File Read&quot;</span><span class="s1">)</span>
+    <span class="s2">return </span><span class="s6">b&quot;&quot;</span><span class="s1">.join(data)</span>
+
+
+<span class="s2">class </span><span class="s1">PyCodecState:</span>
+    <span class="s2">def </span><span class="s1">__init__(self):</span>
+        <span class="s1">self.xsize = </span><span class="s3">0</span>
+        <span class="s1">self.ysize = </span><span class="s3">0</span>
+        <span class="s1">self.xoff = </span><span class="s3">0</span>
+        <span class="s1">self.yoff = </span><span class="s3">0</span>
+
+    <span class="s2">def </span><span class="s1">extents(self):</span>
+        <span class="s2">return </span><span class="s1">self.xoff</span><span class="s2">, </span><span class="s1">self.yoff</span><span class="s2">, </span><span class="s1">self.xoff + self.xsize</span><span class="s2">, </span><span class="s1">self.yoff + self.ysize</span>
+
+
+<span class="s2">class </span><span class="s1">PyCodec:</span>
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">, </span><span class="s1">*args):</span>
+        <span class="s1">self.im = </span><span class="s2">None</span>
+        <span class="s1">self.state = PyCodecState()</span>
+        <span class="s1">self.fd = </span><span class="s2">None</span>
+        <span class="s1">self.mode = mode</span>
+        <span class="s1">self.init(args)</span>
+
+    <span class="s2">def </span><span class="s1">init(self</span><span class="s2">, </span><span class="s1">args):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Override to perform codec specific initialization 
+ 
+        :param args: Array of args items from the tile entry 
+        :returns: None 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.args = args</span>
+
+    <span class="s2">def </span><span class="s1">cleanup(self):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Override to perform codec specific cleanup 
+ 
+        :returns: None 
+        &quot;&quot;&quot;</span>
+        <span class="s2">pass</span>
+
+    <span class="s2">def </span><span class="s1">setfd(self</span><span class="s2">, </span><span class="s1">fd):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Called from ImageFile to set the Python file-like object 
+ 
+        :param fd: A Python file-like object 
+        :returns: None 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.fd = fd</span>
+
+    <span class="s2">def </span><span class="s1">setimage(self</span><span class="s2">, </span><span class="s1">im</span><span class="s2">, </span><span class="s1">extents=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Called from ImageFile to set the core output image for the codec 
+ 
+        :param im: A core image object 
+        :param extents: a 4 tuple of (x0, y0, x1, y1) defining the rectangle 
+            for this tile 
+        :returns: None 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0"># following c code</span>
+        <span class="s1">self.im = im</span>
+
+        <span class="s2">if </span><span class="s1">extents:</span>
+            <span class="s1">(x0</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x1</span><span class="s2">, </span><span class="s1">y1) = extents</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">(x0</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x1</span><span class="s2">, </span><span class="s1">y1) = (</span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s2">, </span><span class="s3">0</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">x0 == </span><span class="s3">0 </span><span class="s2">and </span><span class="s1">x1 == </span><span class="s3">0</span><span class="s1">:</span>
+            <span class="s1">self.state.xsize</span><span class="s2">, </span><span class="s1">self.state.ysize = self.im.size</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.state.xoff = x0</span>
+            <span class="s1">self.state.yoff = y0</span>
+            <span class="s1">self.state.xsize = x1 - x0</span>
+            <span class="s1">self.state.ysize = y1 - y0</span>
+
+        <span class="s2">if </span><span class="s1">self.state.xsize &lt;= </span><span class="s3">0 </span><span class="s2">or </span><span class="s1">self.state.ysize &lt;= </span><span class="s3">0</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;Size cannot be negative&quot;</span><span class="s1">)</span>
+
+        <span class="s2">if </span><span class="s1">(</span>
+            <span class="s1">self.state.xsize + self.state.xoff &gt; self.im.size[</span><span class="s3">0</span><span class="s1">]</span>
+            <span class="s2">or </span><span class="s1">self.state.ysize + self.state.yoff &gt; self.im.size[</span><span class="s3">1</span><span class="s1">]</span>
+        <span class="s1">):</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;Tile cannot extend outside image&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">PyDecoder(PyCodec):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Python implementation of a format decoder. Override this class and 
+    add the decoding logic in the :meth:`decode` method. 
+ 
+    See :ref:`Writing Your Own File Codec in Python&lt;file-codecs-py&gt;` 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">_pulls_fd = </span><span class="s2">False</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">pulls_fd(self):</span>
+        <span class="s2">return </span><span class="s1">self._pulls_fd</span>
+
+    <span class="s2">def </span><span class="s1">decode(self</span><span class="s2">, </span><span class="s1">buffer):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Override to perform the decoding process. 
+ 
+        :param buffer: A bytes object with the data to be decoded. 
+        :returns: A tuple of ``(bytes consumed, errcode)``. 
+            If finished with decoding return -1 for the bytes consumed. 
+            Err codes are from :data:`.ImageFile.ERRORS`. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s2">def </span><span class="s1">set_as_raw(self</span><span class="s2">, </span><span class="s1">data</span><span class="s2">, </span><span class="s1">rawmode=</span><span class="s2">None</span><span class="s1">):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Convenience method to set the internal image from a stream of raw data 
+ 
+        :param data: Bytes to be set 
+        :param rawmode: The rawmode to be used for the decoder. 
+            If not specified, it will default to the mode of the image 
+        :returns: None 
+        &quot;&quot;&quot;</span>
+
+        <span class="s2">if not </span><span class="s1">rawmode:</span>
+            <span class="s1">rawmode = self.mode</span>
+        <span class="s1">d = Image._getdecoder(self.mode</span><span class="s2">, </span><span class="s4">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">rawmode)</span>
+        <span class="s1">d.setimage(self.im</span><span class="s2">, </span><span class="s1">self.state.extents())</span>
+        <span class="s1">s = d.decode(data)</span>
+
+        <span class="s2">if </span><span class="s1">s[</span><span class="s3">0</span><span class="s1">] &gt;= </span><span class="s3">0</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;not enough image data&quot;</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">s[</span><span class="s3">1</span><span class="s1">] != </span><span class="s3">0</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s4">&quot;cannot decode image data&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">class </span><span class="s1">PyEncoder(PyCodec):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Python implementation of a format encoder. Override this class and 
+    add the decoding logic in the :meth:`encode` method. 
+ 
+    See :ref:`Writing Your Own File Codec in Python&lt;file-codecs-py&gt;` 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">_pushes_fd = </span><span class="s2">False</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">pushes_fd(self):</span>
+        <span class="s2">return </span><span class="s1">self._pushes_fd</span>
+
+    <span class="s2">def </span><span class="s1">encode(self</span><span class="s2">, </span><span class="s1">bufsize):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Override to perform the encoding process. 
+ 
+        :param bufsize: Buffer size. 
+        :returns: A tuple of ``(bytes encoded, errcode, bytes)``. 
+            If finished with encoding return 1 for the error code. 
+            Err codes are from :data:`.ImageFile.ERRORS`. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s2">def </span><span class="s1">encode_to_pyfd(self):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        If ``pushes_fd`` is ``True``, then this method will be used, 
+        and ``encode()`` will only be called once. 
+ 
+        :returns: A tuple of ``(bytes consumed, errcode)``. 
+            Err codes are from :data:`.ImageFile.ERRORS`. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">self.pushes_fd:</span>
+            <span class="s2">return </span><span class="s3">0</span><span class="s2">, </span><span class="s1">-</span><span class="s3">8  </span><span class="s0"># bad configuration</span>
+        <span class="s1">bytes_consumed</span><span class="s2">, </span><span class="s1">errcode</span><span class="s2">, </span><span class="s1">data = self.encode(</span><span class="s3">0</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">data:</span>
+            <span class="s1">self.fd.write(data)</span>
+        <span class="s2">return </span><span class="s1">bytes_consumed</span><span class="s2">, </span><span class="s1">errcode</span>
+
+    <span class="s2">def </span><span class="s1">encode_to_file(self</span><span class="s2">, </span><span class="s1">fh</span><span class="s2">, </span><span class="s1">bufsize):</span>
+        <span class="s5">&quot;&quot;&quot; 
+        :param fh: File handle. 
+        :param bufsize: Buffer size. 
+ 
+        :returns: If finished successfully, return 0. 
+            Otherwise, return an error code. Err codes are from 
+            :data:`.ImageFile.ERRORS`. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">errcode = </span><span class="s3">0</span>
+        <span class="s2">while </span><span class="s1">errcode == </span><span class="s3">0</span><span class="s1">:</span>
+            <span class="s1">status</span><span class="s2">, </span><span class="s1">errcode</span><span class="s2">, </span><span class="s1">buf = self.encode(bufsize)</span>
+            <span class="s2">if </span><span class="s1">status &gt; </span><span class="s3">0</span><span class="s1">:</span>
+                <span class="s1">fh.write(buf[status:])</span>
+        <span class="s2">return </span><span class="s1">errcode</span>
+</pre>
+</body>
+</html>

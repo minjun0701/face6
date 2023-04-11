@@ -1,0 +1,97 @@
+<html>
+<head>
+<title>ImageSequence.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #629755; font-style: italic;}
+.s4 { color: #6a8759;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageSequence.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># sequence support classes</span>
+<span class="s0">#</span>
+<span class="s0"># history:</span>
+<span class="s0"># 1997-02-20 fl     Created</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997 by Secret Labs AB.</span>
+<span class="s0"># Copyright (c) 1997 by Fredrik Lundh.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s0">##</span>
+
+
+<span class="s2">class </span><span class="s1">Iterator:</span>
+    <span class="s3">&quot;&quot;&quot; 
+    This class implements an iterator object that can be used to loop 
+    over an image sequence. 
+ 
+    You can use the ``[]`` operator to access elements by index. This operator 
+    will raise an :py:exc:`IndexError` if you try to access a nonexistent 
+    frame. 
+ 
+    :param im: An image object. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__(self</span><span class="s2">, </span><span class="s1">im):</span>
+        <span class="s2">if not </span><span class="s1">hasattr(im</span><span class="s2">, </span><span class="s4">&quot;seek&quot;</span><span class="s1">):</span>
+            <span class="s2">raise </span><span class="s1">AttributeError(</span><span class="s4">&quot;im must have seek method&quot;</span><span class="s1">)</span>
+        <span class="s1">self.im = im</span>
+        <span class="s1">self.position = getattr(self.im</span><span class="s2">, </span><span class="s4">&quot;_min_frame&quot;</span><span class="s2">, </span><span class="s5">0</span><span class="s1">)</span>
+
+    <span class="s2">def </span><span class="s1">__getitem__(self</span><span class="s2">, </span><span class="s1">ix):</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">self.im.seek(ix)</span>
+            <span class="s2">return </span><span class="s1">self.im</span>
+        <span class="s2">except </span><span class="s1">EOFError </span><span class="s2">as </span><span class="s1">e:</span>
+            <span class="s2">raise </span><span class="s1">IndexError </span><span class="s2">from </span><span class="s1">e  </span><span class="s0"># end of sequence</span>
+
+    <span class="s2">def </span><span class="s1">__iter__(self):</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">def </span><span class="s1">__next__(self):</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">self.im.seek(self.position)</span>
+            <span class="s1">self.position += </span><span class="s5">1</span>
+            <span class="s2">return </span><span class="s1">self.im</span>
+        <span class="s2">except </span><span class="s1">EOFError </span><span class="s2">as </span><span class="s1">e:</span>
+            <span class="s2">raise </span><span class="s1">StopIteration </span><span class="s2">from </span><span class="s1">e</span>
+
+
+<span class="s2">def </span><span class="s1">all_frames(im</span><span class="s2">, </span><span class="s1">func=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s3">&quot;&quot;&quot; 
+    Applies a given function to all frames in an image or a list of images. 
+    The frames are returned as a list of separate images. 
+ 
+    :param im: An image, or a list of images. 
+    :param func: The function to apply to all of the image frames. 
+    :returns: A list of images. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if not </span><span class="s1">isinstance(im</span><span class="s2">, </span><span class="s1">list):</span>
+        <span class="s1">im = [im]</span>
+
+    <span class="s1">ims = []</span>
+    <span class="s2">for </span><span class="s1">imSequence </span><span class="s2">in </span><span class="s1">im:</span>
+        <span class="s1">current = imSequence.tell()</span>
+
+        <span class="s1">ims += [im_frame.copy() </span><span class="s2">for </span><span class="s1">im_frame </span><span class="s2">in </span><span class="s1">Iterator(imSequence)]</span>
+
+        <span class="s1">imSequence.seek(current)</span>
+    <span class="s2">return </span><span class="s1">[func(im) </span><span class="s2">for </span><span class="s1">im </span><span class="s2">in </span><span class="s1">ims] </span><span class="s2">if </span><span class="s1">func </span><span class="s2">else </span><span class="s1">ims</span>
+</pre>
+</body>
+</html>

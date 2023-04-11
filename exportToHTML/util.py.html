@@ -1,0 +1,140 @@
+<html>
+<head>
+<title>util.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #808080;}
+.s3 { color: #6a8759;}
+.s4 { color: #629755; font-style: italic;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+util.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">git</span>
+<span class="s0">from </span><span class="s1">git.exc </span><span class="s0">import </span><span class="s1">InvalidGitRepositoryError</span>
+<span class="s0">from </span><span class="s1">git.config </span><span class="s0">import </span><span class="s1">GitConfigParser</span>
+<span class="s0">from </span><span class="s1">io </span><span class="s0">import </span><span class="s1">BytesIO</span>
+<span class="s0">import </span><span class="s1">weakref</span>
+
+
+<span class="s2"># typing -----------------------------------------------------------------------</span>
+
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span><span class="s0">, </span><span class="s1">Sequence</span><span class="s0">, </span><span class="s1">TYPE_CHECKING</span><span class="s0">, </span><span class="s1">Union</span>
+
+<span class="s0">from </span><span class="s1">git.types </span><span class="s0">import </span><span class="s1">PathLike</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING:</span>
+    <span class="s0">from </span><span class="s1">.base </span><span class="s0">import </span><span class="s1">Submodule</span>
+    <span class="s0">from </span><span class="s1">weakref </span><span class="s0">import </span><span class="s1">ReferenceType</span>
+    <span class="s0">from </span><span class="s1">git.repo </span><span class="s0">import </span><span class="s1">Repo</span>
+    <span class="s0">from </span><span class="s1">git.refs </span><span class="s0">import </span><span class="s1">Head</span>
+    <span class="s0">from </span><span class="s1">git </span><span class="s0">import </span><span class="s1">Remote</span>
+    <span class="s0">from </span><span class="s1">git.refs </span><span class="s0">import </span><span class="s1">RemoteReference</span>
+
+
+<span class="s1">__all__ = (</span>
+    <span class="s3">&quot;sm_section&quot;</span><span class="s0">,</span>
+    <span class="s3">&quot;sm_name&quot;</span><span class="s0">,</span>
+    <span class="s3">&quot;mkhead&quot;</span><span class="s0">,</span>
+    <span class="s3">&quot;find_first_remote_branch&quot;</span><span class="s0">,</span>
+    <span class="s3">&quot;SubmoduleConfigParser&quot;</span><span class="s0">,</span>
+<span class="s1">)</span>
+
+<span class="s2"># { Utilities</span>
+
+
+<span class="s0">def </span><span class="s1">sm_section(name: str) -&gt; str:</span>
+    <span class="s4">&quot;&quot;&quot;:return: section title used in .gitmodules configuration file&quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s3">f'submodule &quot;</span><span class="s0">{</span><span class="s1">name</span><span class="s0">}</span><span class="s3">&quot;'</span>
+
+
+<span class="s0">def </span><span class="s1">sm_name(section: str) -&gt; str:</span>
+    <span class="s4">&quot;&quot;&quot;:return: name of the submodule as parsed from the section name&quot;&quot;&quot;</span>
+    <span class="s1">section = section.strip()</span>
+    <span class="s0">return </span><span class="s1">section[</span><span class="s5">11</span><span class="s1">:-</span><span class="s5">1</span><span class="s1">]</span>
+
+
+<span class="s0">def </span><span class="s1">mkhead(repo: </span><span class="s3">&quot;Repo&quot;</span><span class="s0">, </span><span class="s1">path: PathLike) -&gt; </span><span class="s3">&quot;Head&quot;</span><span class="s1">:</span>
+    <span class="s4">&quot;&quot;&quot;:return: New branch/head instance&quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s1">git.Head(repo</span><span class="s0">, </span><span class="s1">git.Head.to_full_path(path))</span>
+
+
+<span class="s0">def </span><span class="s1">find_first_remote_branch(remotes: Sequence[</span><span class="s3">&quot;Remote&quot;</span><span class="s1">]</span><span class="s0">, </span><span class="s1">branch_name: str) -&gt; </span><span class="s3">&quot;RemoteReference&quot;</span><span class="s1">:</span>
+    <span class="s4">&quot;&quot;&quot;Find the remote branch matching the name of the given branch or raise InvalidGitRepositoryError&quot;&quot;&quot;</span>
+    <span class="s0">for </span><span class="s1">remote </span><span class="s0">in </span><span class="s1">remotes:</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s0">return </span><span class="s1">remote.refs[branch_name]</span>
+        <span class="s0">except </span><span class="s1">IndexError:</span>
+            <span class="s0">continue</span>
+        <span class="s2"># END exception handling</span>
+    <span class="s2"># END for remote</span>
+    <span class="s0">raise </span><span class="s1">InvalidGitRepositoryError(</span><span class="s3">&quot;Didn't find remote branch '%r' in any of the given remotes&quot; </span><span class="s1">% branch_name)</span>
+
+
+<span class="s2"># } END utilities</span>
+
+
+<span class="s2"># { Classes</span>
+
+
+<span class="s0">class </span><span class="s1">SubmoduleConfigParser(GitConfigParser):</span>
+
+    <span class="s4">&quot;&quot;&quot; 
+    Catches calls to _write, and updates the .gitmodules blob in the index 
+    with the new data, if we have written into a stream. Otherwise it will 
+    add the local file to the index to make it correspond with the working tree. 
+    Additionally, the cache must be cleared 
+ 
+    Please note that no mutating method will work in bare mode 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s0">, </span><span class="s1">*args: Any</span><span class="s0">, </span><span class="s1">**kwargs: Any) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">self._smref: Union[</span><span class="s3">&quot;ReferenceType[Submodule]&quot;</span><span class="s0">, None</span><span class="s1">] = </span><span class="s0">None</span>
+        <span class="s1">self._index = </span><span class="s0">None</span>
+        <span class="s1">self._auto_write = </span><span class="s0">True</span>
+        <span class="s1">super(SubmoduleConfigParser</span><span class="s0">, </span><span class="s1">self).__init__(*args</span><span class="s0">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s2"># { Interface</span>
+    <span class="s0">def </span><span class="s1">set_submodule(self</span><span class="s0">, </span><span class="s1">submodule: </span><span class="s3">&quot;Submodule&quot;</span><span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Set this instance's submodule. It must be called before 
+        the first write operation begins&quot;&quot;&quot;</span>
+        <span class="s1">self._smref = weakref.ref(submodule)</span>
+
+    <span class="s0">def </span><span class="s1">flush_to_index(self) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s4">&quot;&quot;&quot;Flush changes in our configuration file to the index&quot;&quot;&quot;</span>
+        <span class="s0">assert </span><span class="s1">self._smref </span><span class="s0">is not None</span>
+        <span class="s2"># should always have a file here</span>
+        <span class="s0">assert not </span><span class="s1">isinstance(self._file_or_files</span><span class="s0">, </span><span class="s1">BytesIO)</span>
+
+        <span class="s1">sm = self._smref()</span>
+        <span class="s0">if </span><span class="s1">sm </span><span class="s0">is not None</span><span class="s1">:</span>
+            <span class="s1">index = self._index</span>
+            <span class="s0">if </span><span class="s1">index </span><span class="s0">is None</span><span class="s1">:</span>
+                <span class="s1">index = sm.repo.index</span>
+            <span class="s2"># END handle index</span>
+            <span class="s1">index.add([sm.k_modules_file]</span><span class="s0">, </span><span class="s1">write=self._auto_write)</span>
+            <span class="s1">sm._clear_cache()</span>
+        <span class="s2"># END handle weakref</span>
+
+    <span class="s2"># } END interface</span>
+
+    <span class="s2"># { Overridden Methods</span>
+    <span class="s0">def </span><span class="s1">write(self) -&gt; </span><span class="s0">None</span><span class="s1">:  </span><span class="s2"># type: ignore[override]</span>
+        <span class="s1">rval: </span><span class="s0">None </span><span class="s1">= super(SubmoduleConfigParser</span><span class="s0">, </span><span class="s1">self).write()</span>
+        <span class="s1">self.flush_to_index()</span>
+        <span class="s0">return </span><span class="s1">rval</span>
+
+    <span class="s2"># END overridden methods</span>
+
+
+<span class="s2"># } END classes</span>
+</pre>
+</body>
+</html>

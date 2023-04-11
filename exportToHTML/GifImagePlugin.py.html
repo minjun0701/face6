@@ -1,0 +1,1085 @@
+<html>
+<head>
+<title>GifImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #629755; font-style: italic;}
+.s4 { color: #6897bb;}
+.s5 { color: #a5c261;}
+.s6 { color: #6a8759;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+GifImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># GIF file handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1995-09-01 fl   Created</span>
+<span class="s0"># 1996-12-14 fl   Added interlace support</span>
+<span class="s0"># 1996-12-30 fl   Added animation support</span>
+<span class="s0"># 1997-01-05 fl   Added write support, fixed local colour map bug</span>
+<span class="s0"># 1997-02-23 fl   Make sure to load raster data in getdata()</span>
+<span class="s0"># 1997-07-05 fl   Support external decoder (0.4)</span>
+<span class="s0"># 1998-07-09 fl   Handle all modes when saving (0.5)</span>
+<span class="s0"># 1998-07-15 fl   Renamed offset attribute to avoid name clash</span>
+<span class="s0"># 2001-04-16 fl   Added rewind support (seek to frame 0) (0.6)</span>
+<span class="s0"># 2001-04-17 fl   Added palette optimization (0.7)</span>
+<span class="s0"># 2002-06-06 fl   Added transparency support for save (0.8)</span>
+<span class="s0"># 2004-02-24 fl   Disable interlacing for small images</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2004 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 1995-2004 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">import </span><span class="s1">itertools</span>
+<span class="s2">import </span><span class="s1">math</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">subprocess</span>
+<span class="s2">from </span><span class="s1">enum </span><span class="s2">import </span><span class="s1">IntEnum</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageChops</span><span class="s2">, </span><span class="s1">ImageFile</span><span class="s2">, </span><span class="s1">ImagePalette</span><span class="s2">, </span><span class="s1">ImageSequence</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">i16le </span><span class="s2">as </span><span class="s1">i16</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">o8</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">o16le </span><span class="s2">as </span><span class="s1">o16</span>
+
+
+<span class="s2">class </span><span class="s1">LoadingStrategy(IntEnum):</span>
+    <span class="s3">&quot;&quot;&quot;.. versionadded:: 9.1.0&quot;&quot;&quot;</span>
+
+    <span class="s1">RGB_AFTER_FIRST = </span><span class="s4">0</span>
+    <span class="s1">RGB_AFTER_DIFFERENT_PALETTE_ONLY = </span><span class="s4">1</span>
+    <span class="s1">RGB_ALWAYS = </span><span class="s4">2</span>
+
+
+<span class="s0">#: .. versionadded:: 9.1.0</span>
+<span class="s1">LOADING_STRATEGY = LoadingStrategy.RGB_AFTER_FIRST</span>
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Identify/read GIF files</span>
+
+
+<span class="s2">def </span><span class="s1">_accept(prefix):</span>
+    <span class="s2">return </span><span class="s1">prefix[:</span><span class="s4">6</span><span class="s1">] </span><span class="s2">in </span><span class="s1">[</span><span class="s5">b&quot;GIF87a&quot;</span><span class="s2">, </span><span class="s5">b&quot;GIF89a&quot;</span><span class="s1">]</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for GIF images.  This plugin supports both GIF87 and</span>
+<span class="s0"># GIF89 images.</span>
+
+
+<span class="s2">class </span><span class="s1">GifImageFile(ImageFile.ImageFile):</span>
+
+    <span class="s1">format = </span><span class="s6">&quot;GIF&quot;</span>
+    <span class="s1">format_description = </span><span class="s6">&quot;Compuserve GIF&quot;</span>
+    <span class="s1">_close_exclusive_fp_after_loading = </span><span class="s2">False</span>
+
+    <span class="s1">global_palette = </span><span class="s2">None</span>
+
+    <span class="s2">def </span><span class="s1">data(self):</span>
+        <span class="s1">s = self.fp.read(</span><span class="s4">1</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">s </span><span class="s2">and </span><span class="s1">s[</span><span class="s4">0</span><span class="s1">]:</span>
+            <span class="s2">return </span><span class="s1">self.fp.read(s[</span><span class="s4">0</span><span class="s1">])</span>
+        <span class="s2">return None</span>
+
+    <span class="s2">def </span><span class="s1">_is_palette_needed(self</span><span class="s2">, </span><span class="s1">p):</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">0</span><span class="s2">, </span><span class="s1">len(p)</span><span class="s2">, </span><span class="s4">3</span><span class="s1">):</span>
+            <span class="s2">if not </span><span class="s1">(i // </span><span class="s4">3 </span><span class="s1">== p[i] == p[i + </span><span class="s4">1</span><span class="s1">] == p[i + </span><span class="s4">2</span><span class="s1">]):</span>
+                <span class="s2">return True</span>
+        <span class="s2">return False</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+
+        <span class="s0"># Screen</span>
+        <span class="s1">s = self.fp.read(</span><span class="s4">13</span><span class="s1">)</span>
+        <span class="s2">if not </span><span class="s1">_accept(s):</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s6">&quot;not a GIF file&quot;</span><span class="s1">)</span>
+
+        <span class="s1">self.info[</span><span class="s6">&quot;version&quot;</span><span class="s1">] = s[:</span><span class="s4">6</span><span class="s1">]</span>
+        <span class="s1">self._size = i16(s</span><span class="s2">, </span><span class="s4">6</span><span class="s1">)</span><span class="s2">, </span><span class="s1">i16(s</span><span class="s2">, </span><span class="s4">8</span><span class="s1">)</span>
+        <span class="s1">self.tile = []</span>
+        <span class="s1">flags = s[</span><span class="s4">10</span><span class="s1">]</span>
+        <span class="s1">bits = (flags &amp; </span><span class="s4">7</span><span class="s1">) + </span><span class="s4">1</span>
+
+        <span class="s2">if </span><span class="s1">flags &amp; </span><span class="s4">128</span><span class="s1">:</span>
+            <span class="s0"># get global palette</span>
+            <span class="s1">self.info[</span><span class="s6">&quot;background&quot;</span><span class="s1">] = s[</span><span class="s4">11</span><span class="s1">]</span>
+            <span class="s0"># check if palette contains colour indices</span>
+            <span class="s1">p = self.fp.read(</span><span class="s4">3 </span><span class="s1">&lt;&lt; bits)</span>
+            <span class="s2">if </span><span class="s1">self._is_palette_needed(p):</span>
+                <span class="s1">p = ImagePalette.raw(</span><span class="s6">&quot;RGB&quot;</span><span class="s2">, </span><span class="s1">p)</span>
+                <span class="s1">self.global_palette = self.palette = p</span>
+
+        <span class="s1">self._fp = self.fp  </span><span class="s0"># FIXME: hack</span>
+        <span class="s1">self.__rewind = self.fp.tell()</span>
+        <span class="s1">self._n_frames = </span><span class="s2">None</span>
+        <span class="s1">self._is_animated = </span><span class="s2">None</span>
+        <span class="s1">self._seek(</span><span class="s4">0</span><span class="s1">)  </span><span class="s0"># get ready to read first frame</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">n_frames(self):</span>
+        <span class="s2">if </span><span class="s1">self._n_frames </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s1">current = self.tell()</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s2">while True</span><span class="s1">:</span>
+                    <span class="s1">self._seek(self.tell() + </span><span class="s4">1</span><span class="s2">, False</span><span class="s1">)</span>
+            <span class="s2">except </span><span class="s1">EOFError:</span>
+                <span class="s1">self._n_frames = self.tell() + </span><span class="s4">1</span>
+            <span class="s1">self.seek(current)</span>
+        <span class="s2">return </span><span class="s1">self._n_frames</span>
+
+    <span class="s1">@property</span>
+    <span class="s2">def </span><span class="s1">is_animated(self):</span>
+        <span class="s2">if </span><span class="s1">self._is_animated </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">self._n_frames </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s1">self._is_animated = self._n_frames != </span><span class="s4">1</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">current = self.tell()</span>
+                <span class="s2">if </span><span class="s1">current:</span>
+                    <span class="s1">self._is_animated = </span><span class="s2">True</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">try</span><span class="s1">:</span>
+                        <span class="s1">self._seek(</span><span class="s4">1</span><span class="s2">, False</span><span class="s1">)</span>
+                        <span class="s1">self._is_animated = </span><span class="s2">True</span>
+                    <span class="s2">except </span><span class="s1">EOFError:</span>
+                        <span class="s1">self._is_animated = </span><span class="s2">False</span>
+
+                    <span class="s1">self.seek(current)</span>
+        <span class="s2">return </span><span class="s1">self._is_animated</span>
+
+    <span class="s2">def </span><span class="s1">seek(self</span><span class="s2">, </span><span class="s1">frame):</span>
+        <span class="s2">if not </span><span class="s1">self._seek_check(frame):</span>
+            <span class="s2">return</span>
+        <span class="s2">if </span><span class="s1">frame &lt; self.__frame:</span>
+            <span class="s1">self.im = </span><span class="s2">None</span>
+            <span class="s1">self._seek(</span><span class="s4">0</span><span class="s1">)</span>
+
+        <span class="s1">last_frame = self.__frame</span>
+        <span class="s2">for </span><span class="s1">f </span><span class="s2">in </span><span class="s1">range(self.__frame + </span><span class="s4">1</span><span class="s2">, </span><span class="s1">frame + </span><span class="s4">1</span><span class="s1">):</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">self._seek(f)</span>
+            <span class="s2">except </span><span class="s1">EOFError </span><span class="s2">as </span><span class="s1">e:</span>
+                <span class="s1">self.seek(last_frame)</span>
+                <span class="s2">raise </span><span class="s1">EOFError(</span><span class="s6">&quot;no more images in GIF file&quot;</span><span class="s1">) </span><span class="s2">from </span><span class="s1">e</span>
+
+    <span class="s2">def </span><span class="s1">_seek(self</span><span class="s2">, </span><span class="s1">frame</span><span class="s2">, </span><span class="s1">update_image=</span><span class="s2">True</span><span class="s1">):</span>
+
+        <span class="s2">if </span><span class="s1">frame == </span><span class="s4">0</span><span class="s1">:</span>
+            <span class="s0"># rewind</span>
+            <span class="s1">self.__offset = </span><span class="s4">0</span>
+            <span class="s1">self.dispose = </span><span class="s2">None</span>
+            <span class="s1">self.__frame = -</span><span class="s4">1</span>
+            <span class="s1">self._fp.seek(self.__rewind)</span>
+            <span class="s1">self.disposal_method = </span><span class="s4">0</span>
+            <span class="s2">if </span><span class="s6">&quot;comment&quot; </span><span class="s2">in </span><span class="s1">self.info:</span>
+                <span class="s2">del </span><span class="s1">self.info[</span><span class="s6">&quot;comment&quot;</span><span class="s1">]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s0"># ensure that the previous frame was loaded</span>
+            <span class="s2">if </span><span class="s1">self.tile </span><span class="s2">and </span><span class="s1">update_image:</span>
+                <span class="s1">self.load()</span>
+
+        <span class="s2">if </span><span class="s1">frame != self.__frame + </span><span class="s4">1</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s6">f&quot;cannot seek to frame </span><span class="s2">{</span><span class="s1">frame</span><span class="s2">}</span><span class="s6">&quot;</span><span class="s1">)</span>
+
+        <span class="s1">self.fp = self._fp</span>
+        <span class="s2">if </span><span class="s1">self.__offset:</span>
+            <span class="s0"># backup to last frame</span>
+            <span class="s1">self.fp.seek(self.__offset)</span>
+            <span class="s2">while </span><span class="s1">self.data():</span>
+                <span class="s2">pass</span>
+            <span class="s1">self.__offset = </span><span class="s4">0</span>
+
+        <span class="s1">s = self.fp.read(</span><span class="s4">1</span><span class="s1">)</span>
+        <span class="s2">if not </span><span class="s1">s </span><span class="s2">or </span><span class="s1">s == </span><span class="s5">b&quot;;&quot;</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">EOFError</span>
+
+        <span class="s1">palette = </span><span class="s2">None</span>
+
+        <span class="s1">info = {}</span>
+        <span class="s1">frame_transparency = </span><span class="s2">None</span>
+        <span class="s1">interlace = </span><span class="s2">None</span>
+        <span class="s1">frame_dispose_extent = </span><span class="s2">None</span>
+        <span class="s2">while True</span><span class="s1">:</span>
+
+            <span class="s2">if not </span><span class="s1">s:</span>
+                <span class="s1">s = self.fp.read(</span><span class="s4">1</span><span class="s1">)</span>
+            <span class="s2">if not </span><span class="s1">s </span><span class="s2">or </span><span class="s1">s == </span><span class="s5">b&quot;;&quot;</span><span class="s1">:</span>
+                <span class="s2">break</span>
+
+            <span class="s2">elif </span><span class="s1">s == </span><span class="s5">b&quot;!&quot;</span><span class="s1">:</span>
+                <span class="s0">#</span>
+                <span class="s0"># extensions</span>
+                <span class="s0">#</span>
+                <span class="s1">s = self.fp.read(</span><span class="s4">1</span><span class="s1">)</span>
+                <span class="s1">block = self.data()</span>
+                <span class="s2">if </span><span class="s1">s[</span><span class="s4">0</span><span class="s1">] == </span><span class="s4">249</span><span class="s1">:</span>
+                    <span class="s0">#</span>
+                    <span class="s0"># graphic control extension</span>
+                    <span class="s0">#</span>
+                    <span class="s1">flags = block[</span><span class="s4">0</span><span class="s1">]</span>
+                    <span class="s2">if </span><span class="s1">flags &amp; </span><span class="s4">1</span><span class="s1">:</span>
+                        <span class="s1">frame_transparency = block[</span><span class="s4">3</span><span class="s1">]</span>
+                    <span class="s1">info[</span><span class="s6">&quot;duration&quot;</span><span class="s1">] = i16(block</span><span class="s2">, </span><span class="s4">1</span><span class="s1">) * </span><span class="s4">10</span>
+
+                    <span class="s0"># disposal method - find the value of bits 4 - 6</span>
+                    <span class="s1">dispose_bits = </span><span class="s4">0b00011100 </span><span class="s1">&amp; flags</span>
+                    <span class="s1">dispose_bits = dispose_bits &gt;&gt; </span><span class="s4">2</span>
+                    <span class="s2">if </span><span class="s1">dispose_bits:</span>
+                        <span class="s0"># only set the dispose if it is not</span>
+                        <span class="s0"># unspecified. I'm not sure if this is</span>
+                        <span class="s0"># correct, but it seems to prevent the last</span>
+                        <span class="s0"># frame from looking odd for some animations</span>
+                        <span class="s1">self.disposal_method = dispose_bits</span>
+                <span class="s2">elif </span><span class="s1">s[</span><span class="s4">0</span><span class="s1">] == </span><span class="s4">254</span><span class="s1">:</span>
+                    <span class="s0">#</span>
+                    <span class="s0"># comment extension</span>
+                    <span class="s0">#</span>
+                    <span class="s1">comment = </span><span class="s5">b&quot;&quot;</span>
+
+                    <span class="s0"># Read this comment block</span>
+                    <span class="s2">while </span><span class="s1">block:</span>
+                        <span class="s1">comment += block</span>
+                        <span class="s1">block = self.data()</span>
+
+                    <span class="s2">if </span><span class="s6">&quot;comment&quot; </span><span class="s2">in </span><span class="s1">info:</span>
+                        <span class="s0"># If multiple comment blocks in frame, separate with \n</span>
+                        <span class="s1">info[</span><span class="s6">&quot;comment&quot;</span><span class="s1">] += </span><span class="s5">b&quot;</span><span class="s2">\n</span><span class="s5">&quot; </span><span class="s1">+ comment</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">info[</span><span class="s6">&quot;comment&quot;</span><span class="s1">] = comment</span>
+                    <span class="s1">s = </span><span class="s2">None</span>
+                    <span class="s2">continue</span>
+                <span class="s2">elif </span><span class="s1">s[</span><span class="s4">0</span><span class="s1">] == </span><span class="s4">255 </span><span class="s2">and </span><span class="s1">frame == </span><span class="s4">0</span><span class="s1">:</span>
+                    <span class="s0">#</span>
+                    <span class="s0"># application extension</span>
+                    <span class="s0">#</span>
+                    <span class="s1">info[</span><span class="s6">&quot;extension&quot;</span><span class="s1">] = block</span><span class="s2">, </span><span class="s1">self.fp.tell()</span>
+                    <span class="s2">if </span><span class="s1">block[:</span><span class="s4">11</span><span class="s1">] == </span><span class="s5">b&quot;NETSCAPE2.0&quot;</span><span class="s1">:</span>
+                        <span class="s1">block = self.data()</span>
+                        <span class="s2">if </span><span class="s1">len(block) &gt;= </span><span class="s4">3 </span><span class="s2">and </span><span class="s1">block[</span><span class="s4">0</span><span class="s1">] == </span><span class="s4">1</span><span class="s1">:</span>
+                            <span class="s1">self.info[</span><span class="s6">&quot;loop&quot;</span><span class="s1">] = i16(block</span><span class="s2">, </span><span class="s4">1</span><span class="s1">)</span>
+                <span class="s2">while </span><span class="s1">self.data():</span>
+                    <span class="s2">pass</span>
+
+            <span class="s2">elif </span><span class="s1">s == </span><span class="s5">b&quot;,&quot;</span><span class="s1">:</span>
+                <span class="s0">#</span>
+                <span class="s0"># local image</span>
+                <span class="s0">#</span>
+                <span class="s1">s = self.fp.read(</span><span class="s4">9</span><span class="s1">)</span>
+
+                <span class="s0"># extent</span>
+                <span class="s1">x0</span><span class="s2">, </span><span class="s1">y0 = i16(s</span><span class="s2">, </span><span class="s4">0</span><span class="s1">)</span><span class="s2">, </span><span class="s1">i16(s</span><span class="s2">, </span><span class="s4">2</span><span class="s1">)</span>
+                <span class="s1">x1</span><span class="s2">, </span><span class="s1">y1 = x0 + i16(s</span><span class="s2">, </span><span class="s4">4</span><span class="s1">)</span><span class="s2">, </span><span class="s1">y0 + i16(s</span><span class="s2">, </span><span class="s4">6</span><span class="s1">)</span>
+                <span class="s2">if </span><span class="s1">(x1 &gt; self.size[</span><span class="s4">0</span><span class="s1">] </span><span class="s2">or </span><span class="s1">y1 &gt; self.size[</span><span class="s4">1</span><span class="s1">]) </span><span class="s2">and </span><span class="s1">update_image:</span>
+                    <span class="s1">self._size = max(x1</span><span class="s2">, </span><span class="s1">self.size[</span><span class="s4">0</span><span class="s1">])</span><span class="s2">, </span><span class="s1">max(y1</span><span class="s2">, </span><span class="s1">self.size[</span><span class="s4">1</span><span class="s1">])</span>
+                    <span class="s1">Image._decompression_bomb_check(self._size)</span>
+                <span class="s1">frame_dispose_extent = x0</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x1</span><span class="s2">, </span><span class="s1">y1</span>
+                <span class="s1">flags = s[</span><span class="s4">8</span><span class="s1">]</span>
+
+                <span class="s1">interlace = (flags &amp; </span><span class="s4">64</span><span class="s1">) != </span><span class="s4">0</span>
+
+                <span class="s2">if </span><span class="s1">flags &amp; </span><span class="s4">128</span><span class="s1">:</span>
+                    <span class="s1">bits = (flags &amp; </span><span class="s4">7</span><span class="s1">) + </span><span class="s4">1</span>
+                    <span class="s1">p = self.fp.read(</span><span class="s4">3 </span><span class="s1">&lt;&lt; bits)</span>
+                    <span class="s2">if </span><span class="s1">self._is_palette_needed(p):</span>
+                        <span class="s1">palette = ImagePalette.raw(</span><span class="s6">&quot;RGB&quot;</span><span class="s2">, </span><span class="s1">p)</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">palette = </span><span class="s2">False</span>
+
+                <span class="s0"># image data</span>
+                <span class="s1">bits = self.fp.read(</span><span class="s4">1</span><span class="s1">)[</span><span class="s4">0</span><span class="s1">]</span>
+                <span class="s1">self.__offset = self.fp.tell()</span>
+                <span class="s2">break</span>
+
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s2">pass</span>
+                <span class="s0"># raise OSError, &quot;illegal GIF tag `%x`&quot; % s[0]</span>
+            <span class="s1">s = </span><span class="s2">None</span>
+
+        <span class="s2">if </span><span class="s1">interlace </span><span class="s2">is None</span><span class="s1">:</span>
+            <span class="s0"># self._fp = None</span>
+            <span class="s2">raise </span><span class="s1">EOFError</span>
+
+        <span class="s1">self.__frame = frame</span>
+        <span class="s2">if not </span><span class="s1">update_image:</span>
+            <span class="s2">return</span>
+
+        <span class="s1">self.tile = []</span>
+
+        <span class="s2">if </span><span class="s1">self.dispose:</span>
+            <span class="s1">self.im.paste(self.dispose</span><span class="s2">, </span><span class="s1">self.dispose_extent)</span>
+
+        <span class="s1">self._frame_palette = palette </span><span class="s2">if </span><span class="s1">palette </span><span class="s2">is not None else </span><span class="s1">self.global_palette</span>
+        <span class="s1">self._frame_transparency = frame_transparency</span>
+        <span class="s2">if </span><span class="s1">frame == </span><span class="s4">0</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">self._frame_palette:</span>
+                <span class="s2">if </span><span class="s1">LOADING_STRATEGY == LoadingStrategy.RGB_ALWAYS:</span>
+                    <span class="s1">self.mode = </span><span class="s6">&quot;RGBA&quot; </span><span class="s2">if </span><span class="s1">frame_transparency </span><span class="s2">is not None else </span><span class="s6">&quot;RGB&quot;</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">self.mode = </span><span class="s6">&quot;P&quot;</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self.mode = </span><span class="s6">&quot;L&quot;</span>
+
+            <span class="s2">if not </span><span class="s1">palette </span><span class="s2">and </span><span class="s1">self.global_palette:</span>
+                <span class="s2">from </span><span class="s1">copy </span><span class="s2">import </span><span class="s1">copy</span>
+
+                <span class="s1">palette = copy(self.global_palette)</span>
+            <span class="s1">self.palette = palette</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">self.mode == </span><span class="s6">&quot;P&quot;</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">(</span>
+                    <span class="s1">LOADING_STRATEGY != LoadingStrategy.RGB_AFTER_DIFFERENT_PALETTE_ONLY</span>
+                    <span class="s2">or </span><span class="s1">palette</span>
+                <span class="s1">):</span>
+                    <span class="s1">self.pyaccess = </span><span class="s2">None</span>
+                    <span class="s2">if </span><span class="s6">&quot;transparency&quot; </span><span class="s2">in </span><span class="s1">self.info:</span>
+                        <span class="s1">self.im.putpalettealpha(self.info[</span><span class="s6">&quot;transparency&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s4">0</span><span class="s1">)</span>
+                        <span class="s1">self.im = self.im.convert(</span><span class="s6">&quot;RGBA&quot;</span><span class="s2">, </span><span class="s1">Image.Dither.FLOYDSTEINBERG)</span>
+                        <span class="s1">self.mode = </span><span class="s6">&quot;RGBA&quot;</span>
+                        <span class="s2">del </span><span class="s1">self.info[</span><span class="s6">&quot;transparency&quot;</span><span class="s1">]</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s1">self.mode = </span><span class="s6">&quot;RGB&quot;</span>
+                        <span class="s1">self.im = self.im.convert(</span><span class="s6">&quot;RGB&quot;</span><span class="s2">, </span><span class="s1">Image.Dither.FLOYDSTEINBERG)</span>
+
+        <span class="s2">def </span><span class="s1">_rgb(color):</span>
+            <span class="s2">if </span><span class="s1">self._frame_palette:</span>
+                <span class="s1">color = tuple(self._frame_palette.palette[color * </span><span class="s4">3 </span><span class="s1">: color * </span><span class="s4">3 </span><span class="s1">+ </span><span class="s4">3</span><span class="s1">])</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">color = (color</span><span class="s2">, </span><span class="s1">color</span><span class="s2">, </span><span class="s1">color)</span>
+            <span class="s2">return </span><span class="s1">color</span>
+
+        <span class="s1">self.dispose_extent = frame_dispose_extent</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">self.disposal_method &lt; </span><span class="s4">2</span><span class="s1">:</span>
+                <span class="s0"># do not dispose or none specified</span>
+                <span class="s1">self.dispose = </span><span class="s2">None</span>
+            <span class="s2">elif </span><span class="s1">self.disposal_method == </span><span class="s4">2</span><span class="s1">:</span>
+                <span class="s0"># replace with background colour</span>
+
+                <span class="s0"># only dispose the extent in this frame</span>
+                <span class="s1">x0</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x1</span><span class="s2">, </span><span class="s1">y1 = self.dispose_extent</span>
+                <span class="s1">dispose_size = (x1 - x0</span><span class="s2">, </span><span class="s1">y1 - y0)</span>
+
+                <span class="s1">Image._decompression_bomb_check(dispose_size)</span>
+
+                <span class="s0"># by convention, attempt to use transparency first</span>
+                <span class="s1">dispose_mode = </span><span class="s6">&quot;P&quot;</span>
+                <span class="s1">color = self.info.get(</span><span class="s6">&quot;transparency&quot;</span><span class="s2">, </span><span class="s1">frame_transparency)</span>
+                <span class="s2">if </span><span class="s1">color </span><span class="s2">is not None</span><span class="s1">:</span>
+                    <span class="s2">if </span><span class="s1">self.mode </span><span class="s2">in </span><span class="s1">(</span><span class="s6">&quot;RGB&quot;</span><span class="s2">, </span><span class="s6">&quot;RGBA&quot;</span><span class="s1">):</span>
+                        <span class="s1">dispose_mode = </span><span class="s6">&quot;RGBA&quot;</span>
+                        <span class="s1">color = _rgb(color) + (</span><span class="s4">0</span><span class="s2">,</span><span class="s1">)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">color = self.info.get(</span><span class="s6">&quot;background&quot;</span><span class="s2">, </span><span class="s4">0</span><span class="s1">)</span>
+                    <span class="s2">if </span><span class="s1">self.mode </span><span class="s2">in </span><span class="s1">(</span><span class="s6">&quot;RGB&quot;</span><span class="s2">, </span><span class="s6">&quot;RGBA&quot;</span><span class="s1">):</span>
+                        <span class="s1">dispose_mode = </span><span class="s6">&quot;RGB&quot;</span>
+                        <span class="s1">color = _rgb(color)</span>
+                <span class="s1">self.dispose = Image.core.fill(dispose_mode</span><span class="s2">, </span><span class="s1">dispose_size</span><span class="s2">, </span><span class="s1">color)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s0"># replace with previous contents</span>
+                <span class="s2">if </span><span class="s1">self.im </span><span class="s2">is not None</span><span class="s1">:</span>
+                    <span class="s0"># only dispose the extent in this frame</span>
+                    <span class="s1">self.dispose = self._crop(self.im</span><span class="s2">, </span><span class="s1">self.dispose_extent)</span>
+                <span class="s2">elif </span><span class="s1">frame_transparency </span><span class="s2">is not None</span><span class="s1">:</span>
+                    <span class="s1">x0</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x1</span><span class="s2">, </span><span class="s1">y1 = self.dispose_extent</span>
+                    <span class="s1">dispose_size = (x1 - x0</span><span class="s2">, </span><span class="s1">y1 - y0)</span>
+
+                    <span class="s1">Image._decompression_bomb_check(dispose_size)</span>
+                    <span class="s1">dispose_mode = </span><span class="s6">&quot;P&quot;</span>
+                    <span class="s1">color = frame_transparency</span>
+                    <span class="s2">if </span><span class="s1">self.mode </span><span class="s2">in </span><span class="s1">(</span><span class="s6">&quot;RGB&quot;</span><span class="s2">, </span><span class="s6">&quot;RGBA&quot;</span><span class="s1">):</span>
+                        <span class="s1">dispose_mode = </span><span class="s6">&quot;RGBA&quot;</span>
+                        <span class="s1">color = _rgb(frame_transparency) + (</span><span class="s4">0</span><span class="s2">,</span><span class="s1">)</span>
+                    <span class="s1">self.dispose = Image.core.fill(dispose_mode</span><span class="s2">, </span><span class="s1">dispose_size</span><span class="s2">, </span><span class="s1">color)</span>
+        <span class="s2">except </span><span class="s1">AttributeError:</span>
+            <span class="s2">pass</span>
+
+        <span class="s2">if </span><span class="s1">interlace </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">transparency = -</span><span class="s4">1</span>
+            <span class="s2">if </span><span class="s1">frame_transparency </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s2">if </span><span class="s1">frame == </span><span class="s4">0</span><span class="s1">:</span>
+                    <span class="s2">if </span><span class="s1">LOADING_STRATEGY != LoadingStrategy.RGB_ALWAYS:</span>
+                        <span class="s1">self.info[</span><span class="s6">&quot;transparency&quot;</span><span class="s1">] = frame_transparency</span>
+                <span class="s2">elif </span><span class="s1">self.mode </span><span class="s2">not in </span><span class="s1">(</span><span class="s6">&quot;RGB&quot;</span><span class="s2">, </span><span class="s6">&quot;RGBA&quot;</span><span class="s1">):</span>
+                    <span class="s1">transparency = frame_transparency</span>
+            <span class="s1">self.tile = [</span>
+                <span class="s1">(</span>
+                    <span class="s6">&quot;gif&quot;</span><span class="s2">,</span>
+                    <span class="s1">(x0</span><span class="s2">, </span><span class="s1">y0</span><span class="s2">, </span><span class="s1">x1</span><span class="s2">, </span><span class="s1">y1)</span><span class="s2">,</span>
+                    <span class="s1">self.__offset</span><span class="s2">,</span>
+                    <span class="s1">(bits</span><span class="s2">, </span><span class="s1">interlace</span><span class="s2">, </span><span class="s1">transparency)</span><span class="s2">,</span>
+                <span class="s1">)</span>
+            <span class="s1">]</span>
+
+        <span class="s2">if </span><span class="s1">info.get(</span><span class="s6">&quot;comment&quot;</span><span class="s1">):</span>
+            <span class="s1">self.info[</span><span class="s6">&quot;comment&quot;</span><span class="s1">] = info[</span><span class="s6">&quot;comment&quot;</span><span class="s1">]</span>
+        <span class="s2">for </span><span class="s1">k </span><span class="s2">in </span><span class="s1">[</span><span class="s6">&quot;duration&quot;</span><span class="s2">, </span><span class="s6">&quot;extension&quot;</span><span class="s1">]:</span>
+            <span class="s2">if </span><span class="s1">k </span><span class="s2">in </span><span class="s1">info:</span>
+                <span class="s1">self.info[k] = info[k]</span>
+            <span class="s2">elif </span><span class="s1">k </span><span class="s2">in </span><span class="s1">self.info:</span>
+                <span class="s2">del </span><span class="s1">self.info[k]</span>
+
+    <span class="s2">def </span><span class="s1">load_prepare(self):</span>
+        <span class="s1">temp_mode = </span><span class="s6">&quot;P&quot; </span><span class="s2">if </span><span class="s1">self._frame_palette </span><span class="s2">else </span><span class="s6">&quot;L&quot;</span>
+        <span class="s1">self._prev_im = </span><span class="s2">None</span>
+        <span class="s2">if </span><span class="s1">self.__frame == </span><span class="s4">0</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">self._frame_transparency </span><span class="s2">is not None</span><span class="s1">:</span>
+                <span class="s1">self.im = Image.core.fill(</span>
+                    <span class="s1">temp_mode</span><span class="s2">, </span><span class="s1">self.size</span><span class="s2">, </span><span class="s1">self._frame_transparency</span>
+                <span class="s1">)</span>
+        <span class="s2">elif </span><span class="s1">self.mode </span><span class="s2">in </span><span class="s1">(</span><span class="s6">&quot;RGB&quot;</span><span class="s2">, </span><span class="s6">&quot;RGBA&quot;</span><span class="s1">):</span>
+            <span class="s1">self._prev_im = self.im</span>
+            <span class="s2">if </span><span class="s1">self._frame_palette:</span>
+                <span class="s1">self.im = Image.core.fill(</span><span class="s6">&quot;P&quot;</span><span class="s2">, </span><span class="s1">self.size</span><span class="s2">, </span><span class="s1">self._frame_transparency </span><span class="s2">or </span><span class="s4">0</span><span class="s1">)</span>
+                <span class="s1">self.im.putpalette(*self._frame_palette.getdata())</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">self.im = </span><span class="s2">None</span>
+        <span class="s1">self.mode = temp_mode</span>
+        <span class="s1">self._frame_palette = </span><span class="s2">None</span>
+
+        <span class="s1">super().load_prepare()</span>
+
+    <span class="s2">def </span><span class="s1">load_end(self):</span>
+        <span class="s2">if </span><span class="s1">self.__frame == </span><span class="s4">0</span><span class="s1">:</span>
+            <span class="s2">if </span><span class="s1">self.mode == </span><span class="s6">&quot;P&quot; </span><span class="s2">and </span><span class="s1">LOADING_STRATEGY == LoadingStrategy.RGB_ALWAYS:</span>
+                <span class="s2">if </span><span class="s1">self._frame_transparency </span><span class="s2">is not None</span><span class="s1">:</span>
+                    <span class="s1">self.im.putpalettealpha(self._frame_transparency</span><span class="s2">, </span><span class="s4">0</span><span class="s1">)</span>
+                    <span class="s1">self.mode = </span><span class="s6">&quot;RGBA&quot;</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">self.mode = </span><span class="s6">&quot;RGB&quot;</span>
+                <span class="s1">self.im = self.im.convert(self.mode</span><span class="s2">, </span><span class="s1">Image.Dither.FLOYDSTEINBERG)</span>
+            <span class="s2">return</span>
+        <span class="s2">if not </span><span class="s1">self._prev_im:</span>
+            <span class="s2">return</span>
+        <span class="s2">if </span><span class="s1">self._frame_transparency </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s1">self.im.putpalettealpha(self._frame_transparency</span><span class="s2">, </span><span class="s4">0</span><span class="s1">)</span>
+            <span class="s1">frame_im = self.im.convert(</span><span class="s6">&quot;RGBA&quot;</span><span class="s1">)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">frame_im = self.im.convert(</span><span class="s6">&quot;RGB&quot;</span><span class="s1">)</span>
+        <span class="s1">frame_im = self._crop(frame_im</span><span class="s2">, </span><span class="s1">self.dispose_extent)</span>
+
+        <span class="s1">self.im = self._prev_im</span>
+        <span class="s1">self.mode = self.im.mode</span>
+        <span class="s2">if </span><span class="s1">frame_im.mode == </span><span class="s6">&quot;RGBA&quot;</span><span class="s1">:</span>
+            <span class="s1">self.im.paste(frame_im</span><span class="s2">, </span><span class="s1">self.dispose_extent</span><span class="s2">, </span><span class="s1">frame_im)</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">self.im.paste(frame_im</span><span class="s2">, </span><span class="s1">self.dispose_extent)</span>
+
+    <span class="s2">def </span><span class="s1">tell(self):</span>
+        <span class="s2">return </span><span class="s1">self.__frame</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Write GIF files</span>
+
+
+<span class="s1">RAWMODE = {</span><span class="s6">&quot;1&quot;</span><span class="s1">: </span><span class="s6">&quot;L&quot;</span><span class="s2">, </span><span class="s6">&quot;L&quot;</span><span class="s1">: </span><span class="s6">&quot;L&quot;</span><span class="s2">, </span><span class="s6">&quot;P&quot;</span><span class="s1">: </span><span class="s6">&quot;P&quot;</span><span class="s1">}</span>
+
+
+<span class="s2">def </span><span class="s1">_normalize_mode(im):</span>
+    <span class="s3">&quot;&quot;&quot; 
+    Takes an image (or frame), returns an image in a mode that is appropriate 
+    for saving in a Gif. 
+ 
+    It may return the original image, or it may return an image converted to 
+    palette or 'L' mode. 
+ 
+    :param im: Image object 
+    :returns: Image object 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">im.mode </span><span class="s2">in </span><span class="s1">RAWMODE:</span>
+        <span class="s1">im.load()</span>
+        <span class="s2">return </span><span class="s1">im</span>
+    <span class="s2">if </span><span class="s1">Image.getmodebase(im.mode) == </span><span class="s6">&quot;RGB&quot;</span><span class="s1">:</span>
+        <span class="s1">im = im.convert(</span><span class="s6">&quot;P&quot;</span><span class="s2">, </span><span class="s1">palette=Image.Palette.ADAPTIVE)</span>
+        <span class="s2">if </span><span class="s1">im.palette.mode == </span><span class="s6">&quot;RGBA&quot;</span><span class="s1">:</span>
+            <span class="s2">for </span><span class="s1">rgba </span><span class="s2">in </span><span class="s1">im.palette.colors.keys():</span>
+                <span class="s2">if </span><span class="s1">rgba[</span><span class="s4">3</span><span class="s1">] == </span><span class="s4">0</span><span class="s1">:</span>
+                    <span class="s1">im.info[</span><span class="s6">&quot;transparency&quot;</span><span class="s1">] = im.palette.colors[rgba]</span>
+                    <span class="s2">break</span>
+        <span class="s2">return </span><span class="s1">im</span>
+    <span class="s2">return </span><span class="s1">im.convert(</span><span class="s6">&quot;L&quot;</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">_normalize_palette(im</span><span class="s2">, </span><span class="s1">palette</span><span class="s2">, </span><span class="s1">info):</span>
+    <span class="s3">&quot;&quot;&quot; 
+    Normalizes the palette for image. 
+      - Sets the palette to the incoming palette, if provided. 
+      - Ensures that there's a palette for L mode images 
+      - Optimizes the palette if necessary/desired. 
+ 
+    :param im: Image object 
+    :param palette: bytes object containing the source palette, or .... 
+    :param info: encoderinfo 
+    :returns: Image object 
+    &quot;&quot;&quot;</span>
+    <span class="s1">source_palette = </span><span class="s2">None</span>
+    <span class="s2">if </span><span class="s1">palette:</span>
+        <span class="s0"># a bytes palette</span>
+        <span class="s2">if </span><span class="s1">isinstance(palette</span><span class="s2">, </span><span class="s1">(bytes</span><span class="s2">, </span><span class="s1">bytearray</span><span class="s2">, </span><span class="s1">list)):</span>
+            <span class="s1">source_palette = bytearray(palette[:</span><span class="s4">768</span><span class="s1">])</span>
+        <span class="s2">if </span><span class="s1">isinstance(palette</span><span class="s2">, </span><span class="s1">ImagePalette.ImagePalette):</span>
+            <span class="s1">source_palette = bytearray(palette.palette)</span>
+
+    <span class="s2">if </span><span class="s1">im.mode == </span><span class="s6">&quot;P&quot;</span><span class="s1">:</span>
+        <span class="s2">if not </span><span class="s1">source_palette:</span>
+            <span class="s1">source_palette = im.im.getpalette(</span><span class="s6">&quot;RGB&quot;</span><span class="s1">)[:</span><span class="s4">768</span><span class="s1">]</span>
+    <span class="s2">else</span><span class="s1">:  </span><span class="s0"># L-mode</span>
+        <span class="s2">if not </span><span class="s1">source_palette:</span>
+            <span class="s1">source_palette = bytearray(i // </span><span class="s4">3 </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">768</span><span class="s1">))</span>
+        <span class="s1">im.palette = ImagePalette.ImagePalette(</span><span class="s6">&quot;RGB&quot;</span><span class="s2">, </span><span class="s1">palette=source_palette)</span>
+
+    <span class="s2">if </span><span class="s1">palette:</span>
+        <span class="s1">used_palette_colors = []</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">0</span><span class="s2">, </span><span class="s1">len(source_palette)</span><span class="s2">, </span><span class="s4">3</span><span class="s1">):</span>
+            <span class="s1">source_color = tuple(source_palette[i : i + </span><span class="s4">3</span><span class="s1">])</span>
+            <span class="s1">index = im.palette.colors.get(source_color)</span>
+            <span class="s2">if </span><span class="s1">index </span><span class="s2">in </span><span class="s1">used_palette_colors:</span>
+                <span class="s1">index = </span><span class="s2">None</span>
+            <span class="s1">used_palette_colors.append(index)</span>
+        <span class="s2">for </span><span class="s1">i</span><span class="s2">, </span><span class="s1">index </span><span class="s2">in </span><span class="s1">enumerate(used_palette_colors):</span>
+            <span class="s2">if </span><span class="s1">index </span><span class="s2">is None</span><span class="s1">:</span>
+                <span class="s2">for </span><span class="s1">j </span><span class="s2">in </span><span class="s1">range(len(used_palette_colors)):</span>
+                    <span class="s2">if </span><span class="s1">j </span><span class="s2">not in </span><span class="s1">used_palette_colors:</span>
+                        <span class="s1">used_palette_colors[i] = j</span>
+                        <span class="s2">break</span>
+        <span class="s1">im = im.remap_palette(used_palette_colors)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">used_palette_colors = _get_optimize(im</span><span class="s2">, </span><span class="s1">info)</span>
+        <span class="s2">if </span><span class="s1">used_palette_colors </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s2">return </span><span class="s1">im.remap_palette(used_palette_colors</span><span class="s2">, </span><span class="s1">source_palette)</span>
+
+    <span class="s1">im.palette.palette = source_palette</span>
+    <span class="s2">return </span><span class="s1">im</span>
+
+
+<span class="s2">def </span><span class="s1">_write_single_frame(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">palette):</span>
+    <span class="s1">im_out = _normalize_mode(im)</span>
+    <span class="s2">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">im_out.info.items():</span>
+        <span class="s1">im.encoderinfo.setdefault(k</span><span class="s2">, </span><span class="s1">v)</span>
+    <span class="s1">im_out = _normalize_palette(im_out</span><span class="s2">, </span><span class="s1">palette</span><span class="s2">, </span><span class="s1">im.encoderinfo)</span>
+
+    <span class="s2">for </span><span class="s1">s </span><span class="s2">in </span><span class="s1">_get_global_header(im_out</span><span class="s2">, </span><span class="s1">im.encoderinfo):</span>
+        <span class="s1">fp.write(s)</span>
+
+    <span class="s0"># local image header</span>
+    <span class="s1">flags = </span><span class="s4">0</span>
+    <span class="s2">if </span><span class="s1">get_interlace(im):</span>
+        <span class="s1">flags = flags | </span><span class="s4">64</span>
+    <span class="s1">_write_local_header(fp</span><span class="s2">, </span><span class="s1">im</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">)</span><span class="s2">, </span><span class="s1">flags)</span>
+
+    <span class="s1">im_out.encoderconfig = (</span><span class="s4">8</span><span class="s2">, </span><span class="s1">get_interlace(im))</span>
+    <span class="s1">ImageFile._save(im_out</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">[(</span><span class="s6">&quot;gif&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + im.size</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">RAWMODE[im_out.mode])])</span>
+
+    <span class="s1">fp.write(</span><span class="s5">b&quot;</span><span class="s2">\0</span><span class="s5">&quot;</span><span class="s1">)  </span><span class="s0"># end of image data</span>
+
+
+<span class="s2">def </span><span class="s1">_write_multiple_frames(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">palette):</span>
+
+    <span class="s1">duration = im.encoderinfo.get(</span><span class="s6">&quot;duration&quot;</span><span class="s1">)</span>
+    <span class="s1">disposal = im.encoderinfo.get(</span><span class="s6">&quot;disposal&quot;</span><span class="s2">, </span><span class="s1">im.info.get(</span><span class="s6">&quot;disposal&quot;</span><span class="s1">))</span>
+
+    <span class="s1">im_frames = []</span>
+    <span class="s1">frame_count = </span><span class="s4">0</span>
+    <span class="s1">background_im = </span><span class="s2">None</span>
+    <span class="s2">for </span><span class="s1">imSequence </span><span class="s2">in </span><span class="s1">itertools.chain([im]</span><span class="s2">, </span><span class="s1">im.encoderinfo.get(</span><span class="s6">&quot;append_images&quot;</span><span class="s2">, </span><span class="s1">[])):</span>
+        <span class="s2">for </span><span class="s1">im_frame </span><span class="s2">in </span><span class="s1">ImageSequence.Iterator(imSequence):</span>
+            <span class="s0"># a copy is required here since seek can still mutate the image</span>
+            <span class="s1">im_frame = _normalize_mode(im_frame.copy())</span>
+            <span class="s2">if </span><span class="s1">frame_count == </span><span class="s4">0</span><span class="s1">:</span>
+                <span class="s2">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">im_frame.info.items():</span>
+                    <span class="s2">if </span><span class="s1">k == </span><span class="s6">&quot;transparency&quot;</span><span class="s1">:</span>
+                        <span class="s2">continue</span>
+                    <span class="s1">im.encoderinfo.setdefault(k</span><span class="s2">, </span><span class="s1">v)</span>
+
+            <span class="s1">encoderinfo = im.encoderinfo.copy()</span>
+            <span class="s1">im_frame = _normalize_palette(im_frame</span><span class="s2">, </span><span class="s1">palette</span><span class="s2">, </span><span class="s1">encoderinfo)</span>
+            <span class="s2">if </span><span class="s6">&quot;transparency&quot; </span><span class="s2">in </span><span class="s1">im_frame.info:</span>
+                <span class="s1">encoderinfo.setdefault(</span><span class="s6">&quot;transparency&quot;</span><span class="s2">, </span><span class="s1">im_frame.info[</span><span class="s6">&quot;transparency&quot;</span><span class="s1">])</span>
+            <span class="s2">if </span><span class="s1">isinstance(duration</span><span class="s2">, </span><span class="s1">(list</span><span class="s2">, </span><span class="s1">tuple)):</span>
+                <span class="s1">encoderinfo[</span><span class="s6">&quot;duration&quot;</span><span class="s1">] = duration[frame_count]</span>
+            <span class="s2">elif </span><span class="s1">duration </span><span class="s2">is None and </span><span class="s6">&quot;duration&quot; </span><span class="s2">in </span><span class="s1">im_frame.info:</span>
+                <span class="s1">encoderinfo[</span><span class="s6">&quot;duration&quot;</span><span class="s1">] = im_frame.info[</span><span class="s6">&quot;duration&quot;</span><span class="s1">]</span>
+            <span class="s2">if </span><span class="s1">isinstance(disposal</span><span class="s2">, </span><span class="s1">(list</span><span class="s2">, </span><span class="s1">tuple)):</span>
+                <span class="s1">encoderinfo[</span><span class="s6">&quot;disposal&quot;</span><span class="s1">] = disposal[frame_count]</span>
+            <span class="s1">frame_count += </span><span class="s4">1</span>
+
+            <span class="s2">if </span><span class="s1">im_frames:</span>
+                <span class="s0"># delta frame</span>
+                <span class="s1">previous = im_frames[-</span><span class="s4">1</span><span class="s1">]</span>
+                <span class="s2">if </span><span class="s1">encoderinfo.get(</span><span class="s6">&quot;disposal&quot;</span><span class="s1">) == </span><span class="s4">2</span><span class="s1">:</span>
+                    <span class="s2">if </span><span class="s1">background_im </span><span class="s2">is None</span><span class="s1">:</span>
+                        <span class="s1">color = im.encoderinfo.get(</span>
+                            <span class="s6">&quot;transparency&quot;</span><span class="s2">, </span><span class="s1">im.info.get(</span><span class="s6">&quot;transparency&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">))</span>
+                        <span class="s1">)</span>
+                        <span class="s1">background = _get_background(im_frame</span><span class="s2">, </span><span class="s1">color)</span>
+                        <span class="s1">background_im = Image.new(</span><span class="s6">&quot;P&quot;</span><span class="s2">, </span><span class="s1">im_frame.size</span><span class="s2">, </span><span class="s1">background)</span>
+                        <span class="s1">background_im.putpalette(im_frames[</span><span class="s4">0</span><span class="s1">][</span><span class="s6">&quot;im&quot;</span><span class="s1">].palette)</span>
+                    <span class="s1">base_im = background_im</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">base_im = previous[</span><span class="s6">&quot;im&quot;</span><span class="s1">]</span>
+                <span class="s2">if </span><span class="s1">_get_palette_bytes(im_frame) == _get_palette_bytes(base_im):</span>
+                    <span class="s1">delta = ImageChops.subtract_modulo(im_frame</span><span class="s2">, </span><span class="s1">base_im)</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s1">delta = ImageChops.subtract_modulo(</span>
+                        <span class="s1">im_frame.convert(</span><span class="s6">&quot;RGB&quot;</span><span class="s1">)</span><span class="s2">, </span><span class="s1">base_im.convert(</span><span class="s6">&quot;RGB&quot;</span><span class="s1">)</span>
+                    <span class="s1">)</span>
+                <span class="s1">bbox = delta.getbbox()</span>
+                <span class="s2">if not </span><span class="s1">bbox:</span>
+                    <span class="s0"># This frame is identical to the previous frame</span>
+                    <span class="s2">if </span><span class="s1">duration:</span>
+                        <span class="s1">previous[</span><span class="s6">&quot;encoderinfo&quot;</span><span class="s1">][</span><span class="s6">&quot;duration&quot;</span><span class="s1">] += encoderinfo[</span><span class="s6">&quot;duration&quot;</span><span class="s1">]</span>
+                    <span class="s2">continue</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s1">bbox = </span><span class="s2">None</span>
+            <span class="s1">im_frames.append({</span><span class="s6">&quot;im&quot;</span><span class="s1">: im_frame</span><span class="s2">, </span><span class="s6">&quot;bbox&quot;</span><span class="s1">: bbox</span><span class="s2">, </span><span class="s6">&quot;encoderinfo&quot;</span><span class="s1">: encoderinfo})</span>
+
+    <span class="s2">if </span><span class="s1">len(im_frames) &gt; </span><span class="s4">1</span><span class="s1">:</span>
+        <span class="s2">for </span><span class="s1">frame_data </span><span class="s2">in </span><span class="s1">im_frames:</span>
+            <span class="s1">im_frame = frame_data[</span><span class="s6">&quot;im&quot;</span><span class="s1">]</span>
+            <span class="s2">if not </span><span class="s1">frame_data[</span><span class="s6">&quot;bbox&quot;</span><span class="s1">]:</span>
+                <span class="s0"># global header</span>
+                <span class="s2">for </span><span class="s1">s </span><span class="s2">in </span><span class="s1">_get_global_header(im_frame</span><span class="s2">, </span><span class="s1">frame_data[</span><span class="s6">&quot;encoderinfo&quot;</span><span class="s1">]):</span>
+                    <span class="s1">fp.write(s)</span>
+                <span class="s1">offset = (</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s0"># compress difference</span>
+                <span class="s2">if not </span><span class="s1">palette:</span>
+                    <span class="s1">frame_data[</span><span class="s6">&quot;encoderinfo&quot;</span><span class="s1">][</span><span class="s6">&quot;include_color_table&quot;</span><span class="s1">] = </span><span class="s2">True</span>
+
+                <span class="s1">im_frame = im_frame.crop(frame_data[</span><span class="s6">&quot;bbox&quot;</span><span class="s1">])</span>
+                <span class="s1">offset = frame_data[</span><span class="s6">&quot;bbox&quot;</span><span class="s1">][:</span><span class="s4">2</span><span class="s1">]</span>
+            <span class="s1">_write_frame_data(fp</span><span class="s2">, </span><span class="s1">im_frame</span><span class="s2">, </span><span class="s1">offset</span><span class="s2">, </span><span class="s1">frame_data[</span><span class="s6">&quot;encoderinfo&quot;</span><span class="s1">])</span>
+        <span class="s2">return True</span>
+    <span class="s2">elif </span><span class="s6">&quot;duration&quot; </span><span class="s2">in </span><span class="s1">im.encoderinfo </span><span class="s2">and </span><span class="s1">isinstance(</span>
+        <span class="s1">im.encoderinfo[</span><span class="s6">&quot;duration&quot;</span><span class="s1">]</span><span class="s2">, </span><span class="s1">(list</span><span class="s2">, </span><span class="s1">tuple)</span>
+    <span class="s1">):</span>
+        <span class="s0"># Since multiple frames will not be written, add together the frame durations</span>
+        <span class="s1">im.encoderinfo[</span><span class="s6">&quot;duration&quot;</span><span class="s1">] = sum(im.encoderinfo[</span><span class="s6">&quot;duration&quot;</span><span class="s1">])</span>
+
+
+<span class="s2">def </span><span class="s1">_save_all(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename):</span>
+    <span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename</span><span class="s2">, </span><span class="s1">save_all=</span><span class="s2">True</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">_save(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename</span><span class="s2">, </span><span class="s1">save_all=</span><span class="s2">False</span><span class="s1">):</span>
+    <span class="s0"># header</span>
+    <span class="s2">if </span><span class="s6">&quot;palette&quot; </span><span class="s2">in </span><span class="s1">im.encoderinfo </span><span class="s2">or </span><span class="s6">&quot;palette&quot; </span><span class="s2">in </span><span class="s1">im.info:</span>
+        <span class="s1">palette = im.encoderinfo.get(</span><span class="s6">&quot;palette&quot;</span><span class="s2">, </span><span class="s1">im.info.get(</span><span class="s6">&quot;palette&quot;</span><span class="s1">))</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">palette = </span><span class="s2">None</span>
+        <span class="s1">im.encoderinfo[</span><span class="s6">&quot;optimize&quot;</span><span class="s1">] = im.encoderinfo.get(</span><span class="s6">&quot;optimize&quot;</span><span class="s2">, True</span><span class="s1">)</span>
+
+    <span class="s2">if not </span><span class="s1">save_all </span><span class="s2">or not </span><span class="s1">_write_multiple_frames(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">palette):</span>
+        <span class="s1">_write_single_frame(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">palette)</span>
+
+    <span class="s1">fp.write(</span><span class="s5">b&quot;;&quot;</span><span class="s1">)  </span><span class="s0"># end of file</span>
+
+    <span class="s2">if </span><span class="s1">hasattr(fp</span><span class="s2">, </span><span class="s6">&quot;flush&quot;</span><span class="s1">):</span>
+        <span class="s1">fp.flush()</span>
+
+
+<span class="s2">def </span><span class="s1">get_interlace(im):</span>
+    <span class="s1">interlace = im.encoderinfo.get(</span><span class="s6">&quot;interlace&quot;</span><span class="s2">, </span><span class="s4">1</span><span class="s1">)</span>
+
+    <span class="s0"># workaround for @PIL153</span>
+    <span class="s2">if </span><span class="s1">min(im.size) &lt; </span><span class="s4">16</span><span class="s1">:</span>
+        <span class="s1">interlace = </span><span class="s4">0</span>
+
+    <span class="s2">return </span><span class="s1">interlace</span>
+
+
+<span class="s2">def </span><span class="s1">_write_local_header(fp</span><span class="s2">, </span><span class="s1">im</span><span class="s2">, </span><span class="s1">offset</span><span class="s2">, </span><span class="s1">flags):</span>
+    <span class="s1">transparent_color_exists = </span><span class="s2">False</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s6">&quot;transparency&quot; </span><span class="s2">in </span><span class="s1">im.encoderinfo:</span>
+            <span class="s1">transparency = im.encoderinfo[</span><span class="s6">&quot;transparency&quot;</span><span class="s1">]</span>
+        <span class="s2">else</span><span class="s1">:</span>
+            <span class="s1">transparency = im.info[</span><span class="s6">&quot;transparency&quot;</span><span class="s1">]</span>
+        <span class="s1">transparency = int(transparency)</span>
+    <span class="s2">except </span><span class="s1">(KeyError</span><span class="s2">, </span><span class="s1">ValueError):</span>
+        <span class="s2">pass</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s0"># optimize the block away if transparent color is not used</span>
+        <span class="s1">transparent_color_exists = </span><span class="s2">True</span>
+
+        <span class="s1">used_palette_colors = _get_optimize(im</span><span class="s2">, </span><span class="s1">im.encoderinfo)</span>
+        <span class="s2">if </span><span class="s1">used_palette_colors </span><span class="s2">is not None</span><span class="s1">:</span>
+            <span class="s0"># adjust the transparency index after optimize</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">transparency = used_palette_colors.index(transparency)</span>
+            <span class="s2">except </span><span class="s1">ValueError:</span>
+                <span class="s1">transparent_color_exists = </span><span class="s2">False</span>
+
+    <span class="s2">if </span><span class="s6">&quot;duration&quot; </span><span class="s2">in </span><span class="s1">im.encoderinfo:</span>
+        <span class="s1">duration = int(im.encoderinfo[</span><span class="s6">&quot;duration&quot;</span><span class="s1">] / </span><span class="s4">10</span><span class="s1">)</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s1">duration = </span><span class="s4">0</span>
+
+    <span class="s1">disposal = int(im.encoderinfo.get(</span><span class="s6">&quot;disposal&quot;</span><span class="s2">, </span><span class="s4">0</span><span class="s1">))</span>
+
+    <span class="s2">if </span><span class="s1">transparent_color_exists </span><span class="s2">or </span><span class="s1">duration != </span><span class="s4">0 </span><span class="s2">or </span><span class="s1">disposal:</span>
+        <span class="s1">packed_flag = </span><span class="s4">1 </span><span class="s2">if </span><span class="s1">transparent_color_exists </span><span class="s2">else </span><span class="s4">0</span>
+        <span class="s1">packed_flag |= disposal &lt;&lt; </span><span class="s4">2</span>
+        <span class="s2">if not </span><span class="s1">transparent_color_exists:</span>
+            <span class="s1">transparency = </span><span class="s4">0</span>
+
+        <span class="s1">fp.write(</span>
+            <span class="s5">b&quot;!&quot;</span>
+            <span class="s1">+ o8(</span><span class="s4">249</span><span class="s1">)  </span><span class="s0"># extension intro</span>
+            <span class="s1">+ o8(</span><span class="s4">4</span><span class="s1">)  </span><span class="s0"># length</span>
+            <span class="s1">+ o8(packed_flag)  </span><span class="s0"># packed fields</span>
+            <span class="s1">+ o16(duration)  </span><span class="s0"># duration</span>
+            <span class="s1">+ o8(transparency)  </span><span class="s0"># transparency index</span>
+            <span class="s1">+ o8(</span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s1">include_color_table = im.encoderinfo.get(</span><span class="s6">&quot;include_color_table&quot;</span><span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">include_color_table:</span>
+        <span class="s1">palette_bytes = _get_palette_bytes(im)</span>
+        <span class="s1">color_table_size = _get_color_table_size(palette_bytes)</span>
+        <span class="s2">if </span><span class="s1">color_table_size:</span>
+            <span class="s1">flags = flags | </span><span class="s4">128  </span><span class="s0"># local color table flag</span>
+            <span class="s1">flags = flags | color_table_size</span>
+
+    <span class="s1">fp.write(</span>
+        <span class="s5">b&quot;,&quot;</span>
+        <span class="s1">+ o16(offset[</span><span class="s4">0</span><span class="s1">])  </span><span class="s0"># offset</span>
+        <span class="s1">+ o16(offset[</span><span class="s4">1</span><span class="s1">])</span>
+        <span class="s1">+ o16(im.size[</span><span class="s4">0</span><span class="s1">])  </span><span class="s0"># size</span>
+        <span class="s1">+ o16(im.size[</span><span class="s4">1</span><span class="s1">])</span>
+        <span class="s1">+ o8(flags)  </span><span class="s0"># flags</span>
+    <span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">include_color_table </span><span class="s2">and </span><span class="s1">color_table_size:</span>
+        <span class="s1">fp.write(_get_header_palette(palette_bytes))</span>
+    <span class="s1">fp.write(o8(</span><span class="s4">8</span><span class="s1">))  </span><span class="s0"># bits</span>
+
+
+<span class="s2">def </span><span class="s1">_save_netpbm(im</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">filename):</span>
+
+    <span class="s0"># Unused by default.</span>
+    <span class="s0"># To use, uncomment the register_save call at the end of the file.</span>
+    <span class="s0">#</span>
+    <span class="s0"># If you need real GIF compression and/or RGB quantization, you</span>
+    <span class="s0"># can use the external NETPBM/PBMPLUS utilities.  See comments</span>
+    <span class="s0"># below for information on how to enable this.</span>
+    <span class="s1">tempfile = im._dump()</span>
+
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s2">with </span><span class="s1">open(filename</span><span class="s2">, </span><span class="s6">&quot;wb&quot;</span><span class="s1">) </span><span class="s2">as </span><span class="s1">f:</span>
+            <span class="s2">if </span><span class="s1">im.mode != </span><span class="s6">&quot;RGB&quot;</span><span class="s1">:</span>
+                <span class="s1">subprocess.check_call(</span>
+                    <span class="s1">[</span><span class="s6">&quot;ppmtogif&quot;</span><span class="s2">, </span><span class="s1">tempfile]</span><span class="s2">, </span><span class="s1">stdout=f</span><span class="s2">, </span><span class="s1">stderr=subprocess.DEVNULL</span>
+                <span class="s1">)</span>
+            <span class="s2">else</span><span class="s1">:</span>
+                <span class="s0"># Pipe ppmquant output into ppmtogif</span>
+                <span class="s0"># &quot;ppmquant 256 %s | ppmtogif &gt; %s&quot; % (tempfile, filename)</span>
+                <span class="s1">quant_cmd = [</span><span class="s6">&quot;ppmquant&quot;</span><span class="s2">, </span><span class="s6">&quot;256&quot;</span><span class="s2">, </span><span class="s1">tempfile]</span>
+                <span class="s1">togif_cmd = [</span><span class="s6">&quot;ppmtogif&quot;</span><span class="s1">]</span>
+                <span class="s1">quant_proc = subprocess.Popen(</span>
+                    <span class="s1">quant_cmd</span><span class="s2">, </span><span class="s1">stdout=subprocess.PIPE</span><span class="s2">, </span><span class="s1">stderr=subprocess.DEVNULL</span>
+                <span class="s1">)</span>
+                <span class="s1">togif_proc = subprocess.Popen(</span>
+                    <span class="s1">togif_cmd</span><span class="s2">,</span>
+                    <span class="s1">stdin=quant_proc.stdout</span><span class="s2">,</span>
+                    <span class="s1">stdout=f</span><span class="s2">,</span>
+                    <span class="s1">stderr=subprocess.DEVNULL</span><span class="s2">,</span>
+                <span class="s1">)</span>
+
+                <span class="s0"># Allow ppmquant to receive SIGPIPE if ppmtogif exits</span>
+                <span class="s1">quant_proc.stdout.close()</span>
+
+                <span class="s1">retcode = quant_proc.wait()</span>
+                <span class="s2">if </span><span class="s1">retcode:</span>
+                    <span class="s2">raise </span><span class="s1">subprocess.CalledProcessError(retcode</span><span class="s2">, </span><span class="s1">quant_cmd)</span>
+
+                <span class="s1">retcode = togif_proc.wait()</span>
+                <span class="s2">if </span><span class="s1">retcode:</span>
+                    <span class="s2">raise </span><span class="s1">subprocess.CalledProcessError(retcode</span><span class="s2">, </span><span class="s1">togif_cmd)</span>
+    <span class="s2">finally</span><span class="s1">:</span>
+        <span class="s2">try</span><span class="s1">:</span>
+            <span class="s1">os.unlink(tempfile)</span>
+        <span class="s2">except </span><span class="s1">OSError:</span>
+            <span class="s2">pass</span>
+
+
+<span class="s0"># Force optimization so that we can test performance against</span>
+<span class="s0"># cases where it took lots of memory and time previously.</span>
+<span class="s1">_FORCE_OPTIMIZE = </span><span class="s2">False</span>
+
+
+<span class="s2">def </span><span class="s1">_get_optimize(im</span><span class="s2">, </span><span class="s1">info):</span>
+    <span class="s3">&quot;&quot;&quot; 
+    Palette optimization is a potentially expensive operation. 
+ 
+    This function determines if the palette should be optimized using 
+    some heuristics, then returns the list of palette entries in use. 
+ 
+    :param im: Image object 
+    :param info: encoderinfo 
+    :returns: list of indexes of palette entries in use, or None 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">im.mode </span><span class="s2">in </span><span class="s1">(</span><span class="s6">&quot;P&quot;</span><span class="s2">, </span><span class="s6">&quot;L&quot;</span><span class="s1">) </span><span class="s2">and </span><span class="s1">info </span><span class="s2">and </span><span class="s1">info.get(</span><span class="s6">&quot;optimize&quot;</span><span class="s2">, </span><span class="s4">0</span><span class="s1">):</span>
+        <span class="s0"># Potentially expensive operation.</span>
+
+        <span class="s0"># The palette saves 3 bytes per color not used, but palette</span>
+        <span class="s0"># lengths are restricted to 3*(2**N) bytes. Max saving would</span>
+        <span class="s0"># be 768 -&gt; 6 bytes if we went all the way down to 2 colors.</span>
+        <span class="s0"># * If we're over 128 colors, we can't save any space.</span>
+        <span class="s0"># * If there aren't any holes, it's not worth collapsing.</span>
+        <span class="s0"># * If we have a 'large' image, the palette is in the noise.</span>
+
+        <span class="s0"># create the new palette if not every color is used</span>
+        <span class="s1">optimise = _FORCE_OPTIMIZE </span><span class="s2">or </span><span class="s1">im.mode == </span><span class="s6">&quot;L&quot;</span>
+        <span class="s2">if </span><span class="s1">optimise </span><span class="s2">or </span><span class="s1">im.width * im.height &lt; </span><span class="s4">512 </span><span class="s1">* </span><span class="s4">512</span><span class="s1">:</span>
+            <span class="s0"># check which colors are used</span>
+            <span class="s1">used_palette_colors = []</span>
+            <span class="s2">for </span><span class="s1">i</span><span class="s2">, </span><span class="s1">count </span><span class="s2">in </span><span class="s1">enumerate(im.histogram()):</span>
+                <span class="s2">if </span><span class="s1">count:</span>
+                    <span class="s1">used_palette_colors.append(i)</span>
+
+            <span class="s2">if </span><span class="s1">optimise </span><span class="s2">or </span><span class="s1">max(used_palette_colors) &gt;= len(used_palette_colors):</span>
+                <span class="s2">return </span><span class="s1">used_palette_colors</span>
+
+            <span class="s1">num_palette_colors = len(im.palette.palette) // Image.getmodebands(</span>
+                <span class="s1">im.palette.mode</span>
+            <span class="s1">)</span>
+            <span class="s1">current_palette_size = </span><span class="s4">1 </span><span class="s1">&lt;&lt; (num_palette_colors - </span><span class="s4">1</span><span class="s1">).bit_length()</span>
+            <span class="s2">if </span><span class="s1">(</span>
+                <span class="s0"># check that the palette would become smaller when saved</span>
+                <span class="s1">len(used_palette_colors) &lt;= current_palette_size // </span><span class="s4">2</span>
+                <span class="s0"># check that the palette is not already the smallest possible size</span>
+                <span class="s2">and </span><span class="s1">current_palette_size &gt; </span><span class="s4">2</span>
+            <span class="s1">):</span>
+                <span class="s2">return </span><span class="s1">used_palette_colors</span>
+
+
+<span class="s2">def </span><span class="s1">_get_color_table_size(palette_bytes):</span>
+    <span class="s0"># calculate the palette size for the header</span>
+    <span class="s2">if not </span><span class="s1">palette_bytes:</span>
+        <span class="s2">return </span><span class="s4">0</span>
+    <span class="s2">elif </span><span class="s1">len(palette_bytes) &lt; </span><span class="s4">9</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s4">1</span>
+    <span class="s2">else</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">math.ceil(math.log(len(palette_bytes) // </span><span class="s4">3</span><span class="s2">, </span><span class="s4">2</span><span class="s1">)) - </span><span class="s4">1</span>
+
+
+<span class="s2">def </span><span class="s1">_get_header_palette(palette_bytes):</span>
+    <span class="s3">&quot;&quot;&quot; 
+    Returns the palette, null padded to the next power of 2 (*3) bytes 
+    suitable for direct inclusion in the GIF header 
+ 
+    :param palette_bytes: Unpadded palette bytes, in RGBRGB form 
+    :returns: Null padded palette 
+    &quot;&quot;&quot;</span>
+    <span class="s1">color_table_size = _get_color_table_size(palette_bytes)</span>
+
+    <span class="s0"># add the missing amount of bytes</span>
+    <span class="s0"># the palette has to be 2&lt;&lt;n in size</span>
+    <span class="s1">actual_target_size_diff = (</span><span class="s4">2 </span><span class="s1">&lt;&lt; color_table_size) - len(palette_bytes) // </span><span class="s4">3</span>
+    <span class="s2">if </span><span class="s1">actual_target_size_diff &gt; </span><span class="s4">0</span><span class="s1">:</span>
+        <span class="s1">palette_bytes += o8(</span><span class="s4">0</span><span class="s1">) * </span><span class="s4">3 </span><span class="s1">* actual_target_size_diff</span>
+    <span class="s2">return </span><span class="s1">palette_bytes</span>
+
+
+<span class="s2">def </span><span class="s1">_get_palette_bytes(im):</span>
+    <span class="s3">&quot;&quot;&quot; 
+    Gets the palette for inclusion in the gif header 
+ 
+    :param im: Image object 
+    :returns: Bytes, len&lt;=768 suitable for inclusion in gif header 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">im.palette.palette</span>
+
+
+<span class="s2">def </span><span class="s1">_get_background(im</span><span class="s2">, </span><span class="s1">info_background):</span>
+    <span class="s1">background = </span><span class="s4">0</span>
+    <span class="s2">if </span><span class="s1">info_background:</span>
+        <span class="s1">background = info_background</span>
+        <span class="s2">if </span><span class="s1">isinstance(background</span><span class="s2">, </span><span class="s1">tuple):</span>
+            <span class="s0"># WebPImagePlugin stores an RGBA value in info[&quot;background&quot;]</span>
+            <span class="s0"># So it must be converted to the same format as GifImagePlugin's</span>
+            <span class="s0"># info[&quot;background&quot;] - a global color table index</span>
+            <span class="s2">try</span><span class="s1">:</span>
+                <span class="s1">background = im.palette.getcolor(background</span><span class="s2">, </span><span class="s1">im)</span>
+            <span class="s2">except </span><span class="s1">ValueError </span><span class="s2">as </span><span class="s1">e:</span>
+                <span class="s2">if </span><span class="s1">str(e) == </span><span class="s6">&quot;cannot allocate more than 256 colors&quot;</span><span class="s1">:</span>
+                    <span class="s0"># If all 256 colors are in use,</span>
+                    <span class="s0"># then there is no need for the background color</span>
+                    <span class="s2">return </span><span class="s4">0</span>
+                <span class="s2">else</span><span class="s1">:</span>
+                    <span class="s2">raise</span>
+    <span class="s2">return </span><span class="s1">background</span>
+
+
+<span class="s2">def </span><span class="s1">_get_global_header(im</span><span class="s2">, </span><span class="s1">info):</span>
+    <span class="s3">&quot;&quot;&quot;Return a list of strings representing a GIF header&quot;&quot;&quot;</span>
+
+    <span class="s0"># Header Block</span>
+    <span class="s0"># https://www.matthewflickinger.com/lab/whatsinagif/bits_and_bytes.asp</span>
+
+    <span class="s1">version = </span><span class="s5">b&quot;87a&quot;</span>
+    <span class="s2">if </span><span class="s1">im.info.get(</span><span class="s6">&quot;version&quot;</span><span class="s1">) == </span><span class="s5">b&quot;89a&quot; </span><span class="s2">or </span><span class="s1">(</span>
+        <span class="s1">info</span>
+        <span class="s2">and </span><span class="s1">(</span>
+            <span class="s6">&quot;transparency&quot; </span><span class="s2">in </span><span class="s1">info</span>
+            <span class="s2">or </span><span class="s6">&quot;loop&quot; </span><span class="s2">in </span><span class="s1">info</span>
+            <span class="s2">or </span><span class="s1">info.get(</span><span class="s6">&quot;duration&quot;</span><span class="s1">)</span>
+            <span class="s2">or </span><span class="s1">info.get(</span><span class="s6">&quot;comment&quot;</span><span class="s1">)</span>
+        <span class="s1">)</span>
+    <span class="s1">):</span>
+        <span class="s1">version = </span><span class="s5">b&quot;89a&quot;</span>
+
+    <span class="s1">background = _get_background(im</span><span class="s2">, </span><span class="s1">info.get(</span><span class="s6">&quot;background&quot;</span><span class="s1">))</span>
+
+    <span class="s1">palette_bytes = _get_palette_bytes(im)</span>
+    <span class="s1">color_table_size = _get_color_table_size(palette_bytes)</span>
+
+    <span class="s1">header = [</span>
+        <span class="s5">b&quot;GIF&quot;  </span><span class="s0"># signature</span>
+        <span class="s1">+ version  </span><span class="s0"># version</span>
+        <span class="s1">+ o16(im.size[</span><span class="s4">0</span><span class="s1">])  </span><span class="s0"># canvas width</span>
+        <span class="s1">+ o16(im.size[</span><span class="s4">1</span><span class="s1">])</span><span class="s2">,  </span><span class="s0"># canvas height</span>
+        <span class="s0"># Logical Screen Descriptor</span>
+        <span class="s0"># size of global color table + global color table flag</span>
+        <span class="s1">o8(color_table_size + </span><span class="s4">128</span><span class="s1">)</span><span class="s2">,  </span><span class="s0"># packed fields</span>
+        <span class="s0"># background + reserved/aspect</span>
+        <span class="s1">o8(background) + o8(</span><span class="s4">0</span><span class="s1">)</span><span class="s2">,</span>
+        <span class="s0"># Global Color Table</span>
+        <span class="s1">_get_header_palette(palette_bytes)</span><span class="s2">,</span>
+    <span class="s1">]</span>
+    <span class="s2">if </span><span class="s6">&quot;loop&quot; </span><span class="s2">in </span><span class="s1">info:</span>
+        <span class="s1">header.append(</span>
+            <span class="s5">b&quot;!&quot;</span>
+            <span class="s1">+ o8(</span><span class="s4">255</span><span class="s1">)  </span><span class="s0"># extension intro</span>
+            <span class="s1">+ o8(</span><span class="s4">11</span><span class="s1">)</span>
+            <span class="s1">+ </span><span class="s5">b&quot;NETSCAPE2.0&quot;</span>
+            <span class="s1">+ o8(</span><span class="s4">3</span><span class="s1">)</span>
+            <span class="s1">+ o8(</span><span class="s4">1</span><span class="s1">)</span>
+            <span class="s1">+ o16(info[</span><span class="s6">&quot;loop&quot;</span><span class="s1">])  </span><span class="s0"># number of loops</span>
+            <span class="s1">+ o8(</span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">info.get(</span><span class="s6">&quot;comment&quot;</span><span class="s1">):</span>
+        <span class="s1">comment_block = </span><span class="s5">b&quot;!&quot; </span><span class="s1">+ o8(</span><span class="s4">254</span><span class="s1">)  </span><span class="s0"># extension intro</span>
+
+        <span class="s1">comment = info[</span><span class="s6">&quot;comment&quot;</span><span class="s1">]</span>
+        <span class="s2">if </span><span class="s1">isinstance(comment</span><span class="s2">, </span><span class="s1">str):</span>
+            <span class="s1">comment = comment.encode()</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">0</span><span class="s2">, </span><span class="s1">len(comment)</span><span class="s2">, </span><span class="s4">255</span><span class="s1">):</span>
+            <span class="s1">subblock = comment[i : i + </span><span class="s4">255</span><span class="s1">]</span>
+            <span class="s1">comment_block += o8(len(subblock)) + subblock</span>
+
+        <span class="s1">comment_block += o8(</span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s1">header.append(comment_block)</span>
+    <span class="s2">return </span><span class="s1">header</span>
+
+
+<span class="s2">def </span><span class="s1">_write_frame_data(fp</span><span class="s2">, </span><span class="s1">im_frame</span><span class="s2">, </span><span class="s1">offset</span><span class="s2">, </span><span class="s1">params):</span>
+    <span class="s2">try</span><span class="s1">:</span>
+        <span class="s1">im_frame.encoderinfo = params</span>
+
+        <span class="s0"># local image header</span>
+        <span class="s1">_write_local_header(fp</span><span class="s2">, </span><span class="s1">im_frame</span><span class="s2">, </span><span class="s1">offset</span><span class="s2">, </span><span class="s4">0</span><span class="s1">)</span>
+
+        <span class="s1">ImageFile._save(</span>
+            <span class="s1">im_frame</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">, </span><span class="s1">[(</span><span class="s6">&quot;gif&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + im_frame.size</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s1">RAWMODE[im_frame.mode])]</span>
+        <span class="s1">)</span>
+
+        <span class="s1">fp.write(</span><span class="s5">b&quot;</span><span class="s2">\0</span><span class="s5">&quot;</span><span class="s1">)  </span><span class="s0"># end of image data</span>
+    <span class="s2">finally</span><span class="s1">:</span>
+        <span class="s2">del </span><span class="s1">im_frame.encoderinfo</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Legacy GIF utilities</span>
+
+
+<span class="s2">def </span><span class="s1">getheader(im</span><span class="s2">, </span><span class="s1">palette=</span><span class="s2">None, </span><span class="s1">info=</span><span class="s2">None</span><span class="s1">):</span>
+    <span class="s3">&quot;&quot;&quot; 
+    Legacy Method to get Gif data from image. 
+ 
+    Warning:: May modify image data. 
+ 
+    :param im: Image object 
+    :param palette: bytes object containing the source palette, or .... 
+    :param info: encoderinfo 
+    :returns: tuple of(list of header items, optimized palette) 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s1">used_palette_colors = _get_optimize(im</span><span class="s2">, </span><span class="s1">info)</span>
+
+    <span class="s2">if </span><span class="s1">info </span><span class="s2">is None</span><span class="s1">:</span>
+        <span class="s1">info = {}</span>
+
+    <span class="s2">if </span><span class="s6">&quot;background&quot; </span><span class="s2">not in </span><span class="s1">info </span><span class="s2">and </span><span class="s6">&quot;background&quot; </span><span class="s2">in </span><span class="s1">im.info:</span>
+        <span class="s1">info[</span><span class="s6">&quot;background&quot;</span><span class="s1">] = im.info[</span><span class="s6">&quot;background&quot;</span><span class="s1">]</span>
+
+    <span class="s1">im_mod = _normalize_palette(im</span><span class="s2">, </span><span class="s1">palette</span><span class="s2">, </span><span class="s1">info)</span>
+    <span class="s1">im.palette = im_mod.palette</span>
+    <span class="s1">im.im = im_mod.im</span>
+    <span class="s1">header = _get_global_header(im</span><span class="s2">, </span><span class="s1">info)</span>
+
+    <span class="s2">return </span><span class="s1">header</span><span class="s2">, </span><span class="s1">used_palette_colors</span>
+
+
+<span class="s2">def </span><span class="s1">getdata(im</span><span class="s2">, </span><span class="s1">offset=(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">)</span><span class="s2">, </span><span class="s1">**params):</span>
+    <span class="s3">&quot;&quot;&quot; 
+    Legacy Method 
+ 
+    Return a list of strings representing this image. 
+    The first string is a local image header, the rest contains 
+    encoded image data. 
+ 
+    To specify duration, add the time in milliseconds, 
+    e.g. ``getdata(im_frame, duration=1000)`` 
+ 
+    :param im: Image object 
+    :param offset: Tuple of (x, y) pixels. Defaults to (0, 0) 
+    :param \\**params: e.g. duration or other encoder info parameters 
+    :returns: List of bytes containing GIF encoded frame data 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">class </span><span class="s1">Collector:</span>
+        <span class="s1">data = []</span>
+
+        <span class="s2">def </span><span class="s1">write(self</span><span class="s2">, </span><span class="s1">data):</span>
+            <span class="s1">self.data.append(data)</span>
+
+    <span class="s1">im.load()  </span><span class="s0"># make sure raster data is available</span>
+
+    <span class="s1">fp = Collector()</span>
+
+    <span class="s1">_write_frame_data(fp</span><span class="s2">, </span><span class="s1">im</span><span class="s2">, </span><span class="s1">offset</span><span class="s2">, </span><span class="s1">params)</span>
+
+    <span class="s2">return </span><span class="s1">fp.data</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Registry</span>
+
+<span class="s1">Image.register_open(GifImageFile.format</span><span class="s2">, </span><span class="s1">GifImageFile</span><span class="s2">, </span><span class="s1">_accept)</span>
+<span class="s1">Image.register_save(GifImageFile.format</span><span class="s2">, </span><span class="s1">_save)</span>
+<span class="s1">Image.register_save_all(GifImageFile.format</span><span class="s2">, </span><span class="s1">_save_all)</span>
+<span class="s1">Image.register_extension(GifImageFile.format</span><span class="s2">, </span><span class="s6">&quot;.gif&quot;</span><span class="s1">)</span>
+<span class="s1">Image.register_mime(GifImageFile.format</span><span class="s2">, </span><span class="s6">&quot;image/gif&quot;</span><span class="s1">)</span>
+
+<span class="s0">#</span>
+<span class="s0"># Uncomment the following line if you wish to use NETPBM/PBMPLUS</span>
+<span class="s0"># instead of the built-in &quot;uncompressed&quot; GIF encoder</span>
+
+<span class="s0"># Image.register_save(GifImageFile.format, _save_netpbm)</span>
+</pre>
+</body>
+</html>

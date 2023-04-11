@@ -1,0 +1,152 @@
+<html>
+<head>
+<title>XpmImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #808080;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #cc7832;}
+.s3 { color: #a5c261;}
+.s4 { color: #6897bb;}
+.s5 { color: #6a8759;}
+</style>
+</head>
+<body bgcolor="#2b2b2b">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+XpmImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># XPM File handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1996-12-29 fl   Created</span>
+<span class="s0"># 2001-02-17 fl   Use 're' instead of 'regex' (Python 2.1) (0.7)</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 1997-2001.</span>
+<span class="s0"># Copyright (c) Fredrik Lundh 1996-2001.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+
+<span class="s2">import </span><span class="s1">re</span>
+
+<span class="s2">from </span><span class="s1">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s2">, </span><span class="s1">ImageFile</span><span class="s2">, </span><span class="s1">ImagePalette</span>
+<span class="s2">from </span><span class="s1">._binary </span><span class="s2">import </span><span class="s1">o8</span>
+
+<span class="s0"># XPM header</span>
+<span class="s1">xpm_head = re.compile(</span><span class="s3">b'&quot;([0-9]*) ([0-9]*) ([0-9]*) ([0-9]*)'</span><span class="s1">)</span>
+
+
+<span class="s2">def </span><span class="s1">_accept(prefix):</span>
+    <span class="s2">return </span><span class="s1">prefix[:</span><span class="s4">9</span><span class="s1">] == </span><span class="s3">b&quot;/* XPM */&quot;</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for X11 pixel maps.</span>
+
+
+<span class="s2">class </span><span class="s1">XpmImageFile(ImageFile.ImageFile):</span>
+
+    <span class="s1">format = </span><span class="s5">&quot;XPM&quot;</span>
+    <span class="s1">format_description = </span><span class="s5">&quot;X11 Pixel Map&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open(self):</span>
+
+        <span class="s2">if not </span><span class="s1">_accept(self.fp.read(</span><span class="s4">9</span><span class="s1">)):</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s5">&quot;not an XPM file&quot;</span><span class="s1">)</span>
+
+        <span class="s0"># skip forward to next string</span>
+        <span class="s2">while True</span><span class="s1">:</span>
+            <span class="s1">s = self.fp.readline()</span>
+            <span class="s2">if not </span><span class="s1">s:</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError(</span><span class="s5">&quot;broken XPM file&quot;</span><span class="s1">)</span>
+            <span class="s1">m = xpm_head.match(s)</span>
+            <span class="s2">if </span><span class="s1">m:</span>
+                <span class="s2">break</span>
+
+        <span class="s1">self._size = int(m.group(</span><span class="s4">1</span><span class="s1">))</span><span class="s2">, </span><span class="s1">int(m.group(</span><span class="s4">2</span><span class="s1">))</span>
+
+        <span class="s1">pal = int(m.group(</span><span class="s4">3</span><span class="s1">))</span>
+        <span class="s1">bpp = int(m.group(</span><span class="s4">4</span><span class="s1">))</span>
+
+        <span class="s2">if </span><span class="s1">pal &gt; </span><span class="s4">256 </span><span class="s2">or </span><span class="s1">bpp != </span><span class="s4">1</span><span class="s1">:</span>
+            <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s5">&quot;cannot read this XPM file&quot;</span><span class="s1">)</span>
+
+        <span class="s0">#</span>
+        <span class="s0"># load palette description</span>
+
+        <span class="s1">palette = [</span><span class="s3">b&quot;</span><span class="s2">\0\0\0</span><span class="s3">&quot;</span><span class="s1">] * </span><span class="s4">256</span>
+
+        <span class="s2">for </span><span class="s1">_ </span><span class="s2">in </span><span class="s1">range(pal):</span>
+
+            <span class="s1">s = self.fp.readline()</span>
+            <span class="s2">if </span><span class="s1">s[-</span><span class="s4">2</span><span class="s1">:] == </span><span class="s3">b&quot;</span><span class="s2">\r\n</span><span class="s3">&quot;</span><span class="s1">:</span>
+                <span class="s1">s = s[:-</span><span class="s4">2</span><span class="s1">]</span>
+            <span class="s2">elif </span><span class="s1">s[-</span><span class="s4">1</span><span class="s1">:] </span><span class="s2">in </span><span class="s3">b&quot;</span><span class="s2">\r\n</span><span class="s3">&quot;</span><span class="s1">:</span>
+                <span class="s1">s = s[:-</span><span class="s4">1</span><span class="s1">]</span>
+
+            <span class="s1">c = s[</span><span class="s4">1</span><span class="s1">]</span>
+            <span class="s1">s = s[</span><span class="s4">2</span><span class="s1">:-</span><span class="s4">2</span><span class="s1">].split()</span>
+
+            <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(</span><span class="s4">0</span><span class="s2">, </span><span class="s1">len(s)</span><span class="s2">, </span><span class="s4">2</span><span class="s1">):</span>
+
+                <span class="s2">if </span><span class="s1">s[i] == </span><span class="s3">b&quot;c&quot;</span><span class="s1">:</span>
+
+                    <span class="s0"># process colour key</span>
+                    <span class="s1">rgb = s[i + </span><span class="s4">1</span><span class="s1">]</span>
+                    <span class="s2">if </span><span class="s1">rgb == </span><span class="s3">b&quot;None&quot;</span><span class="s1">:</span>
+                        <span class="s1">self.info[</span><span class="s5">&quot;transparency&quot;</span><span class="s1">] = c</span>
+                    <span class="s2">elif </span><span class="s1">rgb[:</span><span class="s4">1</span><span class="s1">] == </span><span class="s3">b&quot;#&quot;</span><span class="s1">:</span>
+                        <span class="s0"># FIXME: handle colour names (see ImagePalette.py)</span>
+                        <span class="s1">rgb = int(rgb[</span><span class="s4">1</span><span class="s1">:]</span><span class="s2">, </span><span class="s4">16</span><span class="s1">)</span>
+                        <span class="s1">palette[c] = (</span>
+                            <span class="s1">o8((rgb &gt;&gt; </span><span class="s4">16</span><span class="s1">) &amp; </span><span class="s4">255</span><span class="s1">) + o8((rgb &gt;&gt; </span><span class="s4">8</span><span class="s1">) &amp; </span><span class="s4">255</span><span class="s1">) + o8(rgb &amp; </span><span class="s4">255</span><span class="s1">)</span>
+                        <span class="s1">)</span>
+                    <span class="s2">else</span><span class="s1">:</span>
+                        <span class="s0"># unknown colour</span>
+                        <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s5">&quot;cannot read this XPM file&quot;</span><span class="s1">)</span>
+                    <span class="s2">break</span>
+
+            <span class="s2">else</span><span class="s1">:</span>
+
+                <span class="s0"># missing colour key</span>
+                <span class="s2">raise </span><span class="s1">ValueError(</span><span class="s5">&quot;cannot read this XPM file&quot;</span><span class="s1">)</span>
+
+        <span class="s1">self.mode = </span><span class="s5">&quot;P&quot;</span>
+        <span class="s1">self.palette = ImagePalette.raw(</span><span class="s5">&quot;RGB&quot;</span><span class="s2">, </span><span class="s3">b&quot;&quot;</span><span class="s1">.join(palette))</span>
+
+        <span class="s1">self.tile = [(</span><span class="s5">&quot;raw&quot;</span><span class="s2">, </span><span class="s1">(</span><span class="s4">0</span><span class="s2">, </span><span class="s4">0</span><span class="s1">) + self.size</span><span class="s2">, </span><span class="s1">self.fp.tell()</span><span class="s2">, </span><span class="s1">(</span><span class="s5">&quot;P&quot;</span><span class="s2">, </span><span class="s4">0</span><span class="s2">, </span><span class="s4">1</span><span class="s1">))]</span>
+
+    <span class="s2">def </span><span class="s1">load_read(self</span><span class="s2">, </span><span class="s1">bytes):</span>
+
+        <span class="s0">#</span>
+        <span class="s0"># load all image data in one chunk</span>
+
+        <span class="s1">xsize</span><span class="s2">, </span><span class="s1">ysize = self.size</span>
+
+        <span class="s1">s = [</span><span class="s2">None</span><span class="s1">] * ysize</span>
+
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range(ysize):</span>
+            <span class="s1">s[i] = self.fp.readline()[</span><span class="s4">1 </span><span class="s1">: xsize + </span><span class="s4">1</span><span class="s1">].ljust(xsize)</span>
+
+        <span class="s2">return </span><span class="s3">b&quot;&quot;</span><span class="s1">.join(s)</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># Registry</span>
+
+
+<span class="s1">Image.register_open(XpmImageFile.format</span><span class="s2">, </span><span class="s1">XpmImageFile</span><span class="s2">, </span><span class="s1">_accept)</span>
+
+<span class="s1">Image.register_extension(XpmImageFile.format</span><span class="s2">, </span><span class="s5">&quot;.xpm&quot;</span><span class="s1">)</span>
+
+<span class="s1">Image.register_mime(XpmImageFile.format</span><span class="s2">, </span><span class="s5">&quot;image/xpm&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>
