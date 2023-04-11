@@ -3,7 +3,7 @@ import os
 import time
 import cv2
 
-IMAGES_PATH = 'C:\\Users\\82108\\PycharmProjects\\face6\\venv\\yolov5\\data\\images'
+IMAGES_PATH = 'C:\\Users\\82108\\PycharmProjects\\face6\\yolov5\\data\\images'
 labels = ['awake', 'drowsy']
 number_imgs = 20
 

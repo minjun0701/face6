@@ -11,7 +11,7 @@ eye_closed = False
 closed_time = 0
 detector = dlib.get_frontal_face_detector()
 predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
-model = torch.hub.load('ultralytics/yolov5', 'custom', path='venv/yolov5/runs/train/exp8/weights/last.pt', force_reload=True)
+model = torch.hub.load('ultralytics/yolov5', 'custom', path='yolov5/runs/train/exp8/weights/last.pt', force_reload=True)
 
 cap = cv2.VideoCapture(0)
 
